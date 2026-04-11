@@ -1,0 +1,18 @@
+name = "sso-api"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+SUPABASE_URL = "https://your-project.supabase.co"
+ALLOWED_ORIGINS = "http://localhost:3000,https://yourdomain.com"
+
+# Secrets (set via `wrangler secret put`):
+# SUPABASE_SERVICE_ROLE_KEY
+# JWT_PRIVATE_KEY  (PEM-encoded RS256 private key)
+# JWT_PUBLIC_KEY   (PEM-encoded RS256 public key)
+# JWT_KID          (Key ID for JWKS, e.g. "key-1")
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT_KV"
+id = "your-kv-namespace-id"

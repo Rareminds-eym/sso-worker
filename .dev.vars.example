@@ -1,0 +1,8 @@
+# Local development secrets for wrangler dev
+# Copy this file to .dev.vars and fill in real values:
+#   cp .dev.vars.example .dev.vars
+
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key-here
+JWT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nYOUR_KEY_HERE\n-----END PRIVATE KEY-----"
+JWT_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\nYOUR_KEY_HERE\n-----END PUBLIC KEY-----"
+JWT_KID=key-1
