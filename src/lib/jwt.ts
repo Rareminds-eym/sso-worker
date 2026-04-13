@@ -1,12 +1,11 @@
-import { SignJWT, jwtVerify, importPKCS8, importSPKI, exportJWK, type KeyLike } from "jose";
+import { SignJWT, jwtVerify, importPKCS8, importSPKI, type KeyLike } from "jose";
 import type { Env, AccessTokenPayload } from "../types";
+import { JWT_ISSUER, JWT_AUDIENCE } from "./constants";
 
 const ALG = "RS256";
 const ACCESS_TOKEN_TTL = "15m";
 
 // ─── Key Cache ─────────────────────────────────────────────────
-// Workers reuse isolates across requests. Caching the imported
-// key avoids re-parsing the PEM on every request (~1-2ms saved).
 let cachedPrivateKey: { pem: string; key: KeyLike } | null = null;
 let cachedPublicKey: { pem: string; key: KeyLike } | null = null;
 
@@ -24,7 +23,7 @@ async function getPublicKey(env: Env): Promise<KeyLike> {
   return key;
 }
 
-/** Sign an access token with the cached private key */
+/** Sign an access token with the rich RBAC payload */
 export async function signAccessToken(
   payload: AccessTokenPayload,
   env: Env,
@@ -35,7 +34,8 @@ export async function signAccessToken(
     .setProtectedHeader({ alg: ALG, kid: env.JWT_KID, typ: "JWT" })
     .setIssuedAt()
     .setExpirationTime(ACCESS_TOKEN_TTL)
-    .setIssuer("sso-api")
+    .setIssuer(JWT_ISSUER)
+    .setAudience(JWT_AUDIENCE)
     .sign(privateKey);
 }
 
@@ -48,7 +48,8 @@ export async function verifyAccessToken(
 
   const { payload } = await jwtVerify(token, publicKey, {
     algorithms: [ALG],
-    issuer: "sso-api",
+    issuer: JWT_ISSUER,
+    audience: JWT_AUDIENCE,
   });
 
   return payload as unknown as AccessTokenPayload;
@@ -56,8 +57,24 @@ export async function verifyAccessToken(
 
 /** Export the public key as a JWK for the JWKS endpoint */
 export async function getPublicJWK(env: Env) {
-  const publicKey = await getPublicKey(env);
-  const jwk = await exportJWK(publicKey);
+  // importSPKI creates non-extractable keys, so we use Web Crypto directly
+  // with extractable: true for the JWKS export path.
+  const pem = env.JWT_PUBLIC_KEY;
+  const pemBody = pem
+    .replace(/-----BEGIN PUBLIC KEY-----/, "")
+    .replace(/-----END PUBLIC KEY-----/, "")
+    .replace(/\s/g, "");
+  const binaryDer = Uint8Array.from(atob(pemBody), (c) => c.charCodeAt(0));
+
+  const cryptoKey = await crypto.subtle.importKey(
+    "spki",
+    binaryDer,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    true, // extractable
+    ["verify"],
+  );
+
+  const jwk = await crypto.subtle.exportKey("jwk", cryptoKey);
 
   return {
     ...jwk,

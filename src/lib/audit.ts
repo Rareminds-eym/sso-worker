@@ -10,7 +10,9 @@ export type AuditAction =
   | "refresh_theft_detected"
   | "switch_org"
   | "invite_created"
-  | "invite_accepted";
+  | "invite_accepted"
+  | "verification_requested"
+  | "email_verified";
 
 /**
  * Non-blocking audit log entry.

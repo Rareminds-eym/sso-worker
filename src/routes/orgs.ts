@@ -25,10 +25,27 @@ export async function listOrgs(
 
   const orgMap = new Map(orgs.map((o) => [o.id, o]));
 
+  // Fetch roles for each membership via join table
+  const membershipIds = memberships.map((m) => m.id);
+  const roleRows = membershipIds.length
+    ? await database.query<{ membership_id: string; name: string }>(
+        `membership_roles?membership_id=in.(${membershipIds.join(",")})&select=membership_id,role_id(name)`,
+      )
+    : [];
+
+  // PostgREST returns nested objects for FK selects — flatten
+  const roleMap = new Map<string, string[]>();
+  for (const row of roleRows) {
+    const mid = row.membership_id;
+    const roleName = (row as any).role_id?.name ?? (row as any).name;
+    if (!roleMap.has(mid)) roleMap.set(mid, []);
+    if (roleName) roleMap.get(mid)!.push(roleName);
+  }
+
   return json({
     organizations: memberships.map((m) => ({
       org_id: m.org_id,
-      role: m.role,
+      roles: roleMap.get(m.id) ?? [],
       name: orgMap.get(m.org_id)?.name ?? null,
       slug: orgMap.get(m.org_id)?.slug ?? null,
       is_active: m.org_id === payload.org_id,

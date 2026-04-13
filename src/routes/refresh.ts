@@ -1,4 +1,4 @@
-import type { Env, Session, Membership } from "../types";
+import type { Env, Session, JwtClaims } from "../types";
 import { db } from "../lib/db";
 import { hashToken, generateRefreshToken } from "../lib/hash";
 import { signAccessToken } from "../lib/jwt";
@@ -12,7 +12,18 @@ export async function refresh(
   env: Env,
   ctx: ExecutionContext,
 ): Promise<Response> {
-  const incomingToken = getCookie(req, "refresh_token");
+  // Accept refresh token from cookie (browser) OR body (server SDK)
+  let incomingToken = getCookie(req, "refresh_token");
+
+  if (!incomingToken) {
+    try {
+      const body = await req.json() as { refresh_token?: string };
+      incomingToken = body?.refresh_token ?? null;
+    } catch {
+      // No body or invalid JSON — that's fine, token just stays null
+    }
+  }
+
   if (!incomingToken) {
     return error("No refresh token provided", 401);
   }
@@ -53,7 +64,7 @@ export async function refresh(
   // Revoke old session
   await database.update("sessions", { id: `eq.${session.id}` }, { revoked: true });
 
-  // Create rotated session — link to old session via rotated_from
+  // Create rotated session
   const newRefreshToken = generateRefreshToken();
   const newRefreshHash = await hashToken(newRefreshToken);
 
@@ -69,14 +80,15 @@ export async function refresh(
     last_used_at: new Date().toISOString(),
   });
 
-  // Fetch membership (active only) + user in parallel
-  const [membership, user] = await Promise.all([
-    database.queryOne<Membership>(
-      `memberships?user_id=eq.${session.user_id}&org_id=eq.${session.org_id}&status=eq.active&select=*`,
+  // Fetch user email + verified status + RBAC claims in parallel
+  const [user, claims] = await Promise.all([
+    database.queryOne<{ id: string; email: string; is_email_verified: boolean }>(
+      `users?id=eq.${session.user_id}&select=id,email,is_email_verified`,
     ),
-    database.queryOne<{ id: string; email: string }>(
-      `users?id=eq.${session.user_id}&select=id,email`,
-    ),
+    database.rpc<JwtClaims>("get_jwt_claims", {
+      p_user_id: session.user_id,
+      p_org_id: session.org_id,
+    }),
   ]);
 
   const accessToken = await signAccessToken(
@@ -84,12 +96,15 @@ export async function refresh(
       sub: session.user_id,
       email: user?.email ?? "",
       org_id: session.org_id ?? "",
-      role: membership?.role ?? "member",
+      roles: claims?.roles ?? [],
+      products: claims?.products ?? [],
+      membership_status: claims?.membership_status ?? "active",
+      is_email_verified: user?.is_email_verified ?? false,
     },
     env,
   );
 
-  const response = json({ success: true });
+  const response = json({ access_token: accessToken });
   setAuthCookies(response, accessToken, newRefreshToken);
 
   audit(ctx, env, "refresh", {

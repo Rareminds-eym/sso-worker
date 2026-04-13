@@ -12,6 +12,8 @@ const ROUTE_LIMITS: Record<string, RateLimitConfig> = {
   "/auth/refresh": { limit: 10, windowSeconds: 60 },
   "/auth/invite": { limit: 5, windowSeconds: 60 },
   "/auth/invite/accept": { limit: 5, windowSeconds: 60 },
+  "/auth/request-verification": { limit: 3, windowSeconds: 60 },
+  "/auth/verify-email": { limit: 5, windowSeconds: 60 },
 };
 
 /**

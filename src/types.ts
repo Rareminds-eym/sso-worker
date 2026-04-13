@@ -22,6 +22,24 @@ export type RouteHandler = (
   auth?: AccessTokenPayload,
 ) => Promise<Response>;
 
+// ─── JWT Payload (aligned with auth-core AuthUser) ─────────────
+export interface AccessTokenPayload {
+  sub: string;
+  email: string;
+  org_id: string;
+  roles: string[];
+  products: string[];
+  membership_status: MembershipStatus;
+  is_email_verified: boolean;
+}
+
+// ─── JWT Claims from get_jwt_claims() RPC ──────────────────────
+export interface JwtClaims {
+  roles: string[];
+  products: string[];
+  membership_status: MembershipStatus;
+}
+
 // ─── Database Models (aligned to actual Supabase schema) ───────
 export interface User {
   id: string;
@@ -43,12 +61,50 @@ export interface Organization {
   created_at: string;
 }
 
+export type MembershipStatus = "active" | "inactive" | "suspended" | "expired";
+
 export interface Membership {
   id: string;
   user_id: string;
   org_id: string;
-  role: "owner" | "admin" | "member";
-  status: "active" | string;
+  status: MembershipStatus;
+  created_at: string;
+}
+
+export interface Role {
+  id: string;
+  name: string;
+  description: string | null;
+  created_at: string;
+}
+
+export interface MembershipRole {
+  id: string;
+  membership_id: string;
+  role_id: string;
+  created_at: string;
+}
+
+export interface Product {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  created_at: string;
+}
+
+export interface OrganizationProduct {
+  id: string;
+  org_id: string;
+  product_id: string;
+  active: boolean;
+  created_at: string;
+}
+
+export interface MembershipProduct {
+  id: string;
+  membership_id: string;
+  product_id: string;
   created_at: string;
 }
 
@@ -71,21 +127,13 @@ export interface Invite {
   id: string;
   email: string;
   org_id: string;
-  role: string | null;
+  role: string[];
   token: string | null;
   invited_by: string | null;
   expires_at: string | null;
   accepted: boolean;
   accepted_at: string | null;
   created_at: string | null;
-}
-
-// ─── JWT Payload ───────────────────────────────────────────────
-export interface AccessTokenPayload {
-  sub: string;
-  email: string;
-  org_id: string;
-  role: string;
 }
 
 // ─── Request Bodies ────────────────────────────────────────────
@@ -107,7 +155,7 @@ export interface SwitchOrgBody {
 export interface InviteBody {
   email: string;
   org_id: string;
-  role: string;
+  role: string[];
 }
 
 export interface AcceptInviteBody {

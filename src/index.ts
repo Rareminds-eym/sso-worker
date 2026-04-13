@@ -3,30 +3,31 @@ import { signup } from "./routes/signup";
 import { login } from "./routes/login";
 import { refresh } from "./routes/refresh";
 import { logout } from "./routes/logout";
-import { validate } from "./routes/validate";
+import { me } from "./routes/me";
 import { switchOrg } from "./routes/switch-org";
 import { createInvite, acceptInvite } from "./routes/invite";
 import { listOrgs } from "./routes/orgs";
 import { jwks } from "./routes/jwks";
+import { requestVerification, verifyEmail } from "./routes/verify-email";
 import { rateLimit } from "./lib/rate-limit";
 import { authenticate } from "./lib/auth";
 import { json, error } from "./lib/response";
 
 // ─── Declarative Route Table ───────────────────────────────────
-// auth: true → authenticate() is called automatically; 401 if it fails.
-// auth: false/omitted → public route.
 const routes: Record<string, Record<string, RouteConfig>> = {
   POST: {
-    "/auth/signup":        { handler: signup },
-    "/auth/login":         { handler: login },
-    "/auth/refresh":       { handler: refresh },
-    "/auth/logout":        { handler: logout },
-    "/auth/switch-org":    { handler: switchOrg,    auth: true },
-    "/auth/invite":        { handler: createInvite, auth: true },
-    "/auth/invite/accept": { handler: acceptInvite },
+    "/auth/signup":              { handler: signup },
+    "/auth/login":               { handler: login },
+    "/auth/refresh":             { handler: refresh },
+    "/auth/logout":              { handler: logout },
+    "/auth/switch-org":          { handler: switchOrg,           auth: true },
+    "/auth/invite":              { handler: createInvite,        auth: true },
+    "/auth/invite/accept":       { handler: acceptInvite },
+    "/auth/request-verification": { handler: requestVerification, auth: true },
+    "/auth/verify-email":        { handler: verifyEmail },
   },
   GET: {
-    "/auth/validate-session": { handler: validate, auth: true },
+    "/auth/me":               { handler: me, auth: true },
     "/auth/orgs":             { handler: listOrgs, auth: true },
     "/.well-known/jwks.json": { handler: (_req, env) => jwks(env) },
     "/health":                { handler: () => Promise.resolve(json({ status: "ok" })) },
@@ -46,6 +47,7 @@ function corsHeaders(req: Request, env: Env): Record<string, string> {
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Request-ID",
     "Access-Control-Allow-Credentials": "true",
+    "Access-Control-Expose-Headers": "X-Access-Token, X-Request-ID",
     "Access-Control-Max-Age": "86400",
   };
 }
@@ -57,8 +59,6 @@ function withCors(response: Response, cors: Record<string, string>): Response {
 }
 
 // ─── CSRF Protection ───────────────────────────────────────────
-// For state-changing requests with credentials, verify the Origin header
-// matches an allowed origin. Prevents cross-site form submissions.
 function csrfCheck(req: Request, env: Env): boolean {
   if (req.method === "GET" || req.method === "OPTIONS") return true;
 
@@ -101,7 +101,7 @@ export default {
     }
 
     try {
-      // Declarative auth — if route requires auth, verify before calling handler
+      // Declarative auth
       let authPayload;
       if (config.auth) {
         authPayload = await authenticate(req, env);
@@ -114,7 +114,6 @@ export default {
       const res = withCors(response, cors);
       res.headers.set("X-Request-ID", requestId);
 
-      // Structured log
       console.log(
         JSON.stringify({
           rid: requestId,

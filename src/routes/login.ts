@@ -1,4 +1,4 @@
-import type { Env, LoginBody, User, Membership } from "../types";
+import type { Env, LoginBody, User, Membership, JwtClaims } from "../types";
 import { db } from "../lib/db";
 import { verifyPassword, hashToken, generateRefreshToken } from "../lib/hash";
 import { signAccessToken } from "../lib/jwt";
@@ -56,7 +56,6 @@ export async function login(
     return error("Invalid credentials", 401);
   }
 
-  // Check if user is blocked
   if (user.is_blocked) {
     return error("Account is blocked", 403);
   }
@@ -91,6 +90,16 @@ export async function login(
 
   const activeMembership = memberships[0];
 
+  // Get RBAC claims via single RPC call
+  const claims = await database.rpc<JwtClaims>("get_jwt_claims", {
+    p_user_id: user.id,
+    p_org_id: activeMembership.org_id,
+  });
+
+  if (!claims) {
+    return error("Failed to resolve membership claims", 500);
+  }
+
   const refreshToken = generateRefreshToken();
   const refreshHash = await hashToken(refreshToken);
 
@@ -109,16 +118,19 @@ export async function login(
       sub: user.id,
       email: user.email,
       org_id: activeMembership.org_id,
-      role: activeMembership.role,
+      roles: claims.roles,
+      products: claims.products,
+      membership_status: claims.membership_status,
+      is_email_verified: user.is_email_verified,
     },
     env,
   );
 
   const response = json({
-    success: true,
+    access_token: accessToken,
     user: { id: user.id, email: user.email },
     active_org_id: activeMembership.org_id,
-    organizations: memberships.map((m) => ({ org_id: m.org_id, role: m.role })),
+    organizations: memberships.map((m) => ({ org_id: m.org_id })),
   });
 
   setAuthCookies(response, accessToken, refreshToken);

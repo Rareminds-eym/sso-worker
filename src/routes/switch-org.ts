@@ -1,4 +1,4 @@
-import type { Env, SwitchOrgBody, Membership, AccessTokenPayload } from "../types";
+import type { Env, SwitchOrgBody, Membership, AccessTokenPayload, JwtClaims } from "../types";
 import { db } from "../lib/db";
 import { signAccessToken } from "../lib/jwt";
 import { hashToken, generateRefreshToken } from "../lib/hash";
@@ -51,6 +51,16 @@ export async function switchOrg(
     });
   }
 
+  // Get RBAC claims for the target org
+  const claims = await database.rpc<JwtClaims>("get_jwt_claims", {
+    p_user_id: currentPayload.sub,
+    p_org_id: body.org_id,
+  });
+
+  if (!claims) {
+    return error("Failed to resolve membership claims", 500);
+  }
+
   const refreshToken = generateRefreshToken();
   const refreshHash = await hashToken(refreshToken);
 
@@ -69,12 +79,19 @@ export async function switchOrg(
       sub: currentPayload.sub,
       email: currentPayload.email,
       org_id: body.org_id,
-      role: membership.role,
+      roles: claims.roles,
+      products: claims.products,
+      membership_status: claims.membership_status,
+      is_email_verified: currentPayload.is_email_verified,
     },
     env,
   );
 
-  const response = json({ success: true, org_id: body.org_id, role: membership.role });
+  const response = json({
+    access_token: accessToken,
+    org_id: body.org_id,
+    roles: claims.roles,
+  });
   setAuthCookies(response, accessToken, refreshToken);
 
   audit(ctx, env, "switch_org", {

@@ -1,4 +1,4 @@
-import type { Env, SignupBody } from "../types";
+import type { Env, SignupBody, JwtClaims } from "../types";
 import { db } from "../lib/db";
 import { hashPassword, hashToken, generateRefreshToken } from "../lib/hash";
 import { signAccessToken } from "../lib/jwt";
@@ -60,6 +60,12 @@ export async function signup(
     throw err;
   }
 
+  // Get RBAC claims (owner role, no products yet)
+  const claims = await database.rpc<JwtClaims>("get_jwt_claims", {
+    p_user_id: result.user_id,
+    p_org_id: result.org_id,
+  });
+
   const refreshToken = generateRefreshToken();
   const refreshHash = await hashToken(refreshToken);
 
@@ -74,12 +80,21 @@ export async function signup(
   });
 
   const accessToken = await signAccessToken(
-    { sub: result.user_id, email, org_id: result.org_id, role: "owner" },
+    {
+      sub: result.user_id,
+      email,
+      org_id: result.org_id,
+      roles: claims?.roles ?? [],
+      products: claims?.products ?? [],
+      membership_status: claims?.membership_status ?? "active",
+      is_email_verified: false,
+    },
     env,
   );
 
   const response = json(
     {
+      access_token: accessToken,
       user: { id: result.user_id, email },
       org: { id: result.org_id, name: body.org_name, slug: result.slug },
     },

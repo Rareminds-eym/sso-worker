@@ -1,4 +1,4 @@
-import type { Env, InviteBody, AcceptInviteBody, Invite, User, Membership, AccessTokenPayload } from "../types";
+import type { Env, InviteBody, AcceptInviteBody, Invite, User, Membership, AccessTokenPayload, JwtClaims } from "../types";
 import { db } from "../lib/db";
 import { signAccessToken } from "../lib/jwt";
 import { hashPassword, hashToken, generateRefreshToken } from "../lib/hash";
@@ -7,6 +7,8 @@ import { validateEmail, validatePassword } from "../lib/validate";
 import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
 import { SESSION_TTL_MS, INVITE_TTL_MS } from "../lib/constants";
+
+const ALLOWED_INVITE_ROLES = ["admin", "member"] as const;
 
 export async function createInvite(
   req: Request,
@@ -18,7 +20,8 @@ export async function createInvite(
   const ip = req.headers.get("CF-Connecting-IP");
   const ua = req.headers.get("User-Agent");
 
-  if (caller.role !== "owner" && caller.role !== "admin") {
+  // Only owners and admins can create invites
+  if (!caller.roles.includes("owner") && !caller.roles.includes("admin")) {
     return error("Only owners and admins can create invites", 403);
   }
 
@@ -29,16 +32,19 @@ export async function createInvite(
     return error("Invalid JSON body");
   }
 
-  if (!body.email || !body.org_id || !body.role) {
+  if (!body.email || !body.org_id || !body.role?.length) {
     return error("email, org_id, and role are required");
   }
 
   const emailErr = validateEmail(body.email);
   if (emailErr) return emailErr;
 
-  const ALLOWED_INVITE_ROLES = ["admin", "member"] as const;
-  if (!ALLOWED_INVITE_ROLES.includes(body.role as any)) {
-    return error(`role must be one of: ${ALLOWED_INVITE_ROLES.join(", ")}`);
+  // Validate all roles in the array
+  const invalidRoles = body.role.filter(
+    (r) => !ALLOWED_INVITE_ROLES.includes(r as any),
+  );
+  if (invalidRoles.length) {
+    return error(`Invalid roles: ${invalidRoles.join(", ")}. Allowed: ${ALLOWED_INVITE_ROLES.join(", ")}`);
   }
 
   if (body.org_id !== caller.org_id) {
@@ -84,7 +90,7 @@ export async function createInvite(
     org_id: body.org_id,
     ip_address: ip,
     user_agent: ua,
-    metadata: { invited_email: inviteEmail, role: body.role },
+    metadata: { invited_email: inviteEmail, roles: body.role },
   });
 
   return json(
@@ -148,28 +154,58 @@ export async function acceptInvite(
     `memberships?user_id=eq.${user.id}&org_id=eq.${invite.org_id}&select=id,status`,
   );
 
+  let membershipId: string;
+
   if (existingMembership) {
+    membershipId = existingMembership.id;
     // Reactivate if deactivated
     if (existingMembership.status !== "active") {
       await database.update(
         "memberships",
         { id: `eq.${existingMembership.id}` },
-        { status: "active", role: invite.role ?? "member" },
+        { status: "active" },
       );
     }
   } else {
-    await database.mutate("memberships", {
+    const newMembership = await database.mutate<Membership>("memberships", {
       user_id: user.id,
       org_id: invite.org_id,
-      role: invite.role,
       status: "active",
     });
+    membershipId = newMembership.id;
   }
 
-  // Mark invite as accepted with timestamp
+  // Assign roles from invite via join table
+  const inviteRoles = invite.role?.length ? invite.role : ["member"];
+  // Fetch role IDs
+  const roleRows = await database.query<{ id: string; name: string }>(
+    `roles?name=in.(${inviteRoles.join(",")})&select=id,name`,
+  );
+
+  for (const role of roleRows) {
+    try {
+      await database.mutate("membership_roles", {
+        membership_id: membershipId,
+        role_id: role.id,
+      });
+    } catch (err: any) {
+      // Ignore duplicate — role already assigned (e.g. reactivated membership)
+      if (!err?.message?.includes("23505") && !err?.message?.includes("duplicate")) {
+        throw err;
+      }
+    }
+  }
+
+  // Mark invite as accepted
   await database.update("invites", { id: `eq.${invite.id}` }, {
     accepted: true,
     accepted_at: new Date().toISOString(),
+  });
+
+  // Get RBAC claims for the new membership
+  const claims = await database.rpc<JwtClaims>("get_jwt_claims", {
+    p_user_id: user.id,
+    p_org_id: invite.org_id,
   });
 
   const refreshToken = generateRefreshToken();
@@ -186,14 +222,23 @@ export async function acceptInvite(
   });
 
   const accessToken = await signAccessToken(
-    { sub: user.id, email: user.email, org_id: invite.org_id, role: invite.role ?? "member" },
+    {
+      sub: user.id,
+      email: user.email,
+      org_id: invite.org_id,
+      roles: claims?.roles ?? inviteRoles,
+      products: claims?.products ?? [],
+      membership_status: claims?.membership_status ?? "active",
+      is_email_verified: user.is_email_verified,
+    },
     env,
   );
 
-  const response = json(
-    { success: true, user: { id: user.id, email: user.email }, org_id: invite.org_id },
-    200,
-  );
+  const response = json({
+    access_token: accessToken,
+    user: { id: user.id, email: user.email },
+    org_id: invite.org_id,
+  });
 
   setAuthCookies(response, accessToken, refreshToken);
 

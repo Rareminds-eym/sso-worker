@@ -15,3 +15,9 @@ export const ACCOUNT_LOCKOUT_THRESHOLD = 10;
 
 /** Account lockout window in seconds */
 export const ACCOUNT_LOCKOUT_WINDOW = 900; // 15 minutes
+
+/** JWT issuer claim — must match auth-core config */
+export const JWT_ISSUER = "sso-api";
+
+/** JWT audience claim — must match auth-core config */
+export const JWT_AUDIENCE = "sso-client";

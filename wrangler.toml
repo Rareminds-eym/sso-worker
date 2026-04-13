@@ -4,7 +4,7 @@ compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
-SUPABASE_URL = "https://your-project.supabase.co"
+SUPABASE_URL = "https://quvdgaydpctuspzeqknc.supabase.co"
 ALLOWED_ORIGINS = "http://localhost:3000,https://yourdomain.com"
 
 # Secrets (set via `wrangler secret put`):
@@ -15,4 +15,4 @@ ALLOWED_ORIGINS = "http://localhost:3000,https://yourdomain.com"
 
 [[kv_namespaces]]
 binding = "RATE_LIMIT_KV"
-id = "your-kv-namespace-id"
+id = "6f54bab45fd840678dde620cd1518705"
