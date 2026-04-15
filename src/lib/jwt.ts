@@ -57,9 +57,11 @@ export async function verifyAccessToken(
 
 /** Export the public key as a JWK for the JWKS endpoint */
 export async function getPublicJWK(env: Env) {
-  // importSPKI creates non-extractable keys, so we use Web Crypto directly
-  // with extractable: true for the JWKS export path.
-  const pem = env.JWT_PUBLIC_KEY;
+  return exportPemAsJwk(env.JWT_PUBLIC_KEY, env.JWT_KID);
+}
+
+/** Export any PEM public key as a JWK with the given kid */
+export async function exportPemAsJwk(pem: string, kid: string) {
   const pemBody = pem
     .replace(/-----BEGIN PUBLIC KEY-----/, "")
     .replace(/-----END PUBLIC KEY-----/, "")
@@ -70,7 +72,7 @@ export async function getPublicJWK(env: Env) {
     "spki",
     binaryDer,
     { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-    true, // extractable
+    true,
     ["verify"],
   );
 
@@ -78,7 +80,7 @@ export async function getPublicJWK(env: Env) {
 
   return {
     ...jwk,
-    kid: env.JWT_KID,
+    kid,
     alg: ALG,
     use: "sig",
   };

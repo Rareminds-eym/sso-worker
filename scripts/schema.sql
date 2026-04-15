@@ -163,6 +163,19 @@ create table if not exists email_verifications (
 create index if not exists idx_email_verifications_token on email_verifications (token);
 create index if not exists idx_email_verifications_user  on email_verifications (user_id);
 
+-- ─── Password Resets ───────────────────────────────────────────
+create table if not exists password_resets (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references users(id) on delete cascade,
+  token      text not null unique,
+  used       boolean default false,
+  expires_at timestamptz not null,
+  created_at timestamptz default now()
+);
+
+create index if not exists idx_password_resets_token on password_resets (token);
+create index if not exists idx_password_resets_user  on password_resets (user_id);
+
 -- ─── Audit Logs ───────────────────────────────────────────────
 create table if not exists audit_logs (
   id         uuid primary key default gen_random_uuid(),
@@ -192,6 +205,30 @@ alter table invites              enable row level security;
 alter table audit_logs           enable row level security;
 alter table oauth_accounts       enable row level security;
 alter table email_verifications  enable row level security;
+alter table password_resets      enable row level security;
+
+-- ─── RLS Deny-All Policies ─────────────────────────────────────
+-- All access goes through the service_role key (bypasses RLS).
+-- These policies ensure the anon key gets zero access if accidentally used.
+
+do $$ 
+declare
+  tbl text;
+begin
+  for tbl in 
+    select unnest(array[
+      'users', 'organizations', 'roles', 'products',
+      'memberships', 'membership_roles', 'organization_products', 'membership_products',
+      'sessions', 'invites', 'audit_logs', 'oauth_accounts',
+      'email_verifications', 'password_resets'
+    ])
+  loop
+    execute format(
+      'create policy if not exists "deny_all_%s" on %I for all to anon using (false) with check (false)',
+      tbl, tbl
+    );
+  end loop;
+end $$;
 
 -- ─── Triggers ──────────────────────────────────────────────────
 create or replace function set_updated_at()

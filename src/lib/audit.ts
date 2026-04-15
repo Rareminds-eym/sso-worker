@@ -11,8 +11,12 @@ export type AuditAction =
   | "switch_org"
   | "invite_created"
   | "invite_accepted"
+  | "invite_cancelled"
+  | "invite_resent"
   | "verification_requested"
-  | "email_verified";
+  | "email_verified"
+  | "password_reset_requested"
+  | "password_reset_completed";
 
 /**
  * Non-blocking audit log entry.

@@ -9,9 +9,15 @@ import { createInvite, acceptInvite } from "./routes/invite";
 import { listOrgs } from "./routes/orgs";
 import { jwks } from "./routes/jwks";
 import { requestVerification, verifyEmail } from "./routes/verify-email";
+import { forgotPassword, resetPassword } from "./routes/password-reset";
+import { cancelInvite, resendInvite } from "./routes/invite-manage";
+import { oauthRedirect, oauthCallback } from "./routes/oauth";
 import { rateLimit } from "./lib/rate-limit";
 import { authenticate } from "./lib/auth";
 import { json, error } from "./lib/response";
+
+/** Max request body size: 10 KB */
+const MAX_BODY_SIZE = 10_240;
 
 // ─── Declarative Route Table ───────────────────────────────────
 const routes: Record<string, Record<string, RouteConfig>> = {
@@ -23,12 +29,20 @@ const routes: Record<string, Record<string, RouteConfig>> = {
     "/auth/switch-org":          { handler: switchOrg,           auth: true },
     "/auth/invite":              { handler: createInvite,        auth: true },
     "/auth/invite/accept":       { handler: acceptInvite },
+    "/auth/invite/cancel":       { handler: cancelInvite,        auth: true },
+    "/auth/invite/resend":       { handler: resendInvite,        auth: true },
     "/auth/request-verification": { handler: requestVerification, auth: true },
     "/auth/verify-email":        { handler: verifyEmail },
+    "/auth/forgot-password":     { handler: forgotPassword },
+    "/auth/reset-password":      { handler: resetPassword },
   },
   GET: {
     "/auth/me":               { handler: me, auth: true },
     "/auth/orgs":             { handler: listOrgs, auth: true },
+    "/auth/oauth/google":     { handler: oauthRedirect },
+    "/auth/oauth/github":     { handler: oauthRedirect },
+    "/auth/oauth/google/callback": { handler: oauthCallback },
+    "/auth/oauth/github/callback": { handler: oauthCallback },
     "/.well-known/jwks.json": { handler: (_req, env) => jwks(env) },
     "/health":                { handler: () => Promise.resolve(json({ status: "ok" })) },
   },
@@ -88,6 +102,12 @@ export default {
     // CSRF check
     if (!csrfCheck(req, env)) {
       return withCors(error("Origin not allowed", 403), cors);
+    }
+
+    // Body size limit (10 KB for auth endpoints)
+    const contentLength = parseInt(req.headers.get("Content-Length") ?? "0", 10);
+    if (contentLength > MAX_BODY_SIZE) {
+      return withCors(error("Request body too large", 413), cors);
     }
 
     // Rate limiting

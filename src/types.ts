@@ -5,8 +5,14 @@ export interface Env {
   JWT_PRIVATE_KEY: string;
   JWT_PUBLIC_KEY: string;
   JWT_KID: string;
+  /** Previous public key PEM for key rotation (optional). Set during rotation window. */
+  JWT_PUBLIC_KEY_PREVIOUS?: string;
+  /** Previous key ID (optional). Set during rotation window. */
+  JWT_KID_PREVIOUS?: string;
   ALLOWED_ORIGINS: string;
   RATE_LIMIT_KV: KVNamespace;
+  /** Base URL for email links, e.g. "https://yourapp.com" (optional). */
+  APP_URL?: string;
 }
 
 // ─── Route Configuration ───────────────────────────────────────
