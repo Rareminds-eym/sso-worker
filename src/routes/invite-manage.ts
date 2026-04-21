@@ -1,7 +1,11 @@
 import type { Env, Invite, AccessTokenPayload } from "../types";
 import { db } from "../lib/db";
+import { hashToken } from "../lib/hash";
 import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
+import { sendEmail, inviteEmail } from "../lib/email";
+import { validateRedirectUrl, resolveAppUrl } from "../lib/validate";
+import { checkEmailThrottle } from "../lib/email-throttle";
 import { INVITE_TTL_MS } from "../lib/constants";
 
 /**
@@ -77,14 +81,17 @@ export async function resendInvite(
   const ip = req.headers.get("CF-Connecting-IP");
   const ua = req.headers.get("User-Agent");
 
-  let body: { invite_id?: string };
+  let body: { invite_id?: string; redirect_url?: string };
   try {
-    body = await req.json() as { invite_id?: string };
+    body = await req.json() as { invite_id?: string; redirect_url?: string };
   } catch {
     return error("Invalid JSON body");
   }
 
   if (!body.invite_id) return error("invite_id is required");
+
+  const redirectErr = validateRedirectUrl(body.redirect_url, env);
+  if (redirectErr) return redirectErr;
 
   const database = db(env);
 
@@ -102,15 +109,34 @@ export async function resendInvite(
     return error("Only owners and admins can resend invites", 403);
   }
 
+  const throttled = await checkEmailThrottle(env, "invite", caller.org_id);
+  if (throttled) return throttled;
+
   // Generate new token and extend expiry
   const newToken = crypto.randomUUID();
+  const newTokenHash = await hashToken(newToken);
   const newExpiry = new Date(Date.now() + INVITE_TTL_MS).toISOString();
 
   await database.update(
     "invites",
     { id: `eq.${invite.id}` },
-    { token: newToken, expires_at: newExpiry },
+    { token_hash: newTokenHash, expires_at: newExpiry },
   );
+
+  // Fetch org name for the email template
+  const org = await database.queryOne<{ name: string }>(
+    `organizations?id=eq.${caller.org_id}&select=name`,
+  );
+
+  // Send invite email
+  const appUrl = resolveAppUrl(body.redirect_url, env);
+  const acceptUrl = `${appUrl}/invite/accept?token=${newToken}`;
+  const { subject, html, text } = inviteEmail(
+    caller.email,
+    org?.name ?? "an organization",
+    acceptUrl,
+  );
+  ctx.waitUntil(sendEmail(env, { to: invite.email, subject, html, text }));
 
   audit(ctx, env, "invite_resent", {
     user_id: caller.sub,
@@ -122,7 +148,6 @@ export async function resendInvite(
 
   return json({
     invite_id: invite.id,
-    token: newToken,
     email: invite.email,
     expires_at: newExpiry,
   });

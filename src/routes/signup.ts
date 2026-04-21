@@ -3,9 +3,10 @@ import { db } from "../lib/db";
 import { hashPassword, hashToken, generateRefreshToken } from "../lib/hash";
 import { signAccessToken } from "../lib/jwt";
 import { setAuthCookies } from "../lib/cookies";
-import { validateEmail, validatePassword } from "../lib/validate";
+import { validateEmail, validatePassword, validateRedirectUrl, resolveAppUrl } from "../lib/validate";
 import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
+import { sendEmail, verificationEmail } from "../lib/email";
 import { SESSION_TTL_MS } from "../lib/constants";
 
 export async function signup(
@@ -29,6 +30,9 @@ export async function signup(
 
   const passErr = validatePassword(body.password);
   if (passErr) return passErr;
+
+  const redirectErr = validateRedirectUrl(body.redirect_url, env);
+  if (redirectErr) return redirectErr;
 
   const email = body.email.toLowerCase().trim();
   const ip = req.headers.get("CF-Connecting-IP");
@@ -102,6 +106,19 @@ export async function signup(
   );
 
   setAuthCookies(response, accessToken, refreshToken);
+
+  // Send verification email
+  const verifyToken = crypto.randomUUID();
+  const verifyTokenHash = await hashToken(verifyToken);
+  await database.mutate("email_verifications", {
+    user_id: result.user_id,
+    token_hash: verifyTokenHash,
+    expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+  });
+  const appUrl = resolveAppUrl(body.redirect_url, env);
+  const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
+  const { subject, html, text } = verificationEmail(verifyUrl);
+  ctx.waitUntil(sendEmail(env, { to: email, subject, html, text }));
 
   audit(ctx, env, "signup", {
     user_id: result.user_id,

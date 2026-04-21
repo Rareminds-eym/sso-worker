@@ -6,13 +6,22 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 SUPABASE_URL = "https://quvdgaydpctuspzeqknc.supabase.co"
 ALLOWED_ORIGINS = "http://localhost:3000,https://yourdomain.com"
+ALLOWED_APP_URLS = "http://localhost:5173"
 
 # Secrets (set via `wrangler secret put`):
 # SUPABASE_SERVICE_ROLE_KEY
 # JWT_PRIVATE_KEY  (PEM-encoded RS256 private key)
 # JWT_PUBLIC_KEY   (PEM-encoded RS256 public key)
 # JWT_KID          (Key ID for JWKS, e.g. "key-1")
+# EMAIL_API_KEY    (Shared API key for email-worker service binding)
 
 [[kv_namespaces]]
 binding = "RATE_LIMIT_KV"
 id = "6f54bab45fd840678dde620cd1518705"
+
+[[services]]
+binding = "EMAIL_SERVICE"
+service = "shared-email-api"
+
+[triggers]
+crons = ["0 3 * * *"]

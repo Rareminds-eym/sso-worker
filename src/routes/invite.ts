@@ -3,9 +3,11 @@ import { db } from "../lib/db";
 import { signAccessToken } from "../lib/jwt";
 import { hashPassword, hashToken, generateRefreshToken } from "../lib/hash";
 import { setAuthCookies } from "../lib/cookies";
-import { validateEmail, validatePassword } from "../lib/validate";
+import { validateEmail, validatePassword, validateRedirectUrl, resolveAppUrl } from "../lib/validate";
 import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
+import { sendEmail, inviteEmail } from "../lib/email";
+import { checkEmailThrottle } from "../lib/email-throttle";
 import { SESSION_TTL_MS, INVITE_TTL_MS } from "../lib/constants";
 
 const ALLOWED_INVITE_ROLES = ["admin", "member"] as const;
@@ -39,6 +41,9 @@ export async function createInvite(
   const emailErr = validateEmail(body.email);
   if (emailErr) return emailErr;
 
+  const redirectErr = validateRedirectUrl(body.redirect_url, env);
+  if (redirectErr) return redirectErr;
+
   // Validate all roles in the array
   const invalidRoles = body.role.filter(
     (r) => !ALLOWED_INVITE_ROLES.includes(r as any),
@@ -52,10 +57,10 @@ export async function createInvite(
   }
 
   const database = db(env);
-  const inviteEmail = body.email.toLowerCase().trim();
+  const inviteEmailAddress = body.email.toLowerCase().trim();
 
   const existingUser = await database.queryOne<User>(
-    `users?email=eq.${encodeURIComponent(inviteEmail)}&select=id`,
+    `users?email=eq.${encodeURIComponent(inviteEmailAddress)}&select=id`,
   );
   if (existingUser) {
     const existingMembership = await database.queryOne<Membership>(
@@ -67,37 +72,55 @@ export async function createInvite(
   }
 
   const existing = await database.queryOne<Invite>(
-    `invites?email=eq.${encodeURIComponent(inviteEmail)}&org_id=eq.${body.org_id}&accepted=eq.false&select=id`,
+    `invites?email=eq.${encodeURIComponent(inviteEmailAddress)}&org_id=eq.${body.org_id}&accepted=eq.false&select=id`,
   );
   if (existing) {
     return error("An invite for this email already exists", 409);
   }
 
+  const throttled = await checkEmailThrottle(env, "invite", body.org_id);
+  if (throttled) return throttled;
+
   const inviteToken = crypto.randomUUID();
+  const inviteTokenHash = await hashToken(inviteToken);
 
   const invite = await database.mutate<Invite>("invites", {
-    email: inviteEmail,
+    email: inviteEmailAddress,
     org_id: body.org_id,
     role: body.role,
-    token: inviteToken,
+    token_hash: inviteTokenHash,
     invited_by: caller.sub,
     expires_at: new Date(Date.now() + INVITE_TTL_MS).toISOString(),
     accepted: false,
   });
+
+  // Fetch org name for the email template
+  const org = await database.queryOne<{ name: string }>(
+    `organizations?id=eq.${body.org_id}&select=name`,
+  );
+
+  // Send invite email
+  const appUrl = resolveAppUrl(body.redirect_url, env);
+  const acceptUrl = `${appUrl}/invite/accept?token=${inviteToken}`;
+  const { subject, html, text } = inviteEmail(
+    caller.email,
+    org?.name ?? "an organization",
+    acceptUrl,
+  );
+  ctx.waitUntil(sendEmail(env, { to: inviteEmailAddress, subject, html, text }));
 
   audit(ctx, env, "invite_created", {
     user_id: caller.sub,
     org_id: body.org_id,
     ip_address: ip,
     user_agent: ua,
-    metadata: { invited_email: inviteEmail, roles: body.role },
+    metadata: { invited_email: inviteEmailAddress, roles: body.role },
   });
 
   return json(
     {
       invite_id: invite.id,
-      token: inviteToken,
-      email: inviteEmail,
+      email: inviteEmailAddress,
       expires_at: invite.expires_at,
     },
     201,
@@ -124,8 +147,9 @@ export async function acceptInvite(
   const ua = req.headers.get("User-Agent");
   const database = db(env);
 
+  const tokenHash = await hashToken(body.token);
   const invite = await database.queryOne<Invite>(
-    `invites?token=eq.${encodeURIComponent(body.token)}&select=*`,
+    `invites?token_hash=eq.${encodeURIComponent(tokenHash)}&select=*`,
   );
 
   if (!invite) return error("Invalid invite token", 404);

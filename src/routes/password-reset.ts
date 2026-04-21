@@ -1,25 +1,27 @@
 import type { Env, User } from "../types";
 import { db } from "../lib/db";
-import { hashPassword } from "../lib/hash";
-import { validateEmail, validatePassword } from "../lib/validate";
+import { hashPassword, hashToken } from "../lib/hash";
+import { validateEmail, validatePassword, validateRedirectUrl, resolveAppUrl } from "../lib/validate";
 import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
+import { sendEmail, passwordResetEmail } from "../lib/email";
+import { checkEmailThrottle } from "../lib/email-throttle";
 
 const RESET_TTL_MS = 1 * 60 * 60 * 1000; // 1 hour
 
 /**
  * POST /auth/forgot-password
- * Generates a password reset token. Returns it for the caller to deliver via email.
- * Always returns 200 even if the email doesn't exist (prevents email enumeration).
+ * Sends a password reset email if the account exists.
+ * Always returns the same message to prevent email enumeration.
  */
 export async function forgotPassword(
   req: Request,
   env: Env,
   ctx: ExecutionContext,
 ): Promise<Response> {
-  let body: { email?: string };
+  let body: { email?: string; redirect_url?: string };
   try {
-    body = await req.json() as { email?: string };
+    body = await req.json() as { email?: string; redirect_url?: string };
   } catch {
     return error("Invalid JSON body");
   }
@@ -29,10 +31,17 @@ export async function forgotPassword(
   const emailErr = validateEmail(body.email);
   if (emailErr) return emailErr;
 
+  const redirectErr = validateRedirectUrl(body.redirect_url, env);
+  if (redirectErr) return redirectErr;
+
   const email = body.email.toLowerCase().trim();
   const ip = req.headers.get("CF-Connecting-IP");
   const ua = req.headers.get("User-Agent");
   const database = db(env);
+
+  // Throttle BEFORE user lookup to prevent enumeration via throttle behavior
+  const throttled = await checkEmailThrottle(env, "password_reset", email);
+  if (throttled) return throttled;
 
   const user = await database.queryOne<User>(
     `users?email=eq.${encodeURIComponent(email)}&select=id,is_blocked`,
@@ -40,10 +49,11 @@ export async function forgotPassword(
 
   // Always return success to prevent email enumeration
   if (!user || user.is_blocked) {
-    return json({ message: "If an account exists, a reset token has been generated." });
+    return json({ message: "If an account exists, a reset email has been sent." });
   }
 
   const token = crypto.randomUUID();
+  const tokenHash = await hashToken(token);
   const expiresAt = new Date(Date.now() + RESET_TTL_MS).toISOString();
 
   // Invalidate any existing unused reset tokens for this user
@@ -51,13 +61,21 @@ export async function forgotPassword(
     "password_resets",
     { user_id: `eq.${user.id}`, used: "eq.false" },
     { used: true },
-  ).catch(() => { /* no existing tokens — that's fine */ });
+  ).catch((err) => {
+    console.error("[SSO] Failed to invalidate existing reset tokens:", err);
+  });
 
   await database.mutate("password_resets", {
     user_id: user.id,
-    token,
+    token_hash: tokenHash,
     expires_at: expiresAt,
   });
+
+  // Send password reset email
+  const appUrl = resolveAppUrl(body.redirect_url, env);
+  const resetUrl = `${appUrl}/reset-password?token=${token}`;
+  const { subject, html, text } = passwordResetEmail(resetUrl);
+  ctx.waitUntil(sendEmail(env, { to: email, subject, html, text }));
 
   audit(ctx, env, "password_reset_requested", {
     user_id: user.id,
@@ -65,7 +83,7 @@ export async function forgotPassword(
     user_agent: ua,
   });
 
-  return json({ reset_token: token, expires_at: expiresAt });
+  return json({ message: "If an account exists, a reset email has been sent." });
 }
 
 /**
@@ -95,13 +113,14 @@ export async function resetPassword(
   const ua = req.headers.get("User-Agent");
   const database = db(env);
 
+  const tokenHash = await hashToken(body.token);
   const record = await database.queryOne<{
     id: string;
     user_id: string;
     used: boolean;
     expires_at: string;
   }>(
-    `password_resets?token=eq.${encodeURIComponent(body.token)}&select=*`,
+    `password_resets?token_hash=eq.${encodeURIComponent(tokenHash)}&select=*`,
   );
 
   if (!record) return error("Invalid reset token", 404);

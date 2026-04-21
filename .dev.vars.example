@@ -6,3 +6,5 @@ SUPABASE_SERVICE_ROLE_KEY=your-service-role-key-here
 JWT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nYOUR_KEY_HERE\n-----END PRIVATE KEY-----"
 JWT_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\nYOUR_KEY_HERE\n-----END PUBLIC KEY-----"
 JWT_KID=key-1
+EMAIL_API_KEY=your-email-worker-api-key-here
+ALLOWED_APP_URLS=http://localhost:5173

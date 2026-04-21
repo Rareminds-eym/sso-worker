@@ -15,6 +15,7 @@ import { oauthRedirect, oauthCallback } from "./routes/oauth";
 import { rateLimit } from "./lib/rate-limit";
 import { authenticate } from "./lib/auth";
 import { json, error } from "./lib/response";
+import { db } from "./lib/db";
 
 /** Max request body size: 10 KB */
 const MAX_BODY_SIZE = 10_240;
@@ -85,6 +86,12 @@ function csrfCheck(req: Request, env: Env): boolean {
 
 // ─── Worker Entry ──────────────────────────────────────────────
 export default {
+  async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext): Promise<void> {
+    const database = db(env);
+    const deleted = await database.rpc<number>("cleanup_expired_tokens");
+    console.log(`[SSO] Cleaned up ${deleted} expired token rows`);
+  },
+
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const cors = corsHeaders(req, env);
     const requestId = crypto.randomUUID();

@@ -11,8 +11,12 @@ export interface Env {
   JWT_KID_PREVIOUS?: string;
   ALLOWED_ORIGINS: string;
   RATE_LIMIT_KV: KVNamespace;
-  /** Base URL for email links, e.g. "https://yourapp.com" (optional). */
-  APP_URL?: string;
+  /** Service binding to the email-worker for sending emails. */
+  EMAIL_SERVICE: Fetcher;
+  /** API key for authenticating with the email-worker. */
+  EMAIL_API_KEY: string;
+  /** Comma-separated allowlist of base URLs for email links, e.g. "https://skillpassport.rareminds.in,https://courses.rareminds.in". */
+  ALLOWED_APP_URLS: string;
 }
 
 // ─── Route Configuration ───────────────────────────────────────
@@ -134,7 +138,7 @@ export interface Invite {
   email: string;
   org_id: string;
   role: string[];
-  token: string | null;
+  token_hash: string | null;
   invited_by: string | null;
   expires_at: string | null;
   accepted: boolean;
@@ -147,6 +151,7 @@ export interface SignupBody {
   email: string;
   password: string;
   org_name: string;
+  redirect_url?: string;
 }
 
 export interface LoginBody {
@@ -162,6 +167,7 @@ export interface InviteBody {
   email: string;
   org_id: string;
   role: string[];
+  redirect_url?: string;
 }
 
 export interface AcceptInviteBody {

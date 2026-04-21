@@ -139,7 +139,7 @@ create table if not exists invites (
   email       text not null,
   org_id      uuid not null references organizations(id) on delete cascade,
   role        text[] default '{member}',
-  token       text unique,
+  token_hash  text unique,
   invited_by  uuid references users(id) on delete set null,
   expires_at  timestamptz,
   accepted    boolean default false,
@@ -147,34 +147,35 @@ create table if not exists invites (
   created_at  timestamptz default now()
 );
 
-create index if not exists idx_invites_token on invites (token);
-create index if not exists idx_invites_org   on invites (org_id);
+create index if not exists idx_invites_token_hash on invites (token_hash);
+create index if not exists idx_invites_org         on invites (org_id);
+create index if not exists idx_invites_email_org_active on invites (email, org_id, accepted) where accepted = false;
 
 -- ─── Email Verifications ───────────────────────────────────────
 create table if not exists email_verifications (
   id         uuid primary key default gen_random_uuid(),
   user_id    uuid not null references users(id) on delete cascade,
-  token      text not null unique,
+  token_hash text not null unique,
   used       boolean default false,
   expires_at timestamptz not null,
   created_at timestamptz default now()
 );
 
-create index if not exists idx_email_verifications_token on email_verifications (token);
-create index if not exists idx_email_verifications_user  on email_verifications (user_id);
+create index if not exists idx_email_verifications_token_hash on email_verifications (token_hash);
+create index if not exists idx_email_verifications_user        on email_verifications (user_id);
 
 -- ─── Password Resets ───────────────────────────────────────────
 create table if not exists password_resets (
   id         uuid primary key default gen_random_uuid(),
   user_id    uuid not null references users(id) on delete cascade,
-  token      text not null unique,
+  token_hash text not null unique,
   used       boolean default false,
   expires_at timestamptz not null,
   created_at timestamptz default now()
 );
 
-create index if not exists idx_password_resets_token on password_resets (token);
-create index if not exists idx_password_resets_user  on password_resets (user_id);
+create index if not exists idx_password_resets_token_hash on password_resets (token_hash);
+create index if not exists idx_password_resets_user       on password_resets (user_id);
 
 -- ─── Audit Logs ───────────────────────────────────────────────
 create table if not exists audit_logs (
@@ -257,6 +258,36 @@ begin
   return deleted_count;
 end;
 $fn$ language plpgsql;
+
+-- Cleanup expired tokens from email_verifications, password_resets, and invites
+-- Returns the total number of rows deleted
+create or replace function cleanup_expired_tokens()
+returns integer as $fn$
+declare
+  v_deleted integer := 0;
+  v_count integer;
+begin
+  -- Expired email verifications (48h buffer past 24h expiry)
+  delete from email_verifications
+  where expires_at < now() - interval '48 hours';
+  get diagnostics v_count = row_count;
+  v_deleted := v_deleted + v_count;
+
+  -- Expired password resets (2h buffer past 1h expiry)
+  delete from password_resets
+  where expires_at < now() - interval '2 hours';
+  get diagnostics v_count = row_count;
+  v_deleted := v_deleted + v_count;
+
+  -- Expired invites (14d buffer past 7d expiry)
+  delete from invites
+  where expires_at < now() - interval '14 days';
+  get diagnostics v_count = row_count;
+  v_deleted := v_deleted + v_count;
+
+  return v_deleted;
+end;
+$fn$ language plpgsql security definer;
 
 -- Single-query JWT claims generation
 create or replace function get_jwt_claims(
