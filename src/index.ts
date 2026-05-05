@@ -1,5 +1,6 @@
 import type { Env, RouteConfig } from "./types";
 import { signup } from "./routes/signup";
+import { signupMember } from "./routes/signup-member";
 import { login } from "./routes/login";
 import { refresh } from "./routes/refresh";
 import { logout } from "./routes/logout";
@@ -24,6 +25,7 @@ const MAX_BODY_SIZE = 10_240;
 const routes: Record<string, Record<string, RouteConfig>> = {
   POST: {
     "/auth/signup":              { handler: signup },
+    "/auth/signup-member":       { handler: signupMember },
     "/auth/login":               { handler: login },
     "/auth/refresh":             { handler: refresh },
     "/auth/logout":              { handler: logout },

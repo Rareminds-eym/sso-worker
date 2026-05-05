@@ -174,3 +174,11 @@ export interface AcceptInviteBody {
   token: string;
   password?: string;
 }
+
+export interface SignupMemberBody {
+  email: string;
+  password: string;
+  role: string;
+  org_id?: string;
+  redirect_url?: string;
+}

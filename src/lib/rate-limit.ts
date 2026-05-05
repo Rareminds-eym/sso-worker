@@ -9,6 +9,7 @@ interface RateLimitConfig {
 const ROUTE_LIMITS: Record<string, RateLimitConfig> = {
   "/auth/login": { limit: 5, windowSeconds: 60 },
   "/auth/signup": { limit: 3, windowSeconds: 60 },
+  "/auth/signup-member": { limit: 3, windowSeconds: 60 },
   "/auth/refresh": { limit: 10, windowSeconds: 60 },
   "/auth/invite": { limit: 5, windowSeconds: 60 },
   "/auth/invite/accept": { limit: 5, windowSeconds: 60 },

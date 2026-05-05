@@ -3,6 +3,7 @@ import { db } from "./db";
 
 export type AuditAction =
   | "signup"
+  | "signup_member"
   | "login"
   | "login_failed"
   | "logout"
