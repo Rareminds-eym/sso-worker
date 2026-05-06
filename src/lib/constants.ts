@@ -21,3 +21,6 @@ export const JWT_ISSUER = "sso-api";
 
 /** JWT audience claim — must match auth-core config */
 export const JWT_AUDIENCE = "sso-client";
+
+/** Platform default org ID — users without a specific org get membership here */
+export const PLATFORM_ORG_ID = "00000000-0000-0000-0000-000000000001";

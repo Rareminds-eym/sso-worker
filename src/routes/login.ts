@@ -84,20 +84,15 @@ export async function login(
     `memberships?user_id=eq.${user.id}&status=eq.active&select=*&order=created_at.asc`,
   );
 
-  if (!memberships.length) {
-    return error("No active organization membership found", 403);
-  }
+  const activeMembership = memberships[0] ?? null;
 
-  const activeMembership = memberships[0];
-
-  // Get RBAC claims via single RPC call
-  const claims = await database.rpc<JwtClaims>("get_jwt_claims", {
-    p_user_id: user.id,
-    p_org_id: activeMembership.org_id,
-  });
-
-  if (!claims) {
-    return error("Failed to resolve membership claims", 500);
+  // Get RBAC claims if user has a membership
+  let claims: JwtClaims | null = null;
+  if (activeMembership) {
+    claims = await database.rpc<JwtClaims>("get_jwt_claims", {
+      p_user_id: user.id,
+      p_org_id: activeMembership.org_id,
+    });
   }
 
   const refreshToken = generateRefreshToken();
@@ -105,7 +100,7 @@ export async function login(
 
   await database.mutate("sessions", {
     user_id: user.id,
-    org_id: activeMembership.org_id,
+    org_id: activeMembership?.org_id ?? null,
     refresh_token_hash: refreshHash,
     user_agent: ua,
     ip_address: ip,
@@ -117,10 +112,10 @@ export async function login(
     {
       sub: user.id,
       email: user.email,
-      org_id: activeMembership.org_id,
-      roles: claims.roles,
-      products: claims.products,
-      membership_status: claims.membership_status,
+      org_id: activeMembership?.org_id ?? "",
+      roles: claims?.roles ?? [],
+      products: claims?.products ?? [],
+      membership_status: claims?.membership_status ?? "active",
       is_email_verified: user.is_email_verified,
     },
     env,
@@ -129,7 +124,7 @@ export async function login(
   const response = json({
     access_token: accessToken,
     user: { id: user.id, email: user.email },
-    active_org_id: activeMembership.org_id,
+    active_org_id: activeMembership?.org_id ?? null,
     organizations: memberships.map((m) => ({ org_id: m.org_id })),
   });
 
@@ -137,7 +132,7 @@ export async function login(
 
   audit(ctx, env, "login", {
     user_id: user.id,
-    org_id: activeMembership.org_id,
+    org_id: activeMembership?.org_id ?? null,
     ip_address: ip,
     user_agent: ua,
   });
