@@ -55,10 +55,30 @@ const routes: Record<string, Record<string, RouteConfig>> = {
 };
 
 // ─── CORS ──────────────────────────────────────────────────────
+function originMatchesPattern(origin: string, pattern: string): boolean {
+  if (pattern === "*") return true;
+  if (pattern.includes("*.")) {
+    // Wildcard subdomain: "https://*.rareminds.in" matches "https://skillpassport.rareminds.in"
+    const wildcardSuffix = pattern.replace("*.", "");
+    try {
+      const originUrl = new URL(origin);
+      const patternUrl = new URL(wildcardSuffix);
+      return (
+        originUrl.protocol === patternUrl.protocol &&
+        (originUrl.hostname === patternUrl.hostname ||
+          originUrl.hostname.endsWith("." + patternUrl.hostname))
+      );
+    } catch {
+      return false;
+    }
+  }
+  return origin === pattern;
+}
+
 function corsHeaders(req: Request, env: Env): Record<string, string> {
   const origin = req.headers.get("Origin") ?? "";
   const allowed = env.ALLOWED_ORIGINS.split(",").map((o) => o.trim());
-  const isAllowed = allowed.includes(origin) || allowed.includes("*");
+  const isAllowed = allowed.some((pattern) => originMatchesPattern(origin, pattern));
 
   if (!isAllowed) return {};
 
@@ -86,7 +106,7 @@ function csrfCheck(req: Request, env: Env): boolean {
   if (!origin) return true; // non-browser clients (curl, SDKs) don't send Origin
 
   const allowed = env.ALLOWED_ORIGINS.split(",").map((o) => o.trim());
-  return allowed.includes(origin) || allowed.includes("*");
+  return allowed.some((pattern) => originMatchesPattern(origin, pattern));
 }
 
 // ─── Worker Entry ──────────────────────────────────────────────

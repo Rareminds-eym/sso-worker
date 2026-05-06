@@ -13,6 +13,27 @@ export function validateEmail(email: unknown): Response | null {
 }
 
 /**
+ * Check if a URL matches a pattern (supports wildcard subdomains like "https://*.rareminds.in")
+ */
+function urlMatchesPattern(url: string, pattern: string): boolean {
+  if (pattern.includes("*.")) {
+    const wildcardSuffix = pattern.replace("*.", "");
+    try {
+      const urlObj = new URL(url);
+      const patternObj = new URL(wildcardSuffix);
+      return (
+        urlObj.protocol === patternObj.protocol &&
+        (urlObj.hostname === patternObj.hostname ||
+          urlObj.hostname.endsWith("." + patternObj.hostname))
+      );
+    } catch {
+      return false;
+    }
+  }
+  return url === pattern;
+}
+
+/**
  * Validate redirect_url against the ALLOWED_APP_URLS allowlist.
  * Returns an error Response (400) if invalid, or null if valid.
  *
@@ -33,7 +54,7 @@ export function validateRedirectUrl(redirectUrl: string | undefined, env: { ALLO
 
   const normalized = redirectUrl.replace(/\/+$/, "");
 
-  if (!allowed.includes(normalized)) {
+  if (!allowed.some((pattern) => urlMatchesPattern(normalized, pattern))) {
     return error("redirect_url is not allowed. Must match one of the configured app URLs.", 400);
   }
 
@@ -47,7 +68,7 @@ export function validateRedirectUrl(redirectUrl: string | undefined, env: { ALLO
  * (same as Supabase's `redirectTo`, Auth0's `redirect_uri`).
  *
  * 1. If `redirectUrl` is provided, validate it against ALLOWED_APP_URLS.
- * 2. If not provided, return the first URL in the allowlist as default.
+ * 2. If not provided, return the first non-wildcard URL in the allowlist as default.
  * 3. Always strips trailing slashes.
  *
  * IMPORTANT: Call validateRedirectUrl() BEFORE this function to reject
@@ -72,20 +93,26 @@ export function resolveAppUrl(redirectUrl: string | undefined, env: { ALLOWED_AP
     throw new Error("ALLOWED_APP_URLS must contain at least one URL");
   }
 
-  // Validate each entry is a proper URL
+  // Validate each non-wildcard entry is a proper URL
   for (const u of allowed) {
-    try { new URL(u); } catch { throw new Error(`ALLOWED_APP_URLS contains invalid URL: ${u}`); }
+    if (!u.includes("*.")) {
+      try { new URL(u); } catch { throw new Error(`ALLOWED_APP_URLS contains invalid URL: ${u}`); }
+    }
   }
 
-  // No redirect_url requested — use the first allowed URL as default
+  // No redirect_url requested — use the first non-wildcard URL as default
   if (!redirectUrl) {
-    return allowed[0];
+    const firstConcrete = allowed.find((u) => !u.includes("*."));
+    if (!firstConcrete) {
+      throw new Error("ALLOWED_APP_URLS must contain at least one non-wildcard URL for default email links");
+    }
+    return firstConcrete;
   }
 
   const normalized = redirectUrl.replace(/\/+$/, "");
 
-  // Must be an exact match of an allowed base URL (prevents open-redirect)
-  if (!allowed.includes(normalized)) {
+  // Must match an allowed pattern (supports wildcards)
+  if (!allowed.some((pattern) => urlMatchesPattern(normalized, pattern))) {
     throw new Error(
       `redirect_url "${redirectUrl}" is not in the ALLOWED_APP_URLS allowlist. ` +
       `Allowed: ${env.ALLOWED_APP_URLS}`,
