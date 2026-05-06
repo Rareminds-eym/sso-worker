@@ -5,8 +5,8 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 SUPABASE_URL = "https://quvdgaydpctuspzeqknc.supabase.co"
-ALLOWED_ORIGINS = "http://localhost:3000,http://localhost:5173,http://localhost:8788,https://skillpassport.rareminds.in,https://www.skillpassport.rareminds.in"
-ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:5173,https://skillpassport.rareminds.in"
+ALLOWED_ORIGINS = "http://localhost:3000,http://localhost:5173,http://localhost:8788,https://skillpassport.rareminds.in,https://www.skillpassport.rareminds.in,*"
+ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:5173,https://skillpassport.rareminds.in,*"
 
 # Secrets (set via `wrangler secret put`):
 # SUPABASE_SERVICE_ROLE_KEY
