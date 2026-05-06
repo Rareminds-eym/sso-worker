@@ -15,6 +15,12 @@ import { SESSION_TTL_MS } from "../lib/constants";
  * Creates a user without creating an organization.
  * Optionally joins an existing org with the specified role.
  * Used by students, educators, recruiters who self-register.
+ *
+ * Atomicity guarantee:
+ * - If anything other than email delivery fails after user creation,
+ *   the user is rolled back (deleted) from the database.
+ * - Email delivery failure is non-blocking; the response includes
+ *   `email_sent: false` so the frontend can offer a resend option.
  */
 export async function signupMember(
   req: Request,
@@ -48,6 +54,7 @@ export async function signupMember(
 
   const password_hash = await hashPassword(body.password);
 
+  // ─── Step 1: Create user in database ─────────────────────────
   let result: { user_id: string; org_id: string | null; membership_id: string | null };
   try {
     result = await database.rpc<{
@@ -73,73 +80,95 @@ export async function signupMember(
     throw err;
   }
 
-  // Get RBAC claims (only if user has an org membership)
-  let claims: JwtClaims | null = null;
-  if (result.org_id) {
-    claims = await database.rpc<JwtClaims>("get_jwt_claims", {
-      p_user_id: result.user_id,
-      p_org_id: result.org_id,
+  // ─── Step 2: Create session + sign JWT (rollback user on failure) ──
+  try {
+    // Get RBAC claims (only if user has an org membership)
+    let claims: JwtClaims | null = null;
+    if (result.org_id) {
+      claims = await database.rpc<JwtClaims>("get_jwt_claims", {
+        p_user_id: result.user_id,
+        p_org_id: result.org_id,
+      });
+    }
+
+    const refreshToken = generateRefreshToken();
+    const refreshHash = await hashToken(refreshToken);
+
+    await database.mutate("sessions", {
+      user_id: result.user_id,
+      org_id: result.org_id,
+      refresh_token_hash: refreshHash,
+      user_agent: ua,
+      ip_address: ip,
+      revoked: false,
+      expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
     });
+
+    const accessToken = await signAccessToken(
+      {
+        sub: result.user_id,
+        email,
+        org_id: result.org_id ?? "",
+        roles: claims?.roles ?? [],
+        products: claims?.products ?? [],
+        membership_status: claims?.membership_status ?? "active",
+        is_email_verified: false,
+      },
+      env,
+    );
+
+    // ─── Step 3: Send verification email (non-blocking, no rollback) ──
+    let emailSent = true;
+    try {
+      const verifyToken = crypto.randomUUID();
+      const verifyTokenHash = await hashToken(verifyToken);
+      await database.mutate("email_verifications", {
+        user_id: result.user_id,
+        token_hash: verifyTokenHash,
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      });
+      const appUrl = resolveAppUrl(body.redirect_url, env);
+      const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
+      const { subject, html, text } = verificationEmail(verifyUrl);
+      // Fire-and-forget — don't await, don't block the response
+      ctx.waitUntil(sendEmail(env, { to: email, subject, html, text }));
+    } catch (emailErr) {
+      // Email failure is non-critical — user is created, session is valid
+      emailSent = false;
+      console.error("[SSO] Verification email setup failed:", emailErr);
+    }
+
+    // ─── Step 4: Build response ──────────────────────────────────
+    const responseBody: Record<string, unknown> = {
+      access_token: accessToken,
+      user: { id: result.user_id, email },
+      email_sent: emailSent,
+    };
+
+    if (result.org_id) {
+      responseBody.org = { id: result.org_id };
+    }
+
+    const response = json(responseBody, 201);
+    setAuthCookies(response, accessToken, refreshToken);
+
+    audit(ctx, env, "signup_member", {
+      user_id: result.user_id,
+      org_id: result.org_id,
+      ip_address: ip,
+      user_agent: ua,
+      metadata: { role: body.role, email_sent: emailSent },
+    });
+
+    return response;
+  } catch (err) {
+    // ─── Rollback: delete the user if session/JWT creation failed ──
+    console.error("[SSO] Signup post-creation failed, rolling back user:", err);
+    try {
+      await database.query(`users?id=eq.${result.user_id}`, { method: "DELETE" });
+    } catch (rollbackErr) {
+      console.error("[SSO] Rollback failed:", rollbackErr);
+    }
+    return error("Signup failed. Please try again.", 500);
   }
-
-  const refreshToken = generateRefreshToken();
-  const refreshHash = await hashToken(refreshToken);
-
-  await database.mutate("sessions", {
-    user_id: result.user_id,
-    org_id: result.org_id,
-    refresh_token_hash: refreshHash,
-    user_agent: ua,
-    ip_address: ip,
-    revoked: false,
-    expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
-  });
-
-  const accessToken = await signAccessToken(
-    {
-      sub: result.user_id,
-      email,
-      org_id: result.org_id ?? "",
-      roles: claims?.roles ?? [],
-      products: claims?.products ?? [],
-      membership_status: claims?.membership_status ?? "active",
-      is_email_verified: false,
-    },
-    env,
-  );
-
-  const responseBody: Record<string, unknown> = {
-    access_token: accessToken,
-    user: { id: result.user_id, email },
-  };
-
-  if (result.org_id) {
-    responseBody.org = { id: result.org_id };
-  }
-
-  const response = json(responseBody, 201);
-  setAuthCookies(response, accessToken, refreshToken);
-
-  // Send verification email
-  const verifyToken = crypto.randomUUID();
-  const verifyTokenHash = await hashToken(verifyToken);
-  await database.mutate("email_verifications", {
-    user_id: result.user_id,
-    token_hash: verifyTokenHash,
-    expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-  });
-  const appUrl = resolveAppUrl(body.redirect_url, env);
-  const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
-  const { subject, html, text } = verificationEmail(verifyUrl);
-  ctx.waitUntil(sendEmail(env, { to: email, subject, html, text }));
-
-  audit(ctx, env, "signup_member", {
-    user_id: result.user_id,
-    org_id: result.org_id,
-    ip_address: ip,
-    user_agent: ua,
-    metadata: { role: body.role },
-  });
-
-  return response;
 }

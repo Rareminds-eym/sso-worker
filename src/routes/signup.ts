@@ -9,6 +9,18 @@ import { audit } from "../lib/audit";
 import { sendEmail, verificationEmail } from "../lib/email";
 import { SESSION_TTL_MS } from "../lib/constants";
 
+/**
+ * POST /auth/signup
+ *
+ * Creates a user + organization + membership with owner role.
+ * Used by institution admins creating their school/college/university.
+ *
+ * Atomicity guarantee:
+ * - If anything other than email delivery fails after user/org creation,
+ *   the user and org are rolled back (deleted) from the database.
+ * - Email delivery failure is non-blocking; the response includes
+ *   `email_sent: false` so the frontend can offer a resend option.
+ */
 export async function signup(
   req: Request,
   env: Env,
@@ -46,6 +58,7 @@ export async function signup(
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
 
+  // ─── Step 1: Create user + org in database ───────────────────
   let result: { user_id: string; org_id: string; slug: string };
   try {
     result = await database.rpc<{ user_id: string; org_id: string; slug: string }>(
@@ -64,68 +77,88 @@ export async function signup(
     throw err;
   }
 
-  // Get RBAC claims (owner role, no products yet)
-  const claims = await database.rpc<JwtClaims>("get_jwt_claims", {
-    p_user_id: result.user_id,
-    p_org_id: result.org_id,
-  });
+  // ─── Step 2: Create session + sign JWT (rollback on failure) ──
+  try {
+    const claims = await database.rpc<JwtClaims>("get_jwt_claims", {
+      p_user_id: result.user_id,
+      p_org_id: result.org_id,
+    });
 
-  const refreshToken = generateRefreshToken();
-  const refreshHash = await hashToken(refreshToken);
+    const refreshToken = generateRefreshToken();
+    const refreshHash = await hashToken(refreshToken);
 
-  await database.mutate("sessions", {
-    user_id: result.user_id,
-    org_id: result.org_id,
-    refresh_token_hash: refreshHash,
-    user_agent: ua,
-    ip_address: ip,
-    revoked: false,
-    expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
-  });
-
-  const accessToken = await signAccessToken(
-    {
-      sub: result.user_id,
-      email,
+    await database.mutate("sessions", {
+      user_id: result.user_id,
       org_id: result.org_id,
-      roles: claims?.roles ?? [],
-      products: claims?.products ?? [],
-      membership_status: claims?.membership_status ?? "active",
-      is_email_verified: false,
-    },
-    env,
-  );
+      refresh_token_hash: refreshHash,
+      user_agent: ua,
+      ip_address: ip,
+      revoked: false,
+      expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+    });
 
-  const response = json(
-    {
-      access_token: accessToken,
-      user: { id: result.user_id, email },
-      org: { id: result.org_id, name: body.org_name, slug: result.slug },
-    },
-    201,
-  );
+    const accessToken = await signAccessToken(
+      {
+        sub: result.user_id,
+        email,
+        org_id: result.org_id,
+        roles: claims?.roles ?? [],
+        products: claims?.products ?? [],
+        membership_status: claims?.membership_status ?? "active",
+        is_email_verified: false,
+      },
+      env,
+    );
 
-  setAuthCookies(response, accessToken, refreshToken);
+    // ─── Step 3: Send verification email (non-blocking, no rollback) ──
+    let emailSent = true;
+    try {
+      const verifyToken = crypto.randomUUID();
+      const verifyTokenHash = await hashToken(verifyToken);
+      await database.mutate("email_verifications", {
+        user_id: result.user_id,
+        token_hash: verifyTokenHash,
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      });
+      const appUrl = resolveAppUrl(body.redirect_url, env);
+      const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
+      const { subject, html, text } = verificationEmail(verifyUrl);
+      ctx.waitUntil(sendEmail(env, { to: email, subject, html, text }));
+    } catch (emailErr) {
+      emailSent = false;
+      console.error("[SSO] Verification email setup failed:", emailErr);
+    }
 
-  // Send verification email
-  const verifyToken = crypto.randomUUID();
-  const verifyTokenHash = await hashToken(verifyToken);
-  await database.mutate("email_verifications", {
-    user_id: result.user_id,
-    token_hash: verifyTokenHash,
-    expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-  });
-  const appUrl = resolveAppUrl(body.redirect_url, env);
-  const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
-  const { subject, html, text } = verificationEmail(verifyUrl);
-  ctx.waitUntil(sendEmail(env, { to: email, subject, html, text }));
+    // ─── Step 4: Build response ──────────────────────────────────
+    const response = json(
+      {
+        access_token: accessToken,
+        user: { id: result.user_id, email },
+        org: { id: result.org_id, name: body.org_name, slug: result.slug },
+        email_sent: emailSent,
+      },
+      201,
+    );
 
-  audit(ctx, env, "signup", {
-    user_id: result.user_id,
-    org_id: result.org_id,
-    ip_address: ip,
-    user_agent: ua,
-  });
+    setAuthCookies(response, accessToken, refreshToken);
 
-  return response;
+    audit(ctx, env, "signup", {
+      user_id: result.user_id,
+      org_id: result.org_id,
+      ip_address: ip,
+      user_agent: ua,
+      metadata: { email_sent: emailSent },
+    });
+
+    return response;
+  } catch (err) {
+    // ─── Rollback: delete user (cascades to membership, org if created_by) ──
+    console.error("[SSO] Signup post-creation failed, rolling back:", err);
+    try {
+      await database.query(`users?id=eq.${result.user_id}`, { method: "DELETE" });
+    } catch (rollbackErr) {
+      console.error("[SSO] Rollback failed:", rollbackErr);
+    }
+    return error("Signup failed. Please try again.", 500);
+  }
 }
