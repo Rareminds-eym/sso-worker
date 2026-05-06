@@ -1,5 +1,4 @@
 import type { Env, AccessTokenPayload } from "../types";
-import { db } from "../lib/db";
 import { clearCookies } from "../lib/cookies";
 import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
@@ -22,11 +21,26 @@ export async function deleteAccount(
   const payload = auth!;
   const ip = req.headers.get("CF-Connecting-IP");
   const ua = req.headers.get("User-Agent");
-  const database = db(env);
 
   try {
     // Delete the user — CASCADE handles sessions, memberships, email_verifications, etc.
-    await database.query(`users?id=eq.${payload.sub}`, { method: "DELETE" });
+    // Use raw fetch since db.query() expects JSON response but DELETE returns empty body
+    const base = `${env.SUPABASE_URL}/rest/v1`;
+    const headers = {
+      "Content-Type": "application/json",
+      apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+    };
+
+    const res = await fetch(`${base}/users?id=eq.${payload.sub}`, {
+      method: "DELETE",
+      headers: { ...headers, Prefer: "return=minimal" },
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Delete failed [${res.status}]: ${text}`);
+    }
 
     const response = json({ deleted: true });
     clearCookies(response);

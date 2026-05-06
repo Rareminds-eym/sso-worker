@@ -42,7 +42,10 @@ export function db(env: Env): DbClient {
         const text = await res.text();
         throw new Error(`DB query failed [${res.status}]: ${text}`);
       }
-      return res.json() as Promise<T[]>;
+      // Handle empty responses (e.g. DELETE with Prefer: return=minimal)
+      const text = await res.text();
+      if (!text) return [] as unknown as T[];
+      return JSON.parse(text) as T[];
     } finally {
       clear();
     }
