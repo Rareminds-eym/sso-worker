@@ -13,6 +13,7 @@ import { requestVerification, verifyEmail } from "./routes/verify-email";
 import { forgotPassword, resetPassword } from "./routes/password-reset";
 import { cancelInvite, resendInvite } from "./routes/invite-manage";
 import { oauthRedirect, oauthCallback } from "./routes/oauth";
+import { changePassword, adminResetPassword } from "./routes/change-password";
 import { rateLimit } from "./lib/rate-limit";
 import { authenticate } from "./lib/auth";
 import { json, error } from "./lib/response";
@@ -38,6 +39,8 @@ const routes: Record<string, Record<string, RouteConfig>> = {
     "/auth/verify-email":        { handler: verifyEmail },
     "/auth/forgot-password":     { handler: forgotPassword },
     "/auth/reset-password":      { handler: resetPassword },
+    "/auth/change-password":     { handler: changePassword,      auth: true },
+    "/auth/admin-reset-password": { handler: adminResetPassword, auth: true },
   },
   GET: {
     "/auth/me":               { handler: me, auth: true },
