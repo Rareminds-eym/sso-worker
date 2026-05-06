@@ -17,7 +17,8 @@ export type AuditAction =
   | "verification_requested"
   | "email_verified"
   | "password_reset_requested"
-  | "password_reset_completed";
+  | "password_reset_completed"
+  | "account_deleted";
 
 /**
  * Non-blocking audit log entry.

@@ -21,6 +21,7 @@ const ROUTE_LIMITS: Record<string, RateLimitConfig> = {
   "/auth/reset-password": { limit: 5, windowSeconds: 60 },
   "/auth/change-password": { limit: 3, windowSeconds: 60 },
   "/auth/admin-reset-password": { limit: 5, windowSeconds: 60 },
+  "/auth/delete-account": { limit: 3, windowSeconds: 60 },
 };
 
 /**
