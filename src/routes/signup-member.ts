@@ -14,7 +14,7 @@ import { SESSION_TTL_MS } from "../lib/constants";
  *
  * Creates a user without creating an organization.
  * Optionally joins an existing org with the specified role.
- * Used by students, educators, recruiters who self-register.
+ * Used by learners, educators, recruiters who self-register.
  *
  * Atomicity guarantee:
  * - If anything other than email delivery fails after user creation,
