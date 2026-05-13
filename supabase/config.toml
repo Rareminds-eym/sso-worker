@@ -49,7 +49,10 @@ enabled = true
 schema_paths = []
 
 [db.seed]
-enabled = false
+enabled = true
+sql_paths = [
+  "./seed/seed.sql"
+]
 
 [realtime]
 enabled = true
@@ -127,8 +130,6 @@ inspector_port = 8084
 deno_version = 2
 
 [analytics]
-enabled = true
-
-# Using 54337 to avoid conflict with skillpassport (54327)
+enabled = false
 port = 54337
 backend = "postgres"
