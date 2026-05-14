@@ -7,7 +7,7 @@ compatibility_flags = ["nodejs_compat"]
 # Production Supabase (remote) — used when deploying
 SUPABASE_URL = "https://quvdgaydpctuspzeqknc.supabase.co"
 ALLOWED_ORIGINS = "http://localhost:3000,http://localhost:5173,http://localhost:8788,https://*.rareminds.in,https://*.pages.dev,http://127.0.0.1:8788"
-ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:5173,https://skillpassport.rareminds.in,https://*.rareminds.in,https://*.pages.dev"
+ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:5173,http://localhost:8788,http://127.0.0.1:8788,https://skillpassport.rareminds.in,https://*.rareminds.in,https://*.pages.dev"
 
 # Local development overrides — wrangler dev reads .dev.vars for secrets
 # and this section for vars. Override SUPABASE_URL for local dev by
