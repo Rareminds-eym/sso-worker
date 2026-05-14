@@ -1,7 +1,7 @@
 import { error } from "./response";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const PASSWORD_MIN = 8;
+const PASSWORD_MIN = 10; // Updated from 8 to 10 characters
 const PASSWORD_MAX = 72; // bcrypt silently truncates at 72 bytes
 
 /** Validate email format. Returns an error Response or null if valid. */
@@ -122,16 +122,43 @@ export function resolveAppUrl(redirectUrl: string | undefined, env: { ALLOWED_AP
   return normalized;
 }
 
-/** Validate password strength. Returns an error Response or null if valid. */
+/** 
+ * Validate password strength.
+ * 
+ * Requirements:
+ * - Minimum 10 characters
+ * - Maximum 72 characters (bcrypt limit)
+ * - Must contain at least 3 of 4 character types:
+ *   - Uppercase letters (A-Z)
+ *   - Lowercase letters (a-z)
+ *   - Numbers (0-9)
+ *   - Special characters (!@#$%^&*()_+-=[]{}|;:,.<>?)
+ * 
+ * Returns an error Response or null if valid.
+ */
 export function validatePassword(password: unknown): Response | null {
   if (typeof password !== "string") {
     return error("Password is required");
   }
+  
   if (password.length < PASSWORD_MIN) {
     return error(`Password must be at least ${PASSWORD_MIN} characters`);
   }
+  
   if (password.length > PASSWORD_MAX) {
     return error(`Password must be at most ${PASSWORD_MAX} characters`);
   }
+  
+  // Check password complexity: must have 3 of 4 types
+  let typesCount = 0;
+  if (/[A-Z]/.test(password)) typesCount++; // Uppercase
+  if (/[a-z]/.test(password)) typesCount++; // Lowercase
+  if (/[0-9]/.test(password)) typesCount++; // Numbers
+  if (/[^a-zA-Z0-9]/.test(password)) typesCount++; // Special characters
+  
+  if (typesCount < 3) {
+    return error("Password must contain at least 3 of: uppercase letters, lowercase letters, numbers, special characters");
+  }
+  
   return null;
 }

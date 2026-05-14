@@ -52,6 +52,30 @@ export async function signupMember(
   const ua = req.headers.get("User-Agent");
   const database = db(env);
 
+  // ─── Idempotency Check: Allow re-signup for unverified users ───
+  try {
+    const existingUsers = await database.query<{ id: string; is_email_verified: boolean }>(
+      `users?email=eq.${encodeURIComponent(email)}&select=id,is_email_verified`,
+    );
+
+    if (existingUsers && existingUsers.length > 0) {
+      const existingUser = existingUsers[0];
+
+      // User exists and email is verified → reject
+      if (existingUser.is_email_verified) {
+        return error("An account with this email already exists. Please log in.", 409);
+      }
+
+      // User exists but email NOT verified
+      // Prevent Account Takeover and Race Conditions by rejecting re-signup.
+      // Unverified users can still log in to trigger a new verification email.
+      return error("An account with this email exists but is not verified. Please check your inbox or log in to request a new verification link.", 409);
+    }
+  } catch (checkErr) {
+    console.error("[SSO] Error checking existing user:", checkErr);
+    // Continue with signup attempt - let database constraints handle duplicates
+  }
+
   const password_hash = await hashPassword(body.password);
 
   // ─── Step 1: Create user in database ─────────────────────────
@@ -69,7 +93,7 @@ export async function signupMember(
     });
   } catch (err: any) {
     if (err?.message?.includes("duplicate") || err?.message?.includes("23505")) {
-      return error("An account with this email already exists", 409);
+      return error("An account with this email already exists. Please log in.", 409);
     }
     if (err?.message?.includes("Invalid role")) {
       return error("Invalid role specified", 400);

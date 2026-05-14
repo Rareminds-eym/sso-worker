@@ -15,7 +15,7 @@ import { cancelInvite, resendInvite } from "./routes/invite-manage";
 import { oauthRedirect, oauthCallback } from "./routes/oauth";
 import { changePassword, adminResetPassword } from "./routes/change-password";
 import { deleteAccount } from "./routes/delete-account";
-import { rateLimit } from "./lib/rate-limit";
+import { rateLimit, rateLimits } from "./middleware/rateLimit";
 import { authenticate } from "./lib/auth";
 import { json, error } from "./lib/response";
 import { db } from "./lib/db";
@@ -100,8 +100,19 @@ function withCors(response: Response, cors: Record<string, string>): Response {
   return res;
 }
 
-// ─── CSRF Protection ───────────────────────────────────────────
-function csrfCheck(req: Request, env: Env): boolean {
+// ─── Origin Validation (CORS Security) ────────────────────────
+/**
+ * Validate request origin matches allowed origins.
+ * 
+ * This is NOT traditional CSRF protection (no tokens needed since we use
+ * Authorization header, not cookies for authentication). This is origin
+ * validation as part of CORS security to prevent unauthorized domains
+ * from making requests to the API.
+ * 
+ * GET/OPTIONS requests are always allowed (CORS preflight).
+ * Requests without Origin header are allowed (non-browser clients like curl, SDKs).
+ */
+function validateOrigin(req: Request, env: Env): boolean {
   if (req.method === "GET" || req.method === "OPTIONS") return true;
 
   const origin = req.headers.get("Origin");
@@ -133,8 +144,8 @@ export default {
     const method = req.method;
     const start = Date.now();
 
-    // CSRF check
-    if (!csrfCheck(req, env)) {
+    // Origin validation (CORS security)
+    if (!validateOrigin(req, env)) {
       return withCors(error("Origin not allowed", 403), cors);
     }
 
@@ -144,9 +155,47 @@ export default {
       return withCors(error("Request body too large", 413), cors);
     }
 
-    // Rate limiting
-    const rateLimited = await rateLimit(req, env, pathname);
-    if (rateLimited) return withCors(rateLimited, cors);
+    // Rate limiting (skip health check and JWKS endpoint)
+    if (pathname !== "/health" && pathname !== "/.well-known/jwks.json") {
+      let rateLimitConfig: ReturnType<typeof rateLimit> | null = null;
+      
+      // Map routes to rate limit configs
+      switch (pathname) {
+        case "/auth/login":
+          rateLimitConfig = rateLimit(rateLimits.login);
+          break;
+        case "/auth/signup":
+        case "/auth/signup-member":
+          rateLimitConfig = rateLimit(rateLimits.signup);
+          break;
+        case "/auth/forgot-password":
+          rateLimitConfig = rateLimit(rateLimits.forgotPassword);
+          break;
+        case "/auth/reset-password":
+          rateLimitConfig = rateLimit(rateLimits.resetPassword);
+          break;
+        case "/auth/verify-email":
+          rateLimitConfig = rateLimit(rateLimits.verifyEmail);
+          break;
+        case "/auth/request-verification":
+          rateLimitConfig = rateLimit(rateLimits.resendVerification);
+          break;
+        case "/auth/refresh":
+          rateLimitConfig = rateLimit(rateLimits.refresh);
+          break;
+        case "/auth/me":
+          rateLimitConfig = rateLimit(rateLimits.me);
+          break;
+        case "/auth/logout":
+          rateLimitConfig = rateLimit(rateLimits.logout);
+          break;
+      }
+      
+      if (rateLimitConfig) {
+        const rateLimited = await rateLimitConfig(req);
+        if (rateLimited) return withCors(rateLimited, cors);
+      }
+    }
 
     // Route matching
     const config = routes[method]?.[pathname];

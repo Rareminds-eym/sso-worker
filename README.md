@@ -13,7 +13,7 @@ Client Apps (auth-client SDK)
 Cloudflare Worker  (sso-api)
     │
     ├── Supabase PostgreSQL  (auth DB via service-role key)
-    ├── Cloudflare KV        (rate limiting + account lockout)
+    ├── In-Memory Map        (rate limiting per-worker instance)
     └── /.well-known/jwks.json  (public key set — consumed by auth-core SDK)
 ```
 
@@ -33,18 +33,19 @@ All responses are `Content-Type: application/json`. Errors: `{ "error": "message
 
 | Method | Path | Description | Rate Limit |
 |--------|------|-------------|------------|
-| `POST` | `/auth/signup` | Create user + org | 3/60s |
-| `POST` | `/auth/login` | Authenticate | 5/60s |
-| `POST` | `/auth/refresh` | Rotate tokens | 10/60s |
-| `POST` | `/auth/logout` | Revoke session | — |
-| `POST` | `/auth/invite/accept` | Accept invite | 5/60s |
-| `POST` | `/auth/verify-email` | Verify email token | 5/60s |
-| `POST` | `/auth/forgot-password` | Request password reset | 3/60s |
-| `POST` | `/auth/reset-password` | Reset password with token | 5/60s |
+| `POST` | `/auth/signup` | Create user + org | 5/hour |
+| `POST` | `/auth/signup-member` | Create user (no org) | 5/hour |
+| `POST` | `/auth/login` | Authenticate | 10/min |
+| `POST` | `/auth/refresh` | Rotate tokens | 30/min |
+| `POST` | `/auth/logout` | Revoke session | 20/min |
+| `POST` | `/auth/invite/accept` | Accept invite | — |
+| `POST` | `/auth/verify-email` | Verify email token | 10/hour |
+| `POST` | `/auth/forgot-password` | Request password reset | 3/hour |
+| `POST` | `/auth/reset-password` | Reset password with token | 5/hour |
 | `GET`  | `/auth/oauth/google` | Google OAuth (placeholder) | — |
 | `GET`  | `/auth/oauth/github` | GitHub OAuth (placeholder) | — |
-| `GET`  | `/.well-known/jwks.json` | Public key set (supports rotation) | — |
-| `GET`  | `/health` | Health check | — |
+| `GET`  | `/.well-known/jwks.json` | Public key set (supports rotation) | No limit |
+| `GET`  | `/health` | Health check | No limit |
 
 ### Authenticated Endpoints
 
@@ -52,13 +53,13 @@ Require `Authorization: Bearer <token>` header or `access_token` cookie.
 
 | Method | Path | Description | Rate Limit |
 |--------|------|-------------|------------|
-| `GET`  | `/auth/me` | Current user identity | — |
+| `GET`  | `/auth/me` | Current user identity | 60/min |
 | `GET`  | `/auth/orgs` | List user's orgs | — |
 | `POST` | `/auth/switch-org` | Switch active org | — |
-| `POST` | `/auth/invite` | Create invite (owner/admin) | 5/60s |
-| `POST` | `/auth/invite/cancel` | Cancel pending invite | 5/60s |
-| `POST` | `/auth/invite/resend` | Resend invite with new token | 3/60s |
-| `POST` | `/auth/request-verification` | Request email verification | 3/60s |
+| `POST` | `/auth/invite` | Create invite (owner/admin) | — |
+| `POST` | `/auth/invite/cancel` | Cancel pending invite | — |
+| `POST` | `/auth/invite/resend` | Resend invite with new token | 3/hour |
+| `POST` | `/auth/request-verification` | Request email verification | 3/hour |
 
 ---
 
@@ -66,22 +67,52 @@ Require `Authorization: Bearer <token>` header or `access_token` cookie.
 
 ```json
 // Request
-{ "email": "user@example.com", "password": "min8chars", "org_name": "Acme Corp" }
+{ "email": "user@example.com", "password": "ValidPass123!", "org_name": "Acme Corp" }
 
 // Response 201
 {
   "access_token": "eyJ...",
   "user": { "id": "uuid", "email": "user@example.com" },
-  "org": { "id": "uuid", "name": "Acme Corp", "slug": "acme-corp" }
+  "org": { "id": "uuid", "name": "Acme Corp", "slug": "acme-corp" },
+  "email_sent": true
 }
 ```
-Sets cookies: `access_token` (15 min), `refresh_token` (30 days). Errors: `400`, `409`.
+Sets cookies: `access_token` (15 min), `refresh_token` (30 days). Errors: `400`, `409`, `500`.
+
+**Idempotency**: If a user exists but email is NOT verified, the endpoint allows re-signup by cleaning up the incomplete signup data (deletes user, which cascades to sessions, memberships, email_verifications) and creating a new user. This handles cases where:
+- User signed up but never verified email
+- Session/org creation failed after user creation
+- User wants to retry signup with a different organization name
+
+If the user exists and email IS verified, returns `409` with message: "An account with this email already exists. Please log in."
+
+**Rollback**: If any step fails after user creation (session creation, JWT signing, email verification setup), the user and organization are automatically deleted from the database to maintain consistency.
+
+### `POST /auth/signup-member`
+
+```json
+// Request
+{ "email": "user@example.com", "password": "ValidPass123!", "role": "learner", "org_id": "optional-org-uuid" }
+
+// Response 201
+{
+  "access_token": "eyJ...",
+  "user": { "id": "uuid", "email": "user@example.com" },
+  "org": { "id": "uuid" },
+  "email_sent": true
+}
+```
+Creates a user without creating an organization. Optionally joins an existing org with the specified role. Used by learners, educators, recruiters who self-register. Sets cookies: `access_token` (15 min), `refresh_token` (30 days). Errors: `400`, `404`, `409`, `500`.
+
+**Idempotency**: Same behavior as `/auth/signup` - if a user exists but email is NOT verified, the endpoint allows re-signup by cleaning up the incomplete signup data and creating a new user. If the user exists and email IS verified, returns `409` with message: "An account with this email already exists. Please log in."
+
+**Rollback**: If any step fails after user creation (session creation, JWT signing, email verification setup), the user is automatically deleted from the database to maintain consistency.
 
 ### `POST /auth/login`
 
 ```json
 // Request
-{ "email": "user@example.com", "password": "yourpassword" }
+{ "email": "user@example.com", "password": "SecurePass123!" }
 
 // Response 200
 {
@@ -163,7 +194,7 @@ Expires in 7 days. Errors: `400`, `403`, `409`.
 
 ```json
 // Request
-{ "token": "invite-uuid", "password": "required-for-new-users" }
+{ "token": "invite-uuid", "password": "NewUser123!" }
 
 // Response 200
 { "access_token": "eyJ...", "user": { "id": "uuid", "email": "..." }, "org_id": "uuid" }
@@ -236,7 +267,7 @@ Resets password and revokes ALL sessions (forces re-login everywhere).
 
 ```json
 // Request
-{ "token": "reset-uuid", "password": "newpassword" }
+{ "token": "reset-uuid", "password": "NewSecure123!" }
 
 // Response 200
 { "reset": true }
@@ -286,12 +317,11 @@ All tables have RLS enabled with explicit deny-all policies for the `anon` role.
 npm install                                    # 1. Install deps
 # Run scripts/schema.sql in Supabase SQL Editor # 2. Apply schema
 npm run generate-keys                          # 3. Generate RS256 keys
-wrangler kv namespace create RATE_LIMIT_KV     # 4. Create KV (copy ID to wrangler.toml)
-cat private.pem | wrangler secret put JWT_PRIVATE_KEY  # 5. Set secrets
+cat private.pem | wrangler secret put JWT_PRIVATE_KEY  # 4. Set secrets
 cat public.pem  | wrangler secret put JWT_PUBLIC_KEY
 echo "key-1"    | wrangler secret put JWT_KID
 wrangler secret put SUPABASE_SERVICE_ROLE_KEY
-npm run deploy                                 # 6. Deploy
+npm run deploy                                 # 5. Deploy
 ```
 
 Configure `wrangler.toml`:
@@ -319,7 +349,6 @@ APP_URL         = "https://yourapp.com"
 | `JWT_KID` | secret | Key ID for JWT header and JWKS (e.g. `key-1`) |
 | `JWT_PUBLIC_KEY_PREVIOUS` | secret | Previous public key PEM (set during key rotation) |
 | `JWT_KID_PREVIOUS` | secret | Previous key ID (set during key rotation) |
-| `RATE_LIMIT_KV` | KV binding | Cloudflare KV for rate limiting |
 
 ---
 
@@ -363,25 +392,102 @@ Templates: `passwordResetEmail(url)`, `verificationEmail(url)`, `inviteEmail(inv
 
 ## Security
 
+### Authentication & Authorization
+
 - **RS256 asymmetric JWTs** with `iss` and `aud` claims enforced
 - **Key rotation support** — JWKS serves current + previous keys during rotation window
 - **Refresh tokens SHA-256 hashed** before DB storage, rotated on every use
 - **Theft detection** — revoked token reuse revokes ALL user sessions
 - **Password reset** — revokes all sessions on password change (force re-login)
-- **Per-IP rate limiting** + per-email account lockout (10 failures → 15 min lock)
+
+### CSRF Protection: Not Needed
+
+**Why CSRF tokens are not required:**
+
+This API uses **Authorization header authentication** (Bearer tokens), not cookie-based authentication for API requests. CSRF attacks only work when:
+1. Authentication credentials are automatically sent by the browser (cookies)
+2. The attacker can trick the user's browser into making a request
+
+Since all authenticated API endpoints require the `Authorization: Bearer <token>` header (which browsers don't automatically send), CSRF attacks are not possible.
+
+**What we do instead:**
+- **Origin validation** — POST requests must come from allowed origins (CORS security)
+- **HttpOnly cookies** — Refresh tokens are in HttpOnly cookies (not accessible to JavaScript)
+- **SameSite=None** — Cookies work cross-site but require Secure flag (HTTPS only)
+
+**Note:** The refresh token endpoint (`/auth/refresh`) does use cookies, but it's protected by origin validation and only returns a new access token (doesn't perform state-changing operations based on cookies alone).
+
+### Network Security
+
+- **In-memory rate limiting** — per-IP per-endpoint limits (lenient, per-worker instance)
 - **Request body size limit** — 10 KB max on all endpoints
 - **Constant-time login** — bcrypt compare runs even for non-existent users (dummy hash at cost 12)
 - **Email enumeration prevention** — forgot-password always returns 200
 - **HttpOnly/Secure/SameSite=None cookies** — not accessible to JavaScript
-- **CORS** with origin allowlist + **CSRF** origin validation on POST
+- **CORS** with origin allowlist + origin validation on POST (prevents unauthorized domains)
 - **CORS `Expose-Headers`** — exposes `X-Access-Token` and `X-Request-ID` to browser JS
 - **RLS enabled** on all tables with explicit deny-all policies for `anon` role
-- **Input validation** — email regex, password 8–72 chars (bcrypt truncation guard)
+- **Input validation** — email regex, password 10–72 chars with complexity (3 of 4: uppercase, lowercase, numbers, special chars)
 - **Non-blocking audit logging** via `ctx.waitUntil()`
 
 ### Audit Events
 
 `signup`, `login`, `login_failed`, `logout`, `refresh`, `refresh_theft_detected`, `switch_org`, `invite_created`, `invite_accepted`, `invite_cancelled`, `invite_resent`, `verification_requested`, `email_verified`, `password_reset_requested`, `password_reset_completed`
+
+---
+
+## Rate Limiting
+
+The SSO Worker uses **in-memory Map-based rate limiting** (per-worker instance) with lenient limits designed to prevent abuse while allowing legitimate high-frequency usage.
+
+### Implementation Details
+
+- **Per-IP per-endpoint** — Each endpoint has its own rate limit tracked separately
+- **Fixed window** — Limits reset after the window expires (e.g., 60 seconds, 3600 seconds)
+- **In-memory storage** — Uses JavaScript Map (not KV or Durable Objects)
+- **Automatic cleanup** — Expired entries are cleaned every 5 minutes to prevent memory leaks
+- **Per-worker instance** — Each worker has its own Map (not global across all workers)
+
+### Rate Limit Headers
+
+When a request is rate limited (429 status), the response includes:
+
+```
+Retry-After: 60
+X-RateLimit-Limit: 10
+X-RateLimit-Remaining: 0
+X-RateLimit-Reset: 1715612400000
+```
+
+### Endpoint Limits
+
+| Endpoint | Limit | Window | Reasoning |
+|----------|-------|--------|-----------|
+| `/auth/login` | 10 req | 1 minute | Allow multiple login attempts (typos, password managers) |
+| `/auth/signup` | 5 req | 1 hour | Prevent bulk account creation |
+| `/auth/forgot-password` | 3 req | 1 hour | Prevent email spam |
+| `/auth/reset-password` | 5 req | 1 hour | Allow retries for token issues |
+| `/auth/verify-email` | 10 req | 1 hour | Allow retries for verification issues |
+| `/auth/request-verification` | 3 req | 1 hour | Prevent email spam |
+| `/auth/refresh` | 30 req | 1 minute | High limit for SPAs with multiple tabs |
+| `/auth/me` | 60 req | 1 minute | High limit for frequent identity checks |
+| `/auth/logout` | 20 req | 1 minute | Allow multiple logout attempts |
+| `/health` | No limit | — | Health checks should never be rate limited |
+| `/.well-known/jwks.json` | No limit | — | Public key endpoint for JWT verification |
+
+### Production Considerations
+
+**Per-Worker Limitation**: Since rate limiting is per-worker instance, the effective limit under load is `limit × number_of_workers`. For example, with 3 workers, a 10 req/min limit becomes ~30 req/min globally.
+
+**For Strict Global Limits**: Migrate to Cloudflare Durable Objects, which provide single-instance guarantees and atomic operations.
+
+**Monitoring**: Rate limit violations are logged with:
+```json
+{
+  "level": "warn",
+  "message": "[rate-limit] login rate limit exceeded for IP 1.2.3.4: 11/10"
+}
+```
 
 ---
 
@@ -393,11 +499,21 @@ Templates: `passwordResetEmail(url)`, `verificationEmail(url)`, `inviteEmail(inv
 | `ACCESS_TOKEN_MAX_AGE` | 900s (15 min) | Access token cookie Max-Age |
 | `INVITE_TTL_MS` | 7 days | Invite expiry |
 | `DB_TIMEOUT_MS` | 10,000ms | Supabase fetch timeout |
-| `ACCOUNT_LOCKOUT_THRESHOLD` | 10 | Failed logins before lockout |
-| `ACCOUNT_LOCKOUT_WINDOW` | 900s (15 min) | Lockout duration |
 | `JWT_ISSUER` | `"sso-api"` | JWT issuer claim |
 | `JWT_AUDIENCE` | `"sso-client"` | JWT audience claim |
 | `MAX_BODY_SIZE` | 10,240 bytes | Request body size limit |
+
+**Rate Limit Configurations** (lenient, per-worker instance):
+- Login: 10 requests/minute
+- Signup: 5 requests/hour
+- Forgot password: 3 requests/hour
+- Reset password: 5 requests/hour
+- Verify email: 10 requests/hour
+- Resend verification: 3 requests/hour
+- Refresh: 30 requests/minute
+- Me: 60 requests/minute
+- Logout: 20 requests/minute
+- Health check: No limit
 
 ---
 
@@ -406,7 +522,7 @@ Templates: `passwordResetEmail(url)`, `verificationEmail(url)`, `inviteEmail(inv
 ```
 sso-worker/
 ├── src/
-│   ├── index.ts              # Router, CORS, CSRF, body limit, rate limiting, logging
+│   ├── index.ts              # Router, CORS, origin validation, body limit, rate limiting, logging
 │   ├── types.ts              # Env, route types, JWT payload, DB models, request bodies
 │   ├── lib/
 │   │   ├── constants.ts      # TTLs, thresholds, timeouts, JWT issuer/audience
@@ -414,12 +530,13 @@ sso-worker/
 │   │   ├── jwt.ts            # RS256 sign/verify + JWKS export with rotation support
 │   │   ├── hash.ts           # bcrypt passwords, SHA-256 token hashing
 │   │   ├── cookies.ts        # HttpOnly/Secure/SameSite=None cookie management
-│   │   ├── rate-limit.ts     # Per-IP limiter + per-email account lockout
 │   │   ├── auth.ts           # Token extraction (header → cookie) + verification
 │   │   ├── audit.ts          # Non-blocking audit log via ctx.waitUntil()
 │   │   ├── email.ts          # Pluggable email delivery + template builders
 │   │   ├── validate.ts       # Email + password validation
 │   │   └── response.ts       # json() and error() helpers
+│   ├── middleware/
+│   │   └── rateLimit.ts      # In-memory Map-based rate limiting (per-worker)
 │   └── routes/
 │       ├── signup.ts         ├── login.ts            ├── refresh.ts
 │       ├── logout.ts         ├── me.ts               ├── switch-org.ts
@@ -435,7 +552,7 @@ sso-worker/
 
 ## Known Limitations
 
-- **KV rate limiting is not atomic** — under extreme concurrency, limits can be slightly exceeded. Use Durable Objects for strict guarantees.
+- **In-memory rate limiting is per-worker** — each worker instance has its own Map. Under load with multiple workers, effective limits are multiplied. For strict global limits, migrate to Durable Objects.
 - **No session listing endpoint** — users cannot view or selectively revoke individual sessions.
 - **OAuth not implemented** — routes return 501 until a provider is configured.
 - **Email delivery is a stub** — `sendEmail()` logs to console. Replace with Amazon SES.
