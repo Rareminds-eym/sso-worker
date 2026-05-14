@@ -25,5 +25,7 @@ export function escapeHtmlAttr(v: string): string {
  * URL-encode first, then HTML-attribute-encode.
  */
 export function escapeHrefAttr(v: string): string {
-  return escapeHtmlAttr(encodeURIComponent(v));
+  // Use encodeURI instead of encodeURIComponent so the protocol (http://) 
+  // and path separators (/) remain intact.
+  return escapeHtmlAttr(encodeURI(v));
 }
