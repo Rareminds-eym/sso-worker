@@ -14,11 +14,13 @@ interface RateLimitEntry {
  */
 const rateLimitStore = new Map<string, RateLimitEntry>();
 
-/**
- * Cleanup old entries every 5 minutes to prevent memory leaks
- */
-setInterval(() => {
+let lastCleanup = Date.now();
+
+function cleanupStore() {
   const now = Date.now();
+  if (now - lastCleanup < 5 * 60 * 1000) return;
+  lastCleanup = now;
+
   let cleaned = 0;
   for (const [key, entry] of rateLimitStore.entries()) {
     if (entry.resetAt < now) {
@@ -29,7 +31,7 @@ setInterval(() => {
   if (cleaned > 0) {
     console.log(`[rate-limit] Cleaned ${cleaned} expired entries`);
   }
-}, 5 * 60 * 1000);
+}
 
 export interface RateLimitConfig {
   /** Maximum requests allowed in the window */
@@ -59,6 +61,9 @@ export interface RateLimitConfig {
  */
 export function rateLimit(config: RateLimitConfig) {
   return async (request: Request): Promise<Response | null> => {
+    // Perform lazy cleanup of expired entries
+    cleanupStore();
+
     // Get client IP (Cloudflare provides this for public internet requests)
     const cfIp = request.headers.get('cf-connecting-ip');
     
