@@ -15,6 +15,15 @@ import { cancelInvite, resendInvite } from "./routes/invite-manage";
 import { oauthRedirect, oauthCallback } from "./routes/oauth";
 import { changePassword, adminResetPassword } from "./routes/change-password";
 import { deleteAccount } from "./routes/delete-account";
+import {
+  listPlans, getPlanByCode,
+  createSubscription, createFreemiumSubscription,
+  getUserSubscription, getOrgSubscription,
+  updateSubscriptionStatus, cancelSubscription, updateSubscriptionField,
+  recordTransaction, getUserTransactions,
+  processWebhookEvent,
+  syncSubscription, syncPlans, syncReconcile,
+} from "./routes/subscriptions";
 import { rateLimit, rateLimits } from "./middleware/rateLimit";
 import { authenticate } from "./lib/auth";
 import { json, error } from "./lib/response";
@@ -43,6 +52,20 @@ const routes: Record<string, Record<string, RouteConfig>> = {
     "/auth/change-password":     { handler: changePassword,      auth: true },
     "/auth/admin-reset-password": { handler: adminResetPassword, auth: true },
     "/auth/delete-account":      { handler: deleteAccount,       auth: true },
+    // Subscription management
+    "/api/subscriptions/create":          { handler: createSubscription,         auth: true },
+    "/api/subscriptions/create-freemium": { handler: createFreemiumSubscription, auth: true },
+    "/api/transactions/record":           { handler: recordTransaction,          auth: true },
+    "/api/events/webhook":                { handler: processWebhookEvent },
+    // Sync endpoints (called by skillpassport workers)
+    "/api/sync/subscription":   { handler: syncSubscription,  serviceAuth: true },
+    "/api/sync/plans":          { handler: syncPlans,         serviceAuth: true },
+    "/api/sync/reconcile":      { handler: syncReconcile,     serviceAuth: true },
+  },
+  PUT: {
+    "/api/subscriptions/cancel": { handler: cancelSubscription, auth: true },
+    "/api/subscriptions/status": { handler: updateSubscriptionStatus, auth: true },
+    "/api/subscriptions/update": { handler: updateSubscriptionField,  auth: true },
   },
   GET: {
     "/auth/me":               { handler: me, auth: true },
@@ -53,6 +76,10 @@ const routes: Record<string, Record<string, RouteConfig>> = {
     "/auth/oauth/github/callback": { handler: oauthCallback },
     "/.well-known/jwks.json": { handler: (_req, env) => jwks(env) },
     "/health":                { handler: () => Promise.resolve(json({ status: "ok" })) },
+    // Plans (public)
+    "/api/plans":             { handler: listPlans },
+    // Transactions
+    "/api/transactions/user": { handler: getUserTransactions, auth: true },
   },
 };
 
@@ -86,7 +113,7 @@ function corsHeaders(req: Request, env: Env): Record<string, string> {
 
   return {
     "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Request-ID",
     "Access-Control-Allow-Credentials": "true",
     "Access-Control-Expose-Headers": "X-Access-Token, X-Request-ID",
@@ -128,6 +155,15 @@ export default {
     const database = db(env);
     const deleted = await database.rpc<number>("cleanup_expired_tokens");
     console.log(`[SSO] Cleaned up ${deleted} expired token rows`);
+
+    // Expire subscriptions past their end date
+    try {
+      const result = await database.rpc<{ count: number }[]>("expire_old_subscriptions");
+      const expired = Array.isArray(result) ? result[0]?.count ?? 0 : 0;
+      if (expired > 0) console.log(`[SSO] Expired ${expired} subscription(s)`);
+    } catch (err: any) {
+      console.error(`[SSO] Failed to expire subscriptions: ${err?.message}`);
+    }
   },
 
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -197,8 +233,30 @@ export default {
       }
     }
 
-    // Route matching
-    const config = routes[method]?.[pathname];
+    // Route matching — exact first, then pattern-based
+    let config = routes[method]?.[pathname];
+
+    // Dynamic routes: /api/plans/:code, /api/subscriptions/user/:id, /api/subscriptions/org/:id
+    // /api/subscriptions/:id/status, /api/subscriptions/:id/cancel, /api/subscriptions/:id/update
+    if (!config) {
+      const methodRoutes = routes[method];
+      if (methodRoutes) {
+        if (method === "GET" && pathname.startsWith("/api/plans/")) {
+          config = { handler: getPlanByCode };
+        } else if (method === "GET" && pathname.startsWith("/api/subscriptions/user/")) {
+          config = { handler: getUserSubscription, auth: true };
+        } else if (method === "GET" && pathname.startsWith("/api/subscriptions/org/")) {
+          config = { handler: getOrgSubscription, auth: true };
+        } else if (method === "PUT" && /^\/api\/subscriptions\/[^/]+\/status$/.test(pathname)) {
+          config = { handler: updateSubscriptionStatus, auth: true };
+        } else if (method === "PUT" && /^\/api\/subscriptions\/[^/]+\/cancel$/.test(pathname)) {
+          config = { handler: cancelSubscription, auth: true };
+        } else if (method === "PUT" && /^\/api\/subscriptions\/[^/]+\/update$/.test(pathname)) {
+          config = { handler: updateSubscriptionField, auth: true };
+        }
+      }
+    }
+
     if (!config) {
       return withCors(error("Not found", 404), cors);
     }
@@ -206,8 +264,8 @@ export default {
     try {
       // Declarative auth
       let authPayload;
-      if (config.auth) {
-        authPayload = await authenticate(req, env);
+      if (config.auth || config.serviceAuth) {
+        authPayload = await authenticate(req, env, config.serviceAuth);
         if (!authPayload) {
           return withCors(error("Unauthorized", 401), cors);
         }
