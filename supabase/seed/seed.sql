@@ -4,7 +4,7 @@ SET session_replication_role = replica;
 -- PostgreSQL database dump
 --
 
--- \restrict 0T2at5XGjgZjwjTtZDdA73qQ6k0Czs5bFAuT0cAZeEZ1Ih3wdtYLS9ufXiIHdgX
+-- \restrict GSvbzOjPqhquWNwVOcWdQZuBERcexayXRPBcHEbDVqPisqfR593KEYmf4fReGAr
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.6
@@ -154,6 +154,35 @@ SET row_security = off;
 
 
 --
+-- Data for Name: products; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO "public"."products" ("id", "code", "name", "description", "created_at") VALUES
+	('912d5049-e195-46e9-a319-49e3502bf7e7', 'skillpassport', 'SkillPassport', 'Skill development and career advancement platform', '2026-05-22 04:01:09.763845+00'),
+	('7352d0f4-88a6-4e14-9421-6c5706791973', 'lte', 'Learning Transformation Engine', 'Enterprise learning transformation and training management system', '2026-05-22 04:01:09.763845+00');
+
+
+--
+-- Data for Name: addon_catalog; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO "public"."addon_catalog" ("id", "product_id", "category", "feature_key", "feature_name", "feature_value", "description", "price_monthly", "price_annual", "target_roles", "icon", "display_order", "is_active", "created_at", "updated_at") VALUES
+	('8cd0fce2-8c80-4fbe-be57-4eb2adeb1b79', '912d5049-e195-46e9-a319-49e3502bf7e7', 'learning', 'advanced_analytics', 'Advanced Analytics', 'Detailed insights and reports', 'Get detailed analytics on your learning progress, skill gaps, and career trajectory with AI-powered insights', 299.00, 2999.00, '{learner,educator}', '📊', 1, true, '2026-05-22 04:12:57.738705+00', '2026-05-22 04:12:57.738705+00'),
+	('fcc8d643-b308-48eb-8b7a-3a85388dfec6', '912d5049-e195-46e9-a319-49e3502bf7e7', 'learning', 'mentorship_sessions', 'Mentorship Sessions', '2 sessions per month', 'One-on-one mentorship sessions with industry experts (2 sessions per month)', 999.00, 9999.00, '{learner}', '👨‍🏫', 2, true, '2026-05-22 04:12:57.738705+00', '2026-05-22 04:12:57.738705+00'),
+	('5ddfd9e9-3a7b-495f-8357-9da52e46391f', '912d5049-e195-46e9-a319-49e3502bf7e7', 'learning', 'interview_prep_advanced', 'Advanced Interview Prep', 'Mock interviews + feedback', 'Advanced interview preparation with mock interviews, feedback, and industry-specific questions', 499.00, 4999.00, '{learner}', '💼', 3, true, '2026-05-22 04:12:57.738705+00', '2026-05-22 04:12:57.738705+00'),
+	('b686a998-c3a4-4fbf-ab26-c9a010e3221a', '912d5049-e195-46e9-a319-49e3502bf7e7', 'learning', 'resume_review', 'Professional Resume Review', 'Expert review + rewrite', 'Get your resume professionally reviewed and rewritten by career experts', 399.00, 3999.00, '{learner}', '📄', 4, true, '2026-05-22 04:12:57.738705+00', '2026-05-22 04:12:57.738705+00'),
+	('4e507e2d-41c4-4bc4-8e7f-c92ff9ac4fa5', '912d5049-e195-46e9-a319-49e3502bf7e7', 'learning', 'linkedin_optimization', 'LinkedIn Profile Optimization', 'Complete profile makeover', 'Optimize your LinkedIn profile for maximum visibility and recruiter engagement', 299.00, 2999.00, '{learner}', '💼', 5, true, '2026-05-22 04:12:57.738705+00', '2026-05-22 04:12:57.738705+00'),
+	('bb30bd0d-8ca6-4933-af09-51a90cae90a8', '912d5049-e195-46e9-a319-49e3502bf7e7', 'support', 'priority_support', 'Priority Support', '24/7 priority support', 'Get priority support with 24/7 availability and faster response times', 199.00, 1999.00, '{learner,educator,admin}', '🚀', 6, true, '2026-05-22 04:12:57.738705+00', '2026-05-22 04:12:57.738705+00'),
+	('4a3e3ec2-9798-4fd1-8a93-3fa782efad42', '912d5049-e195-46e9-a319-49e3502bf7e7', 'support', 'dedicated_account_manager', 'Dedicated Account Manager', 'Personal account manager', 'Get a dedicated account manager for personalized support and guidance', 1999.00, 19999.00, '{admin,school_admin,college_admin}', '👤', 7, true, '2026-05-22 04:12:57.738705+00', '2026-05-22 04:12:57.738705+00'),
+	('79454b90-a05f-4929-beef-a446620c403f', '912d5049-e195-46e9-a319-49e3502bf7e7', 'capacity', 'extra_storage_10gb', 'Extra Storage (10GB)', '10GB additional storage', 'Add 10GB of additional storage for your projects, certificates, and documents', 99.00, 999.00, '{learner,educator}', '💾', 8, true, '2026-05-22 04:12:57.738705+00', '2026-05-22 04:12:57.738705+00'),
+	('40f81513-d5f8-4288-8f4d-71935f8be88f', '912d5049-e195-46e9-a319-49e3502bf7e7', 'capacity', 'extra_storage_50gb', 'Extra Storage (50GB)', '50GB additional storage', 'Add 50GB of additional storage for your projects, certificates, and documents', 299.00, 2999.00, '{learner,educator}', '💾', 9, true, '2026-05-22 04:12:57.738705+00', '2026-05-22 04:12:57.738705+00'),
+	('0028d349-1bd5-481c-928c-03410da5cb90', '912d5049-e195-46e9-a319-49e3502bf7e7', 'capacity', 'unlimited_assessments', 'Unlimited Assessments', 'No limits on assessments', 'Take unlimited assessments without any monthly restrictions', 199.00, 1999.00, '{learner}', '📝', 10, true, '2026-05-22 04:12:57.738705+00', '2026-05-22 04:12:57.738705+00'),
+	('a4e6afa1-60e0-46e0-bb7d-c1d76a11a34b', '912d5049-e195-46e9-a319-49e3502bf7e7', 'certificates', 'verified_certificates', 'Verified Certificates', 'Blockchain-verified certificates', 'Get blockchain-verified certificates that can be independently verified by employers', 499.00, 4999.00, '{learner}', '🎓', 11, true, '2026-05-22 04:12:57.738705+00', '2026-05-22 04:12:57.738705+00'),
+	('036118b9-dae6-4ca7-9b63-c1c58594c5b0', '912d5049-e195-46e9-a319-49e3502bf7e7', 'integrations', 'api_access', 'API Access', 'Full API access', 'Get full API access to integrate SkillPassport with your existing systems', 999.00, 9999.00, '{admin,school_admin,college_admin}', '🔌', 12, true, '2026-05-22 04:12:57.738705+00', '2026-05-22 04:12:57.738705+00'),
+	('1984c53d-731e-446c-8415-3394b95b447a', '912d5049-e195-46e9-a319-49e3502bf7e7', 'branding', 'white_label', 'White Label Branding', 'Custom branding', 'Remove SkillPassport branding and add your own logo, colors, and domain', 2999.00, 29999.00, '{admin,school_admin,college_admin}', '🎨', 13, true, '2026-05-22 04:12:57.738705+00', '2026-05-22 04:12:57.738705+00');
+
+
+--
 -- Data for Name: users; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -192,7 +221,15 @@ INSERT INTO "public"."users" ("id", "email", "password_hash", "is_email_verified
 	('6966c896-310b-41c5-a8b5-4578844486a6', 'dofojey409@badgerhole.com', '$2a$12$rI6Jd3.EryTEeW28.6fHyupf92MpG7JG9RukToCuG8pnbR7YUu.hy', false, '2026-05-12 05:49:50.44392+00', '2026-05-12 05:49:50.44392+00', NULL, false),
 	('5e12a75b-6692-4e2e-b560-a4f2bf6d30e0', 'sefogi2975@gcervera.com', '$2a$12$iu.1lW.8ZGvSqUYeQaESIurC1n9bre99LHRq4dn6wChemuD2aMoTm', false, '2026-05-12 04:34:52.941569+00', '2026-05-12 05:52:42.515206+00', '2026-05-12 05:52:42.015+00', false),
 	('5cb2f12d-113d-4cde-9c01-96e4df53d7bb', 'litikesh221@rareminds.in', '$2a$12$pLvFlL7CJXHvDS9FezNZbOcGQVKwVXGdN6S9LAG.TI363He.XhPAa', false, '2026-05-12 07:07:47.916342+00', '2026-05-12 07:07:47.916342+00', NULL, false),
-	('f654d9c4-de8f-4a28-a26a-d317dff5d41c', 'litikesh2221@rareminds.in', '$2a$12$nwFDsH.JXG8kNP5YczzzEOzVWYU1sziw4IXUiCewgoL71dUiIr0Yq', false, '2026-05-12 07:13:00.158028+00', '2026-05-12 07:13:00.158028+00', NULL, false);
+	('f654d9c4-de8f-4a28-a26a-d317dff5d41c', 'litikesh2221@rareminds.in', '$2a$12$nwFDsH.JXG8kNP5YczzzEOzVWYU1sziw4IXUiCewgoL71dUiIr0Yq', false, '2026-05-12 07:13:00.158028+00', '2026-05-12 07:13:00.158028+00', NULL, false),
+	('e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'gokul@rareminds.in', '$2a$12$m.hJMgLdvdOS5vjd0gArQeHYcUIjyF0TJ7S2MARssDCEYCIBsqxCu', true, '2026-05-21 11:28:31.108677+00', '2026-05-22 07:20:51.151871+00', '2026-05-22 07:20:51.143+00', false),
+	('ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'labotov243@bittnex.com', '$2a$12$bL0qhBky707kzoGBd91gyezx4tuJOifkSrnVMASgF3af3CwaEPkGC', true, '2026-05-22 07:22:13.130755+00', '2026-05-22 09:14:43.176512+00', '2026-05-22 09:14:43.175+00', false);
+
+
+--
+-- Data for Name: addon_purchases; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
 
 
 --
@@ -317,6 +354,7 @@ INSERT INTO "public"."audit_logs" ("id", "user_id", "action", "metadata", "ip_ad
 	('a1f0e376-5de5-4ffc-998b-7f54cb258f83', '2ef86968-1402-48ff-97ea-a5071588e1bd', 'refresh', '{}', '122.172.84.252', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-11 07:20:02.982097+00', '00000000-0000-0000-0000-000000000001'),
 	('01225625-f3f7-4c8e-94fa-971ef2821e75', 'a503ac73-67c9-4740-b8ca-76a2352e9e82', 'refresh', '{}', '2a09:bac1:36c0:ba8::176:86', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', '2026-05-11 07:20:20.274363+00', '00000000-0000-0000-0000-000000000001'),
 	('f9279772-2454-44e3-bc8e-e7ef72b4c4b3', 'a503ac73-67c9-4740-b8ca-76a2352e9e82', 'refresh', '{}', '2a09:bac1:36c0:ba8::176:86', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', '2026-05-11 07:20:28.555655+00', '00000000-0000-0000-0000-000000000001'),
+	('b66e300c-e92b-439b-9609-287b82719244', NULL, 'login', '{}', '122.172.80.229', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-09 06:15:49.845473+00', '00000000-0000-0000-0000-000000000001'),
 	('e0f6c568-6e41-49fc-9e2d-f926c32a214d', 'ab8c5cf5-5faa-49ff-abdd-e73595a0125e', 'refresh', '{}', '2a09:bac1:36e0:ba8::176:86', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', '2026-05-11 04:53:35.745343+00', '00000000-0000-0000-0000-000000000001'),
 	('dc7f0aee-067d-404b-be00-2b7be8464d79', 'ab8c5cf5-5faa-49ff-abdd-e73595a0125e', 'refresh', '{}', '2a09:bac1:36e0:ba8::176:86', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', '2026-05-11 04:54:05.319192+00', '00000000-0000-0000-0000-000000000001'),
 	('8232a8f9-8116-4b59-b1dc-fffa4c5058b0', NULL, 'refresh', '{}', '122.172.80.229', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-09 05:50:17.482655+00', '00000000-0000-0000-0000-000000000001'),
@@ -527,7 +565,6 @@ INSERT INTO "public"."audit_logs" ("id", "user_id", "action", "metadata", "ip_ad
 	('0848765f-fd06-475f-a5a0-35158fbcb6d9', NULL, 'login', '{}', '122.172.80.229', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-09 06:14:26.710101+00', '00000000-0000-0000-0000-000000000001'),
 	('3fa22958-c65a-4b29-bb25-d6286916ca29', NULL, 'refresh', '{}', '122.172.80.229', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-09 06:14:28.503195+00', '00000000-0000-0000-0000-000000000001'),
 	('ccf97b46-192e-4a2d-89b7-dceea1aa3460', NULL, 'refresh', '{}', '122.172.80.229', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-09 06:15:40.371217+00', '00000000-0000-0000-0000-000000000001'),
-	('b66e300c-e92b-439b-9609-287b82719244', NULL, 'login', '{}', '122.172.80.229', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-09 06:15:49.845473+00', '00000000-0000-0000-0000-000000000001'),
 	('a0e7a273-1ece-4b52-a816-dc53e20c7735', NULL, 'refresh', '{}', '122.172.80.229', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-09 06:15:51.463128+00', '00000000-0000-0000-0000-000000000001'),
 	('6761a9c5-c32a-4766-ab74-17e4b598e604', NULL, 'refresh', '{}', '122.172.80.229', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-09 06:56:04.019663+00', '00000000-0000-0000-0000-000000000001'),
 	('d4cae688-b701-454c-a2bd-1bdbaf4c93de', NULL, 'refresh_theft_detected', '{}', '122.172.80.229', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-09 06:56:17.864356+00', NULL),
@@ -679,7 +716,85 @@ INSERT INTO "public"."audit_logs" ("id", "user_id", "action", "metadata", "ip_ad
 	('e1588a50-bb03-4e12-8e48-ef5199de6f10', '5cb2f12d-113d-4cde-9c01-96e4df53d7bb', 'logout', '{}', '2a09:bac5:3b29:eaa::176:72', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', '2026-05-12 07:12:33.619516+00', '00000000-0000-0000-0000-000000000001'),
 	('c1f28079-8eaf-49e8-afa1-d6fb9fce52dc', 'f654d9c4-de8f-4a28-a26a-d317dff5d41c', 'signup_member', '{"role": "learner", "email_sent": true}', '2a09:bac5:3b29:eaa::176:72', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', '2026-05-12 07:13:00.772205+00', '00000000-0000-0000-0000-000000000001'),
 	('0e64fd50-2a42-4cd0-8ef0-1297d20ec617', 'f654d9c4-de8f-4a28-a26a-d317dff5d41c', 'refresh', '{}', '2a09:bac5:3b29:eaa::176:72', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', '2026-05-12 07:13:02.160517+00', '00000000-0000-0000-0000-000000000001'),
-	('bbc747c6-a6fe-4876-850a-ec52b2677bd7', 'f654d9c4-de8f-4a28-a26a-d317dff5d41c', 'refresh', '{}', '2a09:bac5:3b29:eaa::176:72', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', '2026-05-12 07:13:03.203514+00', '00000000-0000-0000-0000-000000000001');
+	('bbc747c6-a6fe-4876-850a-ec52b2677bd7', 'f654d9c4-de8f-4a28-a26a-d317dff5d41c', 'refresh', '{}', '2a09:bac5:3b29:eaa::176:72', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', '2026-05-12 07:13:03.203514+00', '00000000-0000-0000-0000-000000000001'),
+	('bbc2bfbd-877a-4467-a055-5aee31fec562', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'signup_member', '{"role": "learner", "email_sent": true}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-21 11:28:31.131794+00', '00000000-0000-0000-0000-000000000001'),
+	('40770abf-0822-4542-b89a-9c41357ca707', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'verification_requested', '{}', NULL, NULL, '2026-05-21 11:28:32.602466+00', '00000000-0000-0000-0000-000000000001'),
+	('8ed7d814-7346-423b-bd36-bcbaf81c34c6', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-21 11:28:48.578945+00', '00000000-0000-0000-0000-000000000001'),
+	('5af7a326-df73-47b6-a95d-0c8dd637af7d', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-21 11:28:49.021381+00', '00000000-0000-0000-0000-000000000001'),
+	('6bd7f345-07a8-4518-83e1-5b5d5147a246', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'email_verified', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-21 11:28:49.082304+00', NULL),
+	('f3718dbf-37c3-4816-8d17-d53d3617f655', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-21 11:28:49.101328+00', '00000000-0000-0000-0000-000000000001'),
+	('edec99e0-9139-497e-b0de-49bfdc794f14', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-21 11:28:49.141493+00', '00000000-0000-0000-0000-000000000001'),
+	('fcb8ddb2-05bb-486e-ba01-2d5908de3890', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 04:09:25.615641+00', '00000000-0000-0000-0000-000000000001'),
+	('c2f3b444-6968-45ef-84e7-c65a23e93ce4', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'login', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 04:09:46.0461+00', '00000000-0000-0000-0000-000000000001'),
+	('c7eb80eb-f4ef-48cb-8aaf-db818b0f37c1', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 04:09:54.732766+00', '00000000-0000-0000-0000-000000000001'),
+	('cd751503-d985-4679-88e1-96f0121a266f', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'login', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 05:29:10.980224+00', '00000000-0000-0000-0000-000000000001'),
+	('fb8c7487-722a-4fe4-8374-5a6e6fb8d1c5', NULL, 'logout', '{}', '127.0.0.1', 'node', '2026-05-22 05:36:48.443511+00', NULL),
+	('4ad356a9-678c-4290-a19c-2bec45cddbcd', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 05:39:47.462146+00', '00000000-0000-0000-0000-000000000001'),
+	('4d292543-f078-43bb-8c90-d157182d5180', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 05:44:14.308206+00', '00000000-0000-0000-0000-000000000001'),
+	('9876c08d-6b7c-4c35-8ccf-c7bca75dc0e2', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 07:20:19.900943+00', '00000000-0000-0000-0000-000000000001'),
+	('78c68cae-def5-4bf6-9692-eef93479783c', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 07:20:19.92797+00', '00000000-0000-0000-0000-000000000001'),
+	('9f3b7066-618c-4aad-b107-eac8acd698c2', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'login', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 07:20:51.154088+00', '00000000-0000-0000-0000-000000000001'),
+	('59d60818-54da-4382-8906-3daf277874dc', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'logout', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 07:21:03.430502+00', '00000000-0000-0000-0000-000000000001'),
+	('5317f762-f500-4d5b-a857-6a6a750fe277', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'signup_member', '{"role": "learner", "email_sent": true}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 07:22:13.155734+00', '00000000-0000-0000-0000-000000000001'),
+	('cafc335b-2693-466a-903e-332fe376b122', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 07:22:26.795081+00', '00000000-0000-0000-0000-000000000001'),
+	('bff160a0-c5e8-456a-ab92-71561a26be47', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 07:22:27.144186+00', '00000000-0000-0000-0000-000000000001'),
+	('4174ace6-6c96-451e-9f5b-ae0633490277', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'email_verified', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 07:22:27.214454+00', NULL),
+	('4d866bf9-f439-4245-b116-657887567c33', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 07:22:27.230166+00', '00000000-0000-0000-0000-000000000001'),
+	('945c81cc-a291-4ddf-96b9-cbe5f2a8a180', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 07:22:27.249095+00', '00000000-0000-0000-0000-000000000001'),
+	('0e3c9ba4-a646-46e3-9945-75e8d208f710', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 07:31:47.256357+00', '00000000-0000-0000-0000-000000000001'),
+	('5624f14a-4539-4fda-8578-0fa604c70c51', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 07:31:47.320899+00', '00000000-0000-0000-0000-000000000001'),
+	('e435f203-f9f0-4eac-ab32-2a54ad9806d3', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 07:38:09.157776+00', '00000000-0000-0000-0000-000000000001'),
+	('a5ce3df1-a4c1-4ca0-af5d-8bcbe07b395c', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 07:38:09.194604+00', '00000000-0000-0000-0000-000000000001'),
+	('00633684-6736-407f-9b66-5d3efaf5bf9b', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 07:39:32.333694+00', '00000000-0000-0000-0000-000000000001'),
+	('57ef0762-b6c8-47ff-978f-008cfc5d35de', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 07:39:32.375852+00', '00000000-0000-0000-0000-000000000001'),
+	('33be93a5-93a1-4394-bad9-e270027515b1', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 07:41:00.728697+00', '00000000-0000-0000-0000-000000000001'),
+	('f500d1fc-ae34-4026-a0f4-409cdedef1a4', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 07:41:00.757067+00', '00000000-0000-0000-0000-000000000001'),
+	('ccb26d80-c021-4dce-a3ad-f2bc0916292f', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 08:31:56.019215+00', '00000000-0000-0000-0000-000000000001'),
+	('42d457a6-cbb4-4cd7-b768-bd7429191f67', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 08:31:56.051424+00', '00000000-0000-0000-0000-000000000001'),
+	('026fa899-7b43-4135-8a7c-ce9a4bbd34e7', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 09:14:10.220323+00', '00000000-0000-0000-0000-000000000001'),
+	('d5af23b3-08f3-442e-8f0a-993989cd6475', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 09:14:10.583787+00', '00000000-0000-0000-0000-000000000001'),
+	('1d740473-1fde-4064-b3e6-69f50752fc1b', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 09:14:19.615165+00', '00000000-0000-0000-0000-000000000001'),
+	('91898003-90f5-4dde-8ad6-5ce61c641431', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 09:14:19.639842+00', '00000000-0000-0000-0000-000000000001'),
+	('61ee117c-ac53-4897-bbcd-5d58afc9ac75', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 09:14:26.344757+00', '00000000-0000-0000-0000-000000000001'),
+	('66d9e5a1-6d91-4a30-b73f-161c49051a51', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'refresh', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 09:14:26.369757+00', '00000000-0000-0000-0000-000000000001'),
+	('2881b645-4be1-468e-b589-a7b25aa9ae7b', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'login', '{}', '127.0.0.1', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-22 09:14:43.185067+00', '00000000-0000-0000-0000-000000000001');
+
+
+--
+-- Data for Name: bundles; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO "public"."bundles" ("id", "product_id", "name", "slug", "description", "target_roles", "monthly_price", "annual_price", "discount_percentage", "is_active", "display_order", "created_at", "updated_at") VALUES
+	('e848e655-b02d-4c3b-bf61-dfeb4a6bc7b7', '912d5049-e195-46e9-a319-49e3502bf7e7', 'Career Starter', 'career-starter', 'Career AI + AI Job Matching bundle for students', '{student}', 3558.40, 35584.00, 20, true, 1, '2026-05-22 05:28:49.088424+00', '2026-05-22 05:28:49.088424+00'),
+	('8ca0531d-a112-4e48-9f8d-3dc5acfa6f1e', '912d5049-e195-46e9-a319-49e3502bf7e7', 'Educator Pro', 'educator-pro', 'Complete toolkit for educators to enhance teaching effectiveness', '{educator}', 518.00, 5180.00, 20, true, 2, '2026-05-22 05:28:49.088424+00', '2026-05-22 05:28:49.088424+00'),
+	('02a9df7d-fbfa-4f9b-aa34-614d6c04bab5', '912d5049-e195-46e9-a319-49e3502bf7e7', 'Institution Complete', 'institution-complete', 'Full suite of administrative tools for institutions', '{school_admin,college_admin,university_admin}', 958.00, 9580.00, 25, true, 3, '2026-05-22 05:28:49.088424+00', '2026-05-22 05:28:49.088424+00'),
+	('f70d80db-a528-4fae-8e6a-e07c0d9b2361', '912d5049-e195-46e9-a319-49e3502bf7e7', 'Recruiter Suite', 'recruiter-suite', 'Comprehensive recruitment and talent management tools', '{recruiter}', 1037.00, 10370.00, 20, true, 4, '2026-05-22 05:28:49.088424+00', '2026-05-22 05:28:49.088424+00');
+
+
+--
+-- Data for Name: bundle_features; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO "public"."bundle_features" ("id", "bundle_id", "feature_key", "created_at") VALUES
+	('242bef44-f2ed-4c53-8e49-5488fe5c7944', 'e848e655-b02d-4c3b-bf61-dfeb4a6bc7b7', 'career_ai', '2026-05-22 05:28:49.088424+00'),
+	('041606bf-7fd2-47be-a857-1fae5cd3da13', 'e848e655-b02d-4c3b-bf61-dfeb4a6bc7b7', 'ai_job_matching', '2026-05-22 05:28:49.088424+00'),
+	('1aed8866-6f36-41d9-adec-b607d0901eaf', '8ca0531d-a112-4e48-9f8d-3dc5acfa6f1e', 'advanced_analytics', '2026-05-22 05:28:49.088424+00'),
+	('e1ce1789-fce1-4879-ac4e-1f88fe78764d', '8ca0531d-a112-4e48-9f8d-3dc5acfa6f1e', 'course_analytics', '2026-05-22 05:28:49.088424+00'),
+	('51abb4db-9e50-46b7-a36c-0d68004e282f', '8ca0531d-a112-4e48-9f8d-3dc5acfa6f1e', 'educator_ai', '2026-05-22 05:28:49.088424+00'),
+	('408030f8-9b44-4cd9-b326-49b2697f30b5', '02a9df7d-fbfa-4f9b-aa34-614d6c04bab5', 'curriculum_builder', '2026-05-22 05:28:49.088424+00'),
+	('85d40b97-fb1a-4a78-b98d-ccb47c5f9dc1', '02a9df7d-fbfa-4f9b-aa34-614d6c04bab5', 'fee_management', '2026-05-22 05:28:49.088424+00'),
+	('1268a061-2c99-4153-82ca-2b58150d9d5e', '02a9df7d-fbfa-4f9b-aa34-614d6c04bab5', 'kpi_dashboard', '2026-05-22 05:28:49.088424+00'),
+	('88635ba7-7959-4ccf-be75-4eca3de8dc03', '02a9df7d-fbfa-4f9b-aa34-614d6c04bab5', 'sso', '2026-05-22 05:28:49.088424+00'),
+	('f5ecdb2d-869a-4e74-99c1-895f5291f716', 'f70d80db-a528-4fae-8e6a-e07c0d9b2361', 'pipeline_management', '2026-05-22 05:28:49.088424+00'),
+	('3cb5f87c-e46e-4046-a034-83a6646ac2be', 'f70d80db-a528-4fae-8e6a-e07c0d9b2361', 'project_hiring', '2026-05-22 05:28:49.088424+00'),
+	('38e705e9-82dd-4a75-a3bb-261cb3b5dedd', 'f70d80db-a528-4fae-8e6a-e07c0d9b2361', 'recruiter_ai', '2026-05-22 05:28:49.088424+00'),
+	('a15dd5a6-fe99-4891-8067-3c7be7a3c01b', 'f70d80db-a528-4fae-8e6a-e07c0d9b2361', 'talent_pool_access', '2026-05-22 05:28:49.088424+00');
+
+
+--
+-- Data for Name: bundle_purchases; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
 
 
 --
@@ -718,7 +833,16 @@ INSERT INTO "public"."email_verifications" ("id", "user_id", "token_hash", "used
 	('522419c8-cbb5-4dd1-aaa0-57d735daa6f0', '49ecc9cc-06e6-4dee-b7c5-f02bd2e9d50c', 'b9427821e32bb7e4a1f9f31f7b0fa243a022cf46969a7fa33c1e491245de0e2e', false, '2026-05-12 14:37:42.404+00', '2026-05-11 14:37:42.6637+00'),
 	('6f747bd4-600a-4962-a5d4-d35d366b9898', '3ae54aa0-a351-46ad-808f-6fdd67c2a18b', 'bac9cc371d5309f5082740d42701baa42b61c5b5a92363ce2ba855ca97000a40', false, '2026-05-12 14:50:16.103+00', '2026-05-11 14:50:16.410023+00'),
 	('de5b4b01-0041-43b2-b0ea-99b084b8f294', '7b4c6f33-78d4-49e5-9f0b-3cf052d8ef1c', '7474850408b7ec6351cb4beaaac819c402848fa313f62a64570e16d61b674357', false, '2026-05-12 15:27:21.647+00', '2026-05-11 15:27:21.885699+00'),
-	('491c5e53-73b3-4d67-8ac9-24b6faaeb579', 'fe200a1b-6d97-4839-9841-f63fc2213188', '7a8fd3c32b1f04659ac24b2c9e4c3a70e37840d38f2b0b9aba2bad62c6edd295', false, '2026-05-12 16:40:11.036+00', '2026-05-11 16:40:11.342347+00');
+	('491c5e53-73b3-4d67-8ac9-24b6faaeb579', 'fe200a1b-6d97-4839-9841-f63fc2213188', '7a8fd3c32b1f04659ac24b2c9e4c3a70e37840d38f2b0b9aba2bad62c6edd295', false, '2026-05-12 16:40:11.036+00', '2026-05-11 16:40:11.342347+00'),
+	('c1d6222d-5826-4b1b-935c-b3d085d48d10', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'b88c9beca229bc4b92555e2dde1890983c52b7aebdbf18afbc1a91ead4db979c', false, '2026-05-22 11:28:31.126+00', '2026-05-21 11:28:31.127903+00'),
+	('03abbbd2-1c7e-4155-8fd1-615652e744e5', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', '03122fe8a3c3bd221dee6e2a1856ce32d874a44a1f1656521558727b2d459282', true, '2026-05-22 11:28:32.599+00', '2026-05-21 11:28:32.600352+00'),
+	('9e29922e-99ed-4c31-b7e0-6f81027fc1e0', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', '650ba5b6340861d9ebdd6d26841aad2c02be803facbafab1d9f89db0bdbe433b', true, '2026-05-23 07:22:13.149+00', '2026-05-22 07:22:13.150992+00');
+
+
+--
+-- Data for Name: events; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
 
 
 --
@@ -765,13 +889,9 @@ INSERT INTO "public"."memberships" ("id", "user_id", "org_id", "created_at", "st
 	('c32f61b4-88f3-49c2-a864-bc920ec458db', '5e12a75b-6692-4e2e-b560-a4f2bf6d30e0', '00000000-0000-0000-0000-000000000001', '2026-05-12 04:34:52.941569+00', 'active'),
 	('530c92f3-614c-41d1-bb6e-40231370618f', '6966c896-310b-41c5-a8b5-4578844486a6', '00000000-0000-0000-0000-000000000001', '2026-05-12 05:49:50.44392+00', 'active'),
 	('cd179030-6ed8-4f43-9599-bd5f93bd9082', '5cb2f12d-113d-4cde-9c01-96e4df53d7bb', '00000000-0000-0000-0000-000000000001', '2026-05-12 07:07:47.916342+00', 'active'),
-	('68a0dcf7-786e-46ff-829d-59d24a537c9a', 'f654d9c4-de8f-4a28-a26a-d317dff5d41c', '00000000-0000-0000-0000-000000000001', '2026-05-12 07:13:00.158028+00', 'active');
-
-
---
--- Data for Name: products; Type: TABLE DATA; Schema: public; Owner: postgres
---
-
+	('68a0dcf7-786e-46ff-829d-59d24a537c9a', 'f654d9c4-de8f-4a28-a26a-d317dff5d41c', '00000000-0000-0000-0000-000000000001', '2026-05-12 07:13:00.158028+00', 'active'),
+	('993e0a58-1a92-4da4-8e81-7acbbd3acb04', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', '00000000-0000-0000-0000-000000000001', '2026-05-21 11:28:31.108677+00', 'active'),
+	('392e935e-7b99-420c-9ad6-9659559320e3', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', '00000000-0000-0000-0000-000000000001', '2026-05-22 07:22:13.130755+00', 'active');
 
 
 --
@@ -841,7 +961,9 @@ INSERT INTO "public"."membership_roles" ("id", "membership_id", "role_id", "crea
 	('66fc16c9-c4a1-4ca1-af0d-7b8de3126ed6', 'c32f61b4-88f3-49c2-a864-bc920ec458db', '8d018d55-46f4-4e67-b6a5-8c216737a374', '2026-05-12 04:34:52.941569+00'),
 	('0631a1ce-a858-401b-8194-9c268f657729', '530c92f3-614c-41d1-bb6e-40231370618f', '8d018d55-46f4-4e67-b6a5-8c216737a374', '2026-05-12 05:49:50.44392+00'),
 	('bc64d55c-8363-4ac7-a74f-da86b941f4f1', 'cd179030-6ed8-4f43-9599-bd5f93bd9082', '8d018d55-46f4-4e67-b6a5-8c216737a374', '2026-05-12 07:07:47.916342+00'),
-	('9c4ce611-3b02-4659-81eb-4c6ceb469383', '68a0dcf7-786e-46ff-829d-59d24a537c9a', '8d018d55-46f4-4e67-b6a5-8c216737a374', '2026-05-12 07:13:00.158028+00');
+	('9c4ce611-3b02-4659-81eb-4c6ceb469383', '68a0dcf7-786e-46ff-829d-59d24a537c9a', '8d018d55-46f4-4e67-b6a5-8c216737a374', '2026-05-12 07:13:00.158028+00'),
+	('ad0b61a6-dbcc-47fc-84da-dbcef79ee9d4', '993e0a58-1a92-4da4-8e81-7acbbd3acb04', '8d018d55-46f4-4e67-b6a5-8c216737a374', '2026-05-21 11:28:31.108677+00'),
+	('854700c2-48ca-4ee8-acb9-bb9b1c18f5d8', '392e935e-7b99-420c-9ad6-9659559320e3', '8d018d55-46f4-4e67-b6a5-8c216737a374', '2026-05-22 07:22:13.130755+00');
 
 
 --
@@ -860,6 +982,17 @@ INSERT INTO "public"."membership_roles" ("id", "membership_id", "role_id", "crea
 -- Data for Name: password_resets; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
+
+
+--
+-- Data for Name: plans; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO "public"."plans" ("id", "plan_code", "name", "business_type", "applicable_entities", "pricing_matrix", "base_features", "entity_config", "display_order", "is_active", "created_at", "updated_at", "product_id") VALUES
+	('ef4a94ac-17b7-4a35-b47a-3a031f049b31', 'freemium', 'Freemium', 'b2c', '{all}', '{"all": {"yearly": 0, "monthly": 0, "currency": "INR"}}', '["dashboard_access", "profile_creation", "marketplace_access", "view_pricing", "opportunities_access", "courses_listing_access"]', '{"all": {"tagline": "Start free, upgrade anytime", "duration": "lifetime", "ideal_for": "Users who want to explore the platform", "max_users": 1, "description": "Free forever plan with basic features", "positioning": "Start free. Upgrade anytime to unlock all features.", "storage_limit": "0GB", "is_recommended": false}}', 0, true, '2026-05-21 11:27:23.226425+00', '2026-05-22 04:01:09.763845+00', '912d5049-e195-46e9-a319-49e3502bf7e7'),
+	('d8d9828a-8f24-490b-81f9-6c03bcf77255', 'basic', 'Basic', 'b2c', '{all}', '{"all": {"yearly": 4999, "monthly": 499, "currency": "INR"}}', '["dashboard_access", "profile_creation", "marketplace_access", "view_pricing", "opportunities_access", "courses_listing_access", "skill_analytics", "portfolio_builder", "5_assessments_month", "3_projects", "5gb_storage", "basic_support"]', '{"all": {"tagline": "Get started with essential features", "duration": "monthly", "ideal_for": "Individual learners starting their journey", "max_users": 1, "description": "Perfect for individuals who want to build their skills", "positioning": "Essential tools for individual learning", "storage_limit": "5GB", "is_recommended": false}}', 1, true, '2026-05-21 11:27:23.226425+00', '2026-05-22 04:01:09.763845+00', '912d5049-e195-46e9-a319-49e3502bf7e7'),
+	('b3d700e3-da45-4e3d-9387-5f5dbff06c0b', 'professional', 'Professional', 'b2c', '{all}', '{"all": {"yearly": 9999, "monthly": 999, "currency": "INR"}}', '["dashboard_access", "profile_creation", "marketplace_access", "view_pricing", "opportunities_access", "courses_listing_access", "advanced_analytics", "advanced_portfolio", "career_paths", "interview_prep", "resume_builder", "certificates", "10_assessments_month", "10_projects", "10gb_storage", "priority_support"]', '{"all": {"tagline": "Accelerate your career growth", "duration": "monthly", "ideal_for": "Professionals advancing their careers", "max_users": 1, "description": "Most popular plan with advanced career tools", "positioning": "Advanced features for serious learners", "storage_limit": "10GB", "is_recommended": true}}', 2, true, '2026-05-21 11:27:23.226425+00', '2026-05-22 04:01:09.763845+00', '912d5049-e195-46e9-a319-49e3502bf7e7'),
+	('8460ee67-18ff-4c2e-ac57-7e1f87dc8316', 'premium', 'Premium', 'b2c', '{all}', '{"all": {"yearly": 19999, "monthly": 1999, "currency": "INR"}}', '["dashboard_access", "profile_creation", "marketplace_access", "view_pricing", "opportunities_access", "courses_listing_access", "advanced_analytics", "advanced_portfolio", "all_career_paths", "mock_interviews", "linkedin_opt", "resume_builder", "verified_certs", "unlimited_assessments", "unlimited_projects", "50gb_storage", "priority_support", "mentorship", "placement_assist"]', '{"all": {"tagline": "Everything you need to succeed", "duration": "monthly", "ideal_for": "Ambitious professionals seeking comprehensive support", "max_users": 1, "description": "All features unlocked with premium support", "positioning": "Complete toolkit for maximum career success", "storage_limit": "50GB", "is_recommended": false}}', 3, true, '2026-05-21 11:27:23.226425+00', '2026-05-22 04:01:09.763845+00', '912d5049-e195-46e9-a319-49e3502bf7e7');
 
 
 --
@@ -916,6 +1049,7 @@ INSERT INTO "public"."sessions" ("id", "user_id", "refresh_token_hash", "user_ag
 	('f90fa72f-6b92-42e7-aa84-d5fba1ad234f', '2dc576b6-505e-481c-82bf-dfda564b34a5', 'bcf1152b1558a9aac95f40dae5a967213ca052bcd3bbfadd948ba4d3774afb84', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '122.172.84.252', '2026-06-10 05:57:35.208+00', true, '2026-05-11 05:57:35.336788+00', '2e10a0d8-a333-44b5-8771-fad0277cb3fe', '2026-05-11 05:57:35.208+00', NULL, '00000000-0000-0000-0000-000000000001'),
 	('a0cf1694-2c29-443c-a2c0-5b0e3e9af55b', 'a503ac73-67c9-4740-b8ca-76a2352e9e82', '72cfc8fef14f1c6cfda9364b59aa2253da4ef2a3497b1ed379ce2a0d99b2b117', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', '2a09:bac5:3b2e:eaa::176:86', '2026-06-10 07:03:38.17+00', true, '2026-05-11 07:03:38.271145+00', '3f1182f0-4a0c-4e60-9133-5a4a6ea01e0f', '2026-05-11 07:03:38.17+00', NULL, '00000000-0000-0000-0000-000000000001'),
 	('32ad92da-59ba-45e9-a9f7-a695f4a88e84', 'a503ac73-67c9-4740-b8ca-76a2352e9e82', '26fc7d88d150100a745baa9b4c18379332d86fc199c2ac66ebe9a15a2cfbac6e', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', '2a09:bac5:3b2e:eaa::176:86', '2026-06-10 07:12:06.707+00', true, '2026-05-11 07:12:06.811863+00', 'dcd967c2-96fe-41e2-9d61-47d3f86bcc5f', '2026-05-11 07:12:06.707+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('ff9a38ea-06ad-4a66-b051-29bec0347d76', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', '925c5872cdfd7700e45cbbafb1d4fb12e6473fab3084261366c7cc521850a760', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 09:14:43.18+00', false, '2026-05-22 09:14:43.181278+00', NULL, NULL, NULL, '00000000-0000-0000-0000-000000000001'),
 	('04f65e5f-6d74-41d7-8f48-e80b7e2b9420', 'a9d336f3-9dbe-4129-ba87-12e3edec6ea6', '09d6ca7267dc39c8ef499f8db9f780b0619a46ba4f035577df2d9574f40d3922', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', '2a09:bac5:3b2c:eaa::176:a9', '2026-06-10 14:32:45.987+00', false, '2026-05-11 14:32:46.334445+00', NULL, NULL, NULL, '00000000-0000-0000-0000-000000000001'),
 	('3b6179ce-ac6a-46b8-8142-3d49205c526d', 'ab8c5cf5-5faa-49ff-abdd-e73595a0125e', '45c3d0685cb5f70fbfd4bba04096899e13b0d72da7340f321302e2b3a70af8e3', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', '2a09:bac1:36e0:ba8::176:86', '2026-06-10 04:53:30.424+00', true, '2026-05-11 04:53:30.52111+00', '0578df2b-fa06-4675-8e78-bc447d74f387', '2026-05-11 04:53:30.424+00', NULL, '00000000-0000-0000-0000-000000000001'),
 	('66c15118-6de0-4303-80bd-778cb9563255', 'ab8c5cf5-5faa-49ff-abdd-e73595a0125e', '9f2693aadf3bf654700feb2693ac9273b8fba574c6a73000a24dabec0db62711', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', '2a09:bac1:36e0:ba8::176:86', '2026-06-10 04:53:35.364+00', true, '2026-05-11 04:53:35.462855+00', '3b6179ce-ac6a-46b8-8142-3d49205c526d', '2026-05-11 04:53:35.364+00', NULL, '00000000-0000-0000-0000-000000000001'),
@@ -1117,47 +1251,61 @@ INSERT INTO "public"."sessions" ("id", "user_id", "refresh_token_hash", "user_ag
 	('494bffc4-8608-4a5d-b33d-ce28fd361482', 'dcaefb3c-9c36-4c13-b9b2-fc7166eb3810', '92c9205dbb5120df98ab371257fb80c3cc664234c193220c3d232914b9fde8e2', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', '2a09:bac5:3b2e:eaa::176:72', '2026-06-11 07:04:26.976+00', false, '2026-05-12 07:04:27.081044+00', 'bb5df253-d5f8-495a-b82e-4629be546eb7', '2026-05-12 07:04:26.976+00', NULL, '00000000-0000-0000-0000-000000000001'),
 	('b3044fcd-74ce-4127-9646-0aa8c9e310dd', '5cb2f12d-113d-4cde-9c01-96e4df53d7bb', '9b0c9acaaacb1411241d38f1f42fd62f11d106eba837f1eaa0b9c072fa16fbf4', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', '2a09:bac5:3b28:eaa::176:72', '2026-06-11 07:07:49.428+00', true, '2026-05-12 07:07:49.531139+00', '7735428d-5d8f-49da-abbc-8ce5f64558d9', '2026-05-12 07:07:49.428+00', NULL, '00000000-0000-0000-0000-000000000001'),
 	('6eb03f67-3b2d-4ff0-811a-1139d3a27456', '5cb2f12d-113d-4cde-9c01-96e4df53d7bb', 'ebee96a13db1d9851bc30663864caf179fe63ba25316bc22e49ae550d9f5d0f9', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', '2a09:bac5:3b28:eaa::176:72', '2026-06-11 07:07:50.512+00', true, '2026-05-12 07:07:50.617747+00', 'b3044fcd-74ce-4127-9646-0aa8c9e310dd', '2026-05-12 07:07:50.512+00', NULL, '00000000-0000-0000-0000-000000000001'),
-	('1f51c593-9808-4388-bfb4-5002063b5c5a', 'f654d9c4-de8f-4a28-a26a-d317dff5d41c', '4f4a22ec22bf598042a1729b8a57a60bb3f790bf5e4d8c1a1efa5a16299d6867', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', '2a09:bac5:3b29:eaa::176:72', '2026-06-11 07:13:01.732+00', true, '2026-05-12 07:13:01.836885+00', '1605e903-16a9-4844-b812-9fd90efdfb6f', '2026-05-12 07:13:01.732+00', NULL, '00000000-0000-0000-0000-000000000001');
+	('1f51c593-9808-4388-bfb4-5002063b5c5a', 'f654d9c4-de8f-4a28-a26a-d317dff5d41c', '4f4a22ec22bf598042a1729b8a57a60bb3f790bf5e4d8c1a1efa5a16299d6867', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', '2a09:bac5:3b29:eaa::176:72', '2026-06-11 07:13:01.732+00', true, '2026-05-12 07:13:01.836885+00', '1605e903-16a9-4844-b812-9fd90efdfb6f', '2026-05-12 07:13:01.732+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('fd3fdba0-ccb5-4b98-8672-449eef1a166e', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'd17e91c1ec184f99926b1fc8db8e00ac3ec4e1f71c1c717a1d30b59e69e6b8c7', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-20 11:28:31.117+00', true, '2026-05-21 11:28:31.119482+00', NULL, NULL, NULL, '00000000-0000-0000-0000-000000000001'),
+	('d2fceb85-a09a-4045-bcb9-326730e9d9eb', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'c5d042f71e0ac97214d694f705bf0182c5194084e9ebe0d5e10383d9a7c14572', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-20 11:28:48.557+00', true, '2026-05-21 11:28:48.560462+00', 'fd3fdba0-ccb5-4b98-8672-449eef1a166e', '2026-05-21 11:28:48.557+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('1f964918-4812-40a9-ba4f-cf6d5bb933f0', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'bb3c862be2c9d8f43469ebbf00c096dbbd63c44e585691bf37ffb826aef719ec', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-20 11:28:49.011+00', true, '2026-05-21 11:28:49.012631+00', 'd2fceb85-a09a-4045-bcb9-326730e9d9eb', '2026-05-21 11:28:49.011+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('d518b77b-2321-4ed6-8806-a31da5768c61', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', '6c691757dda1cc2ce053f8062aa6e05e6315458736f60d0df546206dbd57c49e', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-20 11:28:49.091+00', true, '2026-05-21 11:28:49.092197+00', '1f964918-4812-40a9-ba4f-cf6d5bb933f0', '2026-05-21 11:28:49.091+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('f1de7106-daca-4482-a19f-dc069d0590ed', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'f1d32b30b8b520bc89c11899f2a75dd9214a1510df30d21ae1fafb24e1d75ff2', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-20 11:28:49.123+00', true, '2026-05-21 11:28:49.124773+00', 'd518b77b-2321-4ed6-8806-a31da5768c61', '2026-05-21 11:28:49.123+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('eeee2e26-9b1c-43b4-a1d2-da492e59d451', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', '47254fbf180a27279558c3eeeb0ca6bdf1b23f6535bfdac0ae8b35a216a5c4f9', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 04:09:25.588+00', false, '2026-05-22 04:09:25.590363+00', 'f1de7106-daca-4482-a19f-dc069d0590ed', '2026-05-22 04:09:25.588+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('2374e1a3-8f0e-4de9-a61e-0ff7c0f66ec3', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', '3ed11db64388deb850f90230c347c5629879e3dbb65cf8a417db498fae7313aa', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 04:09:46.04+00', true, '2026-05-22 04:09:46.041447+00', NULL, NULL, NULL, '00000000-0000-0000-0000-000000000001'),
+	('e437b28e-789f-4f0f-9d76-0e853a7aefbe', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', '257c613bca9a06baacb0168146ed4bf72665b5802c827fed7826db8b119b8f5a', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 05:29:10.966+00', true, '2026-05-22 05:29:10.967119+00', NULL, NULL, NULL, '00000000-0000-0000-0000-000000000001'),
+	('8f6e4d2c-2da9-4c71-86ac-eb3dd5b48684', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', '31f382c77ab8d6d2b3e547b6058fba7f1c65a4a3f992a4b8ae36ba88736daff0', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 05:39:47.42+00', false, '2026-05-22 05:39:47.427418+00', 'e437b28e-789f-4f0f-9d76-0e853a7aefbe', '2026-05-22 05:39:47.42+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('e399dd8d-4321-4062-a601-209d8a40672b', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', '13911ea2d64b590f0e8f4b458b1bceae57d84a5a4f3cf1b097b7bf5eeeb128d7', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 04:09:54.722+00', true, '2026-05-22 04:09:54.724082+00', '2374e1a3-8f0e-4de9-a61e-0ff7c0f66ec3', '2026-05-22 04:09:54.722+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('a97ca803-809b-4f69-b284-217d61a20f08', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'e622b676cee84b963282357f0c6fe56d85a6ec0ad9ebeac9907205e37687756f', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 05:44:14.274+00', true, '2026-05-22 05:44:14.278093+00', 'e399dd8d-4321-4062-a601-209d8a40672b', '2026-05-22 05:44:14.274+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('3116f24c-9226-4cd8-9d75-35da415cedfc', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'f5310edf5e4db2ffca49ac74607a283b0cc47a9833ead1687ac0c4b73668b3f8', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 07:20:19.872+00', true, '2026-05-22 07:20:19.875921+00', 'a97ca803-809b-4f69-b284-217d61a20f08', '2026-05-22 07:20:19.874+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('c2426386-4760-4ca2-bd87-95bb0cb774c4', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', '4b6ceb99961fc6945a8b49a78e4ebbe5cc2a49145d1a24d3310a218398aa15c4', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 07:20:19.918+00', false, '2026-05-22 07:20:19.919161+00', '3116f24c-9226-4cd8-9d75-35da415cedfc', '2026-05-22 07:20:19.918+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('1efc3f09-1863-43fe-bea0-67722834a284', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', '36d1cf92fe5190e5ab03af3f1b756a2206dae0e98535ef2533fd36d505bff5d7', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 07:20:51.149+00', true, '2026-05-22 07:20:51.150672+00', NULL, NULL, NULL, '00000000-0000-0000-0000-000000000001'),
+	('b69b5c9d-f5b0-4b76-8eda-7c74da0399e8', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', '881c5372aa27646c8b2895783e642e398c7287d55a3b5963a397481cb3bf4004', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 07:22:13.146+00', true, '2026-05-22 07:22:13.147229+00', NULL, NULL, NULL, '00000000-0000-0000-0000-000000000001'),
+	('2758639e-bbb6-421d-ab05-016e5c8538d7', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', '9415ef159a48d991b3063a28cdae12683222dd3bb6ccb61c13ed3970341f8831', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 07:22:26.786+00', true, '2026-05-22 07:22:26.786956+00', 'b69b5c9d-f5b0-4b76-8eda-7c74da0399e8', '2026-05-22 07:22:26.786+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('df39cd53-4273-4fb9-b1c1-aa0c68d29fe9', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', '4065c66ed02ba60b50ed85e50046b2347ebc625935860fd1712be5d32c4ee50c', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 07:22:27.135+00', true, '2026-05-22 07:22:27.136666+00', '2758639e-bbb6-421d-ab05-016e5c8538d7', '2026-05-22 07:22:27.135+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('42795364-e944-44fd-8767-a23d78e78d35', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', '8d38df31d363dab4e2bfc5b194d740a3f69f94c363ec7c9ec6cd98e300c8ff94', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 07:22:27.222+00', true, '2026-05-22 07:22:27.223279+00', 'df39cd53-4273-4fb9-b1c1-aa0c68d29fe9', '2026-05-22 07:22:27.222+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('855ca971-26cf-4f73-a6c5-3aa0478f7783', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', '0d11d188d94fd6e00b9b505a543d50b098b3cc569d0681e34420a94347238d79', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 07:22:27.241+00', true, '2026-05-22 07:22:27.241853+00', '42795364-e944-44fd-8767-a23d78e78d35', '2026-05-22 07:22:27.241+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('4777d8c1-91b6-4baa-b927-ac9988a603d2', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'ac52f3b32f33066ef9767918366d8cd0d24065f7488c3e0f23603b1b1584fa5b', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 07:31:47.238+00', true, '2026-05-22 07:31:47.240577+00', '855ca971-26cf-4f73-a6c5-3aa0478f7783', '2026-05-22 07:31:47.238+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('d6419e6d-0e52-4627-8668-73269014a240', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'c61940215f701279158efcefee68e6f55534edfacb34041190b1f087ad529f70', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 07:31:47.307+00', true, '2026-05-22 07:31:47.30871+00', '4777d8c1-91b6-4baa-b927-ac9988a603d2', '2026-05-22 07:31:47.307+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('89b440d6-e02a-4b7e-a6fc-7e4489e470eb', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', '86acc80f7bf1ff2976f2e0a7faccb33bc7bd37be978de1a960d2b4fdec15b655', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 07:38:09.144+00', true, '2026-05-22 07:38:09.145651+00', 'd6419e6d-0e52-4627-8668-73269014a240', '2026-05-22 07:38:09.144+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('4b0c307a-295b-4064-9283-65aeff9e942c', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'b9f044276d64f38175b274c5c1a967f9f635aca9b61a0a80e398939d0bbf2e38', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 07:38:09.178+00', true, '2026-05-22 07:38:09.179315+00', '89b440d6-e02a-4b7e-a6fc-7e4489e470eb', '2026-05-22 07:38:09.178+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('b674a6d5-1c74-4a68-a4e5-3033e163730a', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', '06eca26a478d9e2679e23c7d3e5ac1d5e5f576a7f363d2991ac5e6dc659578de', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 07:39:32.319+00', true, '2026-05-22 07:39:32.320382+00', '4b0c307a-295b-4064-9283-65aeff9e942c', '2026-05-22 07:39:32.319+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('5e860d21-e723-44aa-aa1d-c2249d636d1f', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'c0f603d16f1e9d4c3d7b3a16d22df9655b9cded9878d602258a42e5bdab0ca05', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 07:39:32.363+00', true, '2026-05-22 07:39:32.364311+00', 'b674a6d5-1c74-4a68-a4e5-3033e163730a', '2026-05-22 07:39:32.363+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('32847822-f717-42f3-a505-0c719d15c284', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', '8acda0af5f0cbadcef326c2209d18664102fd6c874fabd8d011f923cb661afdf', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 07:41:00.716+00', true, '2026-05-22 07:41:00.718478+00', '5e860d21-e723-44aa-aa1d-c2249d636d1f', '2026-05-22 07:41:00.716+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('e3498dc0-c3b6-4256-ae59-9fb7e7ac9e0f', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', '51a87cda68988488f888b1d218856eb8a4b85249b0aa79a4018be1103da2f7cd', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 07:41:00.745+00', true, '2026-05-22 07:41:00.746404+00', '32847822-f717-42f3-a505-0c719d15c284', '2026-05-22 07:41:00.745+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('089697e0-3d70-40d2-9e8c-92468242001d', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'b5041e6d6b2b8830893080b25544201bfb009911d7563a822e29f9ce17ff1f8c', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 08:31:56.001+00', true, '2026-05-22 08:31:56.002237+00', 'e3498dc0-c3b6-4256-ae59-9fb7e7ac9e0f', '2026-05-22 08:31:56.001+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('4b67a71e-9b94-44eb-8685-e305a4e02196', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', '4d3b902e278e49e52580c8bbb9253bb90f0ada15a0d8dc369e07fb43c7314a83', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 08:31:56.035+00', true, '2026-05-22 08:31:56.036981+00', '089697e0-3d70-40d2-9e8c-92468242001d', '2026-05-22 08:31:56.035+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('5d2d4d14-32eb-4609-bd6e-b1fb7203a397', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'af1dc3783bd5047e2c6a1ac3d2c9dae5ca95be8bb8d681d6633e0b40bbfe88f8', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 09:14:10.194+00', true, '2026-05-22 09:14:10.195497+00', '4b67a71e-9b94-44eb-8685-e305a4e02196', '2026-05-22 09:14:10.194+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('70a7c402-881e-474a-bc61-293c793e21a2', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', '5512e60e076c38707ebdb76a158ccb05208c26710b1dcfb031d9c2468c69be85', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 09:14:10.573+00', true, '2026-05-22 09:14:10.574877+00', '5d2d4d14-32eb-4609-bd6e-b1fb7203a397', '2026-05-22 09:14:10.573+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('ac0300f3-0528-499c-bd7b-8c72ea05fc6b', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', '53aa101915446796669dcc86865550fe35932fb2ef53b139915b06b30b2a3948', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 09:14:19.607+00', true, '2026-05-22 09:14:19.609219+00', '70a7c402-881e-474a-bc61-293c793e21a2', '2026-05-22 09:14:19.607+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('a2c5e5cc-0613-4513-bcfa-721d8ef916cf', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', '3bdc04e55eb4422405b76e70b8b17e6c65713dfc496061dca5ddc7ceb5b2d93f', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 09:14:19.633+00', true, '2026-05-22 09:14:19.634625+00', 'ac0300f3-0528-499c-bd7b-8c72ea05fc6b', '2026-05-22 09:14:19.633+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('d6b0e2ba-afc3-448a-b48b-a88503f796f7', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', '83765f5c481f6c1e796a8714027c96f862ea5b222efb29431573ff92d5861bcb', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 09:14:26.339+00', true, '2026-05-22 09:14:26.339657+00', 'a2c5e5cc-0613-4513-bcfa-721d8ef916cf', '2026-05-22 09:14:26.339+00', NULL, '00000000-0000-0000-0000-000000000001'),
+	('26b42759-7301-4c84-9c3b-dd66fd2f3548', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', '3bf71ae5041e3825cc26db3a7cc22206ae352d8d9730c4faa9e575fbe7904ce8', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '127.0.0.1', '2026-06-21 09:14:26.362+00', false, '2026-05-22 09:14:26.363401+00', 'd6b0e2ba-afc3-448a-b48b-a88503f796f7', '2026-05-22 09:14:26.362+00', NULL, '00000000-0000-0000-0000-000000000001');
 
 
 --
--- Data for Name: buckets; Type: TABLE DATA; Schema: storage; Owner: supabase_storage_admin
+-- Data for Name: subscriptions; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO "public"."subscriptions" ("id", "user_id", "plan_id", "organization_id", "full_name", "email", "phone", "plan_code", "plan_type", "plan_amount", "billing_cycle", "features", "status", "razorpay_subscription_id", "razorpay_customer_id", "razorpay_payment_id", "razorpay_order_id", "auto_renew", "receipt_url", "subscription_start_date", "subscription_end_date", "cancelled_at", "paused_at", "paused_until", "last_webhook_at", "cancellation_reason", "cancellation_feedback", "cancelled_by", "is_organization_subscription", "organization_type", "purchased_by", "seat_count", "is_bulk_purchase", "metadata", "created_at", "updated_at", "product_id") VALUES
+	('7dce46cd-b15b-4cd4-ba39-2b81f61d7737', 'e82b62a2-8a9d-4716-90b3-7c3df93f8a53', 'ef4a94ac-17b7-4a35-b47a-3a031f049b31', NULL, 'Freemium User', 'gokul@rareminds.in', NULL, 'freemium', 'Freemium', 0.00, 'lifetime', '["dashboard_access", "profile_creation", "marketplace_access", "view_pricing", "opportunities_access", "courses_listing_access"]', 'active', NULL, NULL, NULL, NULL, false, NULL, '2026-05-21 11:29:42.868+00', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, false, NULL, NULL, 1, false, '{}', '2026-05-21 11:29:42.86983+00', '2026-05-22 04:01:09.763845+00', '912d5049-e195-46e9-a319-49e3502bf7e7'),
+	('ad2d48f6-05ab-489b-92b3-1de51b0d2e4a', 'ff788f7b-0aa8-466f-ae10-fec7020ff47f', 'd8d9828a-8f24-490b-81f9-6c03bcf77255', NULL, 'labotov243@bittnex.com', 'labotov243@bittnex.com', NULL, 'basic', 'Basic', 499.00, 'monthly', '[]', 'active', NULL, NULL, 'pay_SsKGmjJhrPoiX8', 'order_SsKGcCqjJQoHpn', true, NULL, '2026-05-22 07:23:10.296+00', '2026-06-22 07:23:10.296+00', NULL, NULL, NULL, NULL, NULL, NULL, NULL, false, NULL, NULL, 1, false, '{}', '2026-05-22 07:23:10.305396+00', '2026-05-22 07:23:10.305396+00', NULL);
+
+
+--
+-- Data for Name: transactions; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
 
 
 --
--- Data for Name: buckets_analytics; Type: TABLE DATA; Schema: storage; Owner: supabase_storage_admin
---
-
-
-
---
--- Data for Name: buckets_vectors; Type: TABLE DATA; Schema: storage; Owner: supabase_storage_admin
---
-
-
-
---
--- Data for Name: objects; Type: TABLE DATA; Schema: storage; Owner: supabase_storage_admin
---
-
-
-
---
--- Data for Name: s3_multipart_uploads; Type: TABLE DATA; Schema: storage; Owner: supabase_storage_admin
---
-
-
-
---
--- Data for Name: s3_multipart_uploads_parts; Type: TABLE DATA; Schema: storage; Owner: supabase_storage_admin
---
-
-
-
---
--- Data for Name: vector_indexes; Type: TABLE DATA; Schema: storage; Owner: supabase_storage_admin
+-- Data for Name: hooks; Type: TABLE DATA; Schema: supabase_functions; Owner: supabase_functions_admin
 --
 
 
@@ -1170,9 +1318,16 @@ SELECT pg_catalog.setval('"auth"."refresh_tokens_id_seq"', 1, false);
 
 
 --
+-- Name: hooks_id_seq; Type: SEQUENCE SET; Schema: supabase_functions; Owner: supabase_functions_admin
+--
+
+SELECT pg_catalog.setval('"supabase_functions"."hooks_id_seq"', 1, false);
+
+
+--
 -- PostgreSQL database dump complete
 --
 
--- \unrestrict 0T2at5XGjgZjwjTtZDdA73qQ6k0Czs5bFAuT0cAZeEZ1Ih3wdtYLS9ufXiIHdgX
+-- \unrestrict GSvbzOjPqhquWNwVOcWdQZuBERcexayXRPBcHEbDVqPisqfR593KEYmf4fReGAr
 
 RESET ALL;
