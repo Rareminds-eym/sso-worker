@@ -1,14 +1,3 @@
--- Migration: Add product classification to plans
--- Description: Links plans to products (SkillPassport, future products, etc.)
--- Date: 2026-05-21
-
--- Seed products table
-INSERT INTO public.products (code, name, description, created_at)
-VALUES 
-  ('skillpassport', 'SkillPassport', 'Skill development and career advancement platform', NOW()),
-  ('lte', 'Learning Transformation Engine', 'Enterprise learning transformation and training management system', NOW())
-ON CONFLICT (code) DO NOTHING;
-
 -- Add product_id column to plans table
 ALTER TABLE public.plans 
 ADD COLUMN IF NOT EXISTS product_id uuid REFERENCES public.products(id);
