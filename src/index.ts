@@ -24,6 +24,11 @@ import {
   processWebhookEvent,
   syncSubscription, syncPlans, syncReconcile,
 } from "./routes/subscriptions";
+import {
+  listAddonCatalog, getAddonByFeatureKey,
+  listBundles,
+  recordAddonPurchase, recordBundlePurchase,
+} from "./routes/addon-catalog";
 import { rateLimit, rateLimits } from "./middleware/rateLimit";
 import { authenticate } from "./lib/auth";
 import { json, error } from "./lib/response";
@@ -52,20 +57,25 @@ const routes: Record<string, Record<string, RouteConfig>> = {
     "/auth/change-password":     { handler: changePassword,      auth: true },
     "/auth/admin-reset-password": { handler: adminResetPassword, auth: true },
     "/auth/delete-account":      { handler: deleteAccount,       auth: true },
-    // Subscription management
-    "/api/subscriptions/create":          { handler: createSubscription,         auth: true },
-    "/api/subscriptions/create-freemium": { handler: createFreemiumSubscription, auth: true },
-    "/api/transactions/record":           { handler: recordTransaction,          auth: true },
+    // Subscription management — all require SERVICE_AUTH_SECRET
+    // These endpoints are only callable by the skillpassport backend via
+    // Cloudflare Service Binding + SERVICE_AUTH_SECRET. User JWTs are rejected.
+    "/api/subscriptions/create":          { handler: createSubscription,         serviceAuth: true },
+    "/api/subscriptions/create-freemium": { handler: createFreemiumSubscription, serviceAuth: true },
+    "/api/transactions/record":           { handler: recordTransaction,          serviceAuth: true },
     "/api/events/webhook":                { handler: processWebhookEvent },
+    // Addon & bundle purchase recording (service-auth only)
+    "/api/addon-purchases/record":  { handler: recordAddonPurchase,  serviceAuth: true },
+    "/api/bundle-purchases/record": { handler: recordBundlePurchase, serviceAuth: true },
     // Sync endpoints (called by skillpassport workers)
     "/api/sync/subscription":   { handler: syncSubscription,  serviceAuth: true },
     "/api/sync/plans":          { handler: syncPlans,         serviceAuth: true },
     "/api/sync/reconcile":      { handler: syncReconcile,     serviceAuth: true },
   },
   PUT: {
-    "/api/subscriptions/cancel": { handler: cancelSubscription, auth: true },
-    "/api/subscriptions/status": { handler: updateSubscriptionStatus, auth: true },
-    "/api/subscriptions/update": { handler: updateSubscriptionField,  auth: true },
+    "/api/subscriptions/cancel": { handler: cancelSubscription, serviceAuth: true },
+    "/api/subscriptions/status": { handler: updateSubscriptionStatus, serviceAuth: true },
+    "/api/subscriptions/update": { handler: updateSubscriptionField,  serviceAuth: true },
   },
   GET: {
     "/auth/me":               { handler: me, auth: true },
@@ -78,8 +88,11 @@ const routes: Record<string, Record<string, RouteConfig>> = {
     "/health":                { handler: () => Promise.resolve(json({ status: "ok" })) },
     // Plans (public)
     "/api/plans":             { handler: listPlans },
+    // Addon catalog & bundles (public)
+    "/api/addon-catalog":     { handler: listAddonCatalog },
+    "/api/bundles":           { handler: listBundles },
     // Transactions
-    "/api/transactions/user": { handler: getUserTransactions, auth: true },
+    "/api/transactions/user": { handler: getUserTransactions, serviceAuth: true },
   },
 };
 
@@ -243,16 +256,18 @@ export default {
       if (methodRoutes) {
         if (method === "GET" && pathname.startsWith("/api/plans/")) {
           config = { handler: getPlanByCode };
+        } else if (method === "GET" && pathname.startsWith("/api/addon-catalog/")) {
+          config = { handler: getAddonByFeatureKey };
         } else if (method === "GET" && pathname.startsWith("/api/subscriptions/user/")) {
-          config = { handler: getUserSubscription, auth: true };
+          config = { handler: getUserSubscription, serviceAuth: true };
         } else if (method === "GET" && pathname.startsWith("/api/subscriptions/org/")) {
-          config = { handler: getOrgSubscription, auth: true };
+          config = { handler: getOrgSubscription, serviceAuth: true };
         } else if (method === "PUT" && /^\/api\/subscriptions\/[^/]+\/status$/.test(pathname)) {
-          config = { handler: updateSubscriptionStatus, auth: true };
+          config = { handler: updateSubscriptionStatus, serviceAuth: true };
         } else if (method === "PUT" && /^\/api\/subscriptions\/[^/]+\/cancel$/.test(pathname)) {
-          config = { handler: cancelSubscription, auth: true };
+          config = { handler: cancelSubscription, serviceAuth: true };
         } else if (method === "PUT" && /^\/api\/subscriptions\/[^/]+\/update$/.test(pathname)) {
-          config = { handler: updateSubscriptionField, auth: true };
+          config = { handler: updateSubscriptionField, serviceAuth: true };
         }
       }
     }

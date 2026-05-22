@@ -125,7 +125,7 @@ describe('Property 2: Preservation - User Authentication for Non-Sync Endpoints'
     const response = await worker.default.fetch(request, mockEnv, {
       waitUntil: () => {},
       passThroughOnException: () => {},
-    } as ExecutionContext);
+    } as any);
 
     // User-facing endpoint should accept valid JWT
     expect(response.status).not.toBe(401);
@@ -149,7 +149,7 @@ describe('Property 2: Preservation - User Authentication for Non-Sync Endpoints'
     const response = await worker.default.fetch(request, mockEnv, {
       waitUntil: () => {},
       passThroughOnException: () => {},
-    } as ExecutionContext);
+    } as any);
 
     // Expired JWT should be rejected
     expect(response.status).toBe(401);
@@ -173,7 +173,7 @@ describe('Property 2: Preservation - User Authentication for Non-Sync Endpoints'
     const response = await worker.default.fetch(request, mockEnv, {
       waitUntil: () => {},
       passThroughOnException: () => {},
-    } as ExecutionContext);
+    } as any);
 
     // Invalid JWT should be rejected
     expect(response.status).toBe(401);
@@ -196,7 +196,7 @@ describe('Property 2: Preservation - User Authentication for Non-Sync Endpoints'
     const response = await worker.default.fetch(request, mockEnv, {
       waitUntil: () => {},
       passThroughOnException: () => {},
-    } as ExecutionContext);
+    } as any);
 
     // No auth should be rejected
     expect(response.status).toBe(401);
@@ -220,7 +220,7 @@ describe('Property 2: Preservation - User Authentication for Non-Sync Endpoints'
     const response = await worker.default.fetch(request, mockEnv, {
       waitUntil: () => {},
       passThroughOnException: () => {},
-    } as ExecutionContext);
+    } as any);
 
     // Service secret should be rejected on user-facing endpoints
     expect(response.status).toBe(401);
@@ -243,7 +243,7 @@ describe('Property 2: Preservation - User Authentication for Non-Sync Endpoints'
     const response = await worker.default.fetch(request, mockEnv, {
       waitUntil: () => {},
       passThroughOnException: () => {},
-    } as ExecutionContext);
+    } as any);
 
     // Public endpoint should be accessible
     expect(response.status).toBe(200);
@@ -266,7 +266,7 @@ describe('Property 2: Preservation - User Authentication for Non-Sync Endpoints'
     const response = await worker.default.fetch(request, mockEnv, {
       waitUntil: () => {},
       passThroughOnException: () => {},
-    } as ExecutionContext);
+    } as any);
 
     // JWKS endpoint should be accessible
     expect(response.status).toBe(200);

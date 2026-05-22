@@ -156,7 +156,7 @@ export async function createFreemiumSubscription(
 
   // Find the freemium plan
   const freemiumPlan = await database.queryOne(
-    "plans?plan_code=eq.pay_as_you_go&is_active=eq.true",
+    "plans?plan_code=eq.freemium&is_active=eq.true",
   );
   if (!freemiumPlan) {
     return error("Freemium plan not found", 500);
@@ -173,7 +173,7 @@ export async function createFreemiumSubscription(
   const subscription = await database.mutate("subscriptions", {
     user_id: body.user_id,
     plan_id: freemiumPlan.id,
-    plan_code: "pay_as_you_go",
+    plan_code: "freemium",
     plan_type: "Freemium",
     plan_amount: 0,
     billing_cycle: "lifetime",

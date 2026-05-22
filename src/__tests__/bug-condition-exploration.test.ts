@@ -112,7 +112,7 @@ describe('Property 1: Bug Condition - Sync Endpoints Accept User JWT Tokens', ()
     const response = await worker.default.fetch(request, mockEnv, {
       waitUntil: () => {},
       passThroughOnException: () => {},
-    } as ExecutionContext);
+    } as any);
 
     // EXPECTED BEHAVIOR: User JWT should be rejected (401 Unauthorized)
     expect(response.status).toBe(401);
@@ -141,7 +141,7 @@ describe('Property 1: Bug Condition - Sync Endpoints Accept User JWT Tokens', ()
     const response = await worker.default.fetch(request, mockEnv, {
       waitUntil: () => {},
       passThroughOnException: () => {},
-    } as ExecutionContext);
+    } as any);
 
     // EXPECTED BEHAVIOR: User JWT should be rejected (401 Unauthorized)
     expect(response.status).toBe(401);
@@ -170,7 +170,7 @@ describe('Property 1: Bug Condition - Sync Endpoints Accept User JWT Tokens', ()
     const response = await worker.default.fetch(request, mockEnv, {
       waitUntil: () => {},
       passThroughOnException: () => {},
-    } as ExecutionContext);
+    } as any);
 
     // EXPECTED BEHAVIOR: User JWT should be rejected (401 Unauthorized)
     expect(response.status).toBe(401);
@@ -199,7 +199,7 @@ describe('Property 1: Bug Condition - Sync Endpoints Accept User JWT Tokens', ()
     const response = await worker.default.fetch(request, mockEnv, {
       waitUntil: () => {},
       passThroughOnException: () => {},
-    } as ExecutionContext);
+    } as any);
 
     // EXPECTED BEHAVIOR: Service secret should be accepted (200 OK)
     expect(response.status).toBe(200);
@@ -229,7 +229,7 @@ describe('Property 1: Bug Condition - Sync Endpoints Accept User JWT Tokens', ()
     const response = await worker.default.fetch(request, mockEnv, {
       waitUntil: () => {},
       passThroughOnException: () => {},
-    } as ExecutionContext);
+    } as any);
 
     // EXPECTED BEHAVIOR: Service secret should be accepted (200 OK)
     expect(response.status).toBe(200);
@@ -259,7 +259,7 @@ describe('Property 1: Bug Condition - Sync Endpoints Accept User JWT Tokens', ()
     const response = await worker.default.fetch(request, mockEnv, {
       waitUntil: () => {},
       passThroughOnException: () => {},
-    } as ExecutionContext);
+    } as any);
 
     // EXPECTED BEHAVIOR: Invalid secret should be rejected (401 Unauthorized)
     expect(response.status).toBe(401);

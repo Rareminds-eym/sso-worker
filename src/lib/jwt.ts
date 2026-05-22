@@ -1,4 +1,4 @@
-import { SignJWT, jwtVerify, importPKCS8, importSPKI, type KeyLike } from "jose";
+import { SignJWT, jwtVerify, importPKCS8, importSPKI } from "jose";
 import type { Env, AccessTokenPayload } from "../types";
 import { JWT_ISSUER, JWT_AUDIENCE } from "./constants";
 
@@ -6,17 +6,20 @@ const ALG = "RS256";
 const ACCESS_TOKEN_TTL = "15m";
 
 // ─── Key Cache ─────────────────────────────────────────────────
-let cachedPrivateKey: { pem: string; key: KeyLike } | null = null;
-let cachedPublicKey: { pem: string; key: KeyLike } | null = null;
+let cachedPrivateKey: { pem: string; key: any } | null = null;
+let cachedPublicKey: { pem: string; key: any } | null = null;
 
-async function getPrivateKey(env: Env): Promise<KeyLike> {
-  if (cachedPrivateKey?.pem === env.JWT_PRIVATE_KEY) return cachedPrivateKey.key;
-  const key = await importPKCS8(env.JWT_PRIVATE_KEY, ALG);
-  cachedPrivateKey = { pem: env.JWT_PRIVATE_KEY, key };
-  return key;
+async function getPrivateKey(env: Env): Promise<any> {
+  if (!cachedPrivateKey || cachedPrivateKey.pem !== env.JWT_PRIVATE_KEY) {
+    cachedPrivateKey = {
+      pem: env.JWT_PRIVATE_KEY,
+      key: await importPKCS8(env.JWT_PRIVATE_KEY, "RS256"),
+    };
+  }
+  return cachedPrivateKey.key;
 }
 
-async function getPublicKey(env: Env): Promise<KeyLike> {
+async function getPublicKey(env: Env): Promise<any> {
   if (cachedPublicKey?.pem === env.JWT_PUBLIC_KEY) return cachedPublicKey.key;
   const key = await importSPKI(env.JWT_PUBLIC_KEY, ALG);
   cachedPublicKey = { pem: env.JWT_PUBLIC_KEY, key };

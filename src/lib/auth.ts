@@ -6,22 +6,25 @@ import { getCookie } from "./cookies";
  * Constant-time string comparison to prevent timing attacks.
  * Compares two strings byte-by-byte in constant time.
  */
-function timingSafeEqual(a: string, b: string): boolean {
-  // Convert strings to Uint8Array for constant-time comparison
+async function timingSafeEqual(a: string, b: string): Promise<boolean> {
   const encoder = new TextEncoder();
-  const bufA = encoder.encode(a);
-  const bufB = encoder.encode(b);
+  // Using HMAC ensures we always compare two 32-byte buffers
+  // regardless of the input string lengths, preventing length leakage
+  const key = await crypto.subtle.generateKey(
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign", "verify"]
+  );
   
-  // If lengths don't match, still compare to maintain constant time
-  if (bufA.length !== bufB.length) {
-    return false;
-  }
+  const sigA = await crypto.subtle.sign("HMAC", key, encoder.encode(a));
+  const sigB = await crypto.subtle.sign("HMAC", key, encoder.encode(b));
+  
+  const bufA = new Uint8Array(sigA);
+  const bufB = new Uint8Array(sigB);
   
   try {
-    // Use crypto.subtle.timingSafeEqual for constant-time comparison
     return crypto.subtle.timingSafeEqual(bufA, bufB);
   } catch {
-    // Fallback to manual constant-time comparison if crypto.subtle is not available
     let result = 0;
     for (let i = 0; i < bufA.length; i++) {
       result |= bufA[i] ^ bufB[i];
@@ -50,7 +53,7 @@ export async function authenticate(
   // Service authentication: only accept service secrets
   if (serviceAuth === true) {
     // Check if token matches SERVICE_AUTH_SECRET using constant-time comparison
-    if (timingSafeEqual(token, env.SERVICE_AUTH_SECRET)) {
+    if (await timingSafeEqual(token, env.SERVICE_AUTH_SECRET)) {
       // Return service account payload
       return {
         sub: "service",
