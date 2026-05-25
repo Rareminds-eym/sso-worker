@@ -1,19 +1,17 @@
 /**
- * Preservation Property Tests - SSO Internal Service Authentication
- * 
- * Feature: sso-internal-service-auth
- * Property 2: Preservation - User Authentication for Non-Sync Endpoints
- * Validates: Requirements 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7
- * 
- * IMPORTANT: Follow observation-first methodology
- * These tests capture the baseline behavior that must be preserved after the fix
- * 
- * EXPECTED OUTCOME: Tests PASS on both unfixed and fixed code (no regressions)
+ * Preservation Property Tests - SSO Worker RPC Architecture
+ *
+ * Validates that:
+ * - User authentication still works on public endpoints
+ * - Public endpoints remain accessible without auth
+ * - JWKS endpoint works
+ * - The SsoWorker export is a proper WorkerEntrypoint class
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { SignJWT, importPKCS8 } from 'jose';
 import type { Env } from '../types';
+import type { ExecutionContext } from '@cloudflare/workers-types';
 
 // Mock environment for testing
 const mockEnv: Env = {
@@ -62,17 +60,21 @@ UQIDAQAB
   EMAIL_SERVICE: {} as Fetcher,
   EMAIL_API_KEY: 'test-email-api-key',
   ALLOWED_APP_URLS: 'http://localhost:3000',
-  SERVICE_AUTH_SECRET: 'test-service-secret-32-bytes-long-base64-encoded',
 };
 
-describe('Property 2: Preservation - User Authentication for Non-Sync Endpoints', () => {
+async function createWorker() {
+  const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
+  const { default: SsoWorker } = await import('../index');
+  return new SsoWorker(ctx, mockEnv);
+}
+
+describe('Property: Public Endpoints Work Correctly', () => {
   let validUserJWT: string;
   let expiredUserJWT: string;
-  
+
   beforeAll(async () => {
     const privateKey = await importPKCS8(mockEnv.JWT_PRIVATE_KEY, 'RS256');
-    
-    // Generate a valid user JWT token
+
     validUserJWT = await new SignJWT({
       sub: 'test-user-123',
       email: 'test@example.com',
@@ -88,8 +90,7 @@ describe('Property 2: Preservation - User Authentication for Non-Sync Endpoints'
       .setIssuer('https://sso.rareminds.in')
       .setAudience('https://skillpassport.rareminds.in')
       .sign(privateKey);
-    
-    // Generate an expired JWT token
+
     expiredUserJWT = await new SignJWT({
       sub: 'test-user-123',
       email: 'test@example.com',
@@ -100,19 +101,15 @@ describe('Property 2: Preservation - User Authentication for Non-Sync Endpoints'
       is_email_verified: true,
     })
       .setProtectedHeader({ alg: 'RS256', kid: mockEnv.JWT_KID, typ: 'JWT' })
-      .setIssuedAt(Math.floor(Date.now() / 1000) - 3600) // 1 hour ago
-      .setExpirationTime('-30m') // Expired 30 minutes ago
+      .setIssuedAt(Math.floor(Date.now() / 1000) - 3600)
+      .setExpirationTime('-30m')
       .setIssuer('https://sso.rareminds.in')
       .setAudience('https://skillpassport.rareminds.in')
       .sign(privateKey);
   });
 
-  /**
-   * Test 1: /auth/me should accept valid user JWT tokens
-   * 
-   * PRESERVATION: This behavior must remain unchanged after the fix
-   */
   it('should accept valid user JWT on /auth/me endpoint', async () => {
+    const worker = await createWorker();
     const request = new Request('https://sso-api/auth/me', {
       method: 'GET',
       headers: {
@@ -121,22 +118,12 @@ describe('Property 2: Preservation - User Authentication for Non-Sync Endpoints'
       },
     });
 
-    const worker = await import('../index');
-    const response = await worker.default.fetch(request, mockEnv, {
-      waitUntil: () => {},
-      passThroughOnException: () => {},
-    } as any);
-
-    // User-facing endpoint should accept valid JWT
+    const response = await worker.fetch(request);
     expect(response.status).not.toBe(401);
   });
 
-  /**
-   * Test 2: User-facing endpoints should reject expired JWT tokens
-   * 
-   * PRESERVATION: This behavior must remain unchanged after the fix
-   */
   it('should reject expired JWT on user-facing endpoints', async () => {
+    const worker = await createWorker();
     const request = new Request('https://sso-api/auth/me', {
       method: 'GET',
       headers: {
@@ -145,22 +132,12 @@ describe('Property 2: Preservation - User Authentication for Non-Sync Endpoints'
       },
     });
 
-    const worker = await import('../index');
-    const response = await worker.default.fetch(request, mockEnv, {
-      waitUntil: () => {},
-      passThroughOnException: () => {},
-    } as any);
-
-    // Expired JWT should be rejected
+    const response = await worker.fetch(request);
     expect(response.status).toBe(401);
   });
 
-  /**
-   * Test 3: User-facing endpoints should reject invalid JWT tokens
-   * 
-   * PRESERVATION: This behavior must remain unchanged after the fix
-   */
   it('should reject invalid JWT on user-facing endpoints', async () => {
+    const worker = await createWorker();
     const request = new Request('https://sso-api/auth/me', {
       method: 'GET',
       headers: {
@@ -169,108 +146,42 @@ describe('Property 2: Preservation - User Authentication for Non-Sync Endpoints'
       },
     });
 
-    const worker = await import('../index');
-    const response = await worker.default.fetch(request, mockEnv, {
-      waitUntil: () => {},
-      passThroughOnException: () => {},
-    } as any);
-
-    // Invalid JWT should be rejected
+    const response = await worker.fetch(request);
     expect(response.status).toBe(401);
   });
 
-  /**
-   * Test 4: User-facing endpoints should reject requests with no auth
-   * 
-   * PRESERVATION: This behavior must remain unchanged after the fix
-   */
   it('should reject requests with no authentication on protected endpoints', async () => {
+    const worker = await createWorker();
     const request = new Request('https://sso-api/auth/me', {
       method: 'GET',
-      headers: {
-        'Origin': 'http://localhost:3000',
-      },
+      headers: { 'Origin': 'http://localhost:3000' },
     });
 
-    const worker = await import('../index');
-    const response = await worker.default.fetch(request, mockEnv, {
-      waitUntil: () => {},
-      passThroughOnException: () => {},
-    } as any);
-
-    // No auth should be rejected
+    const response = await worker.fetch(request);
     expect(response.status).toBe(401);
   });
 
-  /**
-   * Test 5: Service secrets should NOT work on user-facing endpoints
-   * 
-   * PRESERVATION: User-facing endpoints should only accept user JWTs, not service secrets
-   */
-  it('should reject service secrets on user-facing endpoints', async () => {
-    const request = new Request('https://sso-api/auth/me', {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${mockEnv.SERVICE_AUTH_SECRET}`,
-        'Origin': 'http://localhost:3000',
-      },
-    });
-
-    const worker = await import('../index');
-    const response = await worker.default.fetch(request, mockEnv, {
-      waitUntil: () => {},
-      passThroughOnException: () => {},
-    } as any);
-
-    // Service secret should be rejected on user-facing endpoints
-    expect(response.status).toBe(401);
-  });
-
-  /**
-   * Test 6: Public endpoints should work without authentication
-   * 
-   * PRESERVATION: Public endpoints must remain accessible
-   */
   it('should allow access to public endpoints without authentication', async () => {
+    const worker = await createWorker();
     const request = new Request('https://sso-api/health', {
       method: 'GET',
-      headers: {
-        'Origin': 'http://localhost:3000',
-      },
+      headers: { 'Origin': 'http://localhost:3000' },
     });
 
-    const worker = await import('../index');
-    const response = await worker.default.fetch(request, mockEnv, {
-      waitUntil: () => {},
-      passThroughOnException: () => {},
-    } as any);
-
-    // Public endpoint should be accessible
+    const response = await worker.fetch(request);
     expect(response.status).toBe(200);
   });
 
-  /**
-   * Test 7: JWKS endpoint should work without authentication
-   * 
-   * PRESERVATION: JWKS endpoint must remain publicly accessible
-   */
   it('should allow access to JWKS endpoint without authentication', async () => {
+    const worker = await createWorker();
     const request = new Request('https://sso-api/.well-known/jwks.json', {
       method: 'GET',
-      headers: {
-        'Origin': 'http://localhost:3000',
-      },
+      headers: { 'Origin': 'http://localhost:3000' },
     });
 
-    const worker = await import('../index');
-    const response = await worker.default.fetch(request, mockEnv, {
-      waitUntil: () => {},
-      passThroughOnException: () => {},
-    } as any);
-
-    // JWKS endpoint should be accessible
+    const response = await worker.fetch(request);
     expect(response.status).toBe(200);
-    
+
     const body = await response.json() as { keys: unknown[] };
     expect(body).toHaveProperty('keys');
     expect(Array.isArray(body.keys)).toBe(true);

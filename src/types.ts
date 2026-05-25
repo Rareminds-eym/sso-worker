@@ -9,8 +9,6 @@ export interface Env {
   JWT_PUBLIC_KEY_PREVIOUS?: string;
   /** Previous key ID (optional). Set during rotation window. */
   JWT_KID_PREVIOUS?: string;
-  /** Shared secret for service-to-service authentication (sync endpoints). */
-  SERVICE_AUTH_SECRET: string;
   ALLOWED_ORIGINS: string;
   RATE_LIMIT_KV: KVNamespace;
   /** Service binding to the email-worker for sending emails. */
@@ -25,7 +23,6 @@ export interface Env {
 export interface RouteConfig {
   handler: RouteHandler;
   auth?: boolean;
-  serviceAuth?: boolean;
 }
 
 export type RouteHandler = (
