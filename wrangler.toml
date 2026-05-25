@@ -1,7 +1,10 @@
 name = "sso-api"
 main = "src/index.ts"
-compatibility_date = "2025-01-01"
+compatibility_date = "2026-05-25"
 compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
 
 [vars]
 # Production Supabase (remote) — used when deploying
