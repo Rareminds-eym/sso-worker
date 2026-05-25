@@ -65,6 +65,7 @@ const routes: Record<string, Record<string, RouteConfig>> = {
     "/health":                { handler: () => Promise.resolve(json({ status: "ok" })) },
     "/api/plans":             { handler: listPlans },
     "/api/addon-catalog":     { handler: listAddonCatalog },
+    "/api/addon-catalog/:featureKey": { handler: getAddonByFeatureKey },
     "/api/bundles":           { handler: listBundles },
   },
 };
