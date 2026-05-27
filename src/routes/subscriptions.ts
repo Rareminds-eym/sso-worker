@@ -84,7 +84,7 @@ export async function getPlanByCode(
 
 // ─── Subscriptions ────────────────────────────────────────────
 
-export async function createSubscription(
+async function createSubscription(
   req: Request,
   env: Env,
   _ctx: ExecutionContext,
@@ -137,7 +137,7 @@ export async function createSubscription(
   return json(subscription, 201);
 }
 
-export async function createFreemiumSubscription(
+async function createFreemiumSubscription(
   req: Request,
   env: Env,
 ): Promise<Response> {
@@ -189,7 +189,7 @@ export async function createFreemiumSubscription(
   return json(subscription, 201);
 }
 
-export async function getUserSubscription(
+async function getUserSubscription(
   req: Request,
   env: Env,
 ): Promise<Response> {
@@ -214,7 +214,7 @@ export async function getUserSubscription(
   return json({ subscription, plan });
 }
 
-export async function getOrgSubscription(
+async function getOrgSubscription(
   req: Request,
   env: Env,
 ): Promise<Response> {
@@ -230,7 +230,7 @@ export async function getOrgSubscription(
   return json({ subscriptions });
 }
 
-export async function updateSubscriptionStatus(
+async function updateSubscriptionStatus(
   req: Request,
   env: Env,
 ): Promise<Response> {
@@ -279,7 +279,7 @@ export async function updateSubscriptionStatus(
   return json(updated);
 }
 
-export async function cancelSubscription(
+async function cancelSubscription(
   req: Request,
   env: Env,
 ): Promise<Response> {
@@ -315,7 +315,7 @@ export async function cancelSubscription(
   return json(updated);
 }
 
-export async function updateSubscriptionField(
+async function updateSubscriptionField(
   req: Request,
   env: Env,
 ): Promise<Response> {
@@ -353,7 +353,7 @@ export async function updateSubscriptionField(
 
 // ─── Transactions ─────────────────────────────────────────────
 
-export async function recordTransaction(
+async function recordTransaction(
   req: Request,
   env: Env,
 ): Promise<Response> {
@@ -393,7 +393,7 @@ export async function recordTransaction(
   return json(transaction, 201);
 }
 
-export async function getUserTransactions(
+async function getUserTransactions(
   req: Request,
   env: Env,
 ): Promise<Response> {
@@ -458,7 +458,7 @@ export async function processWebhookEvent(
 
 // ─── Sync endpoints (for shadow tables) ───────────────────────
 
-export async function syncSubscription(
+async function syncSubscription(
   req: Request,
   env: Env,
 ): Promise<Response> {
@@ -487,7 +487,7 @@ export async function syncSubscription(
   return json({ subscription, plan });
 }
 
-export async function syncPlans(
+async function syncPlans(
   _req: Request,
   env: Env,
 ): Promise<Response> {
@@ -498,7 +498,7 @@ export async function syncPlans(
   return json({ plans });
 }
 
-export async function syncReconcile(
+async function syncReconcile(
   req: Request,
   env: Env,
 ): Promise<Response> {

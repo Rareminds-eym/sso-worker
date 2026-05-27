@@ -139,7 +139,7 @@ interface RecordAddonPurchaseBody {
  * Records a successful addon purchase in the Auth DB.
  * Called by skillpassport verify-addon-payment handler via service binding.
  */
-export async function recordAddonPurchase(
+async function recordAddonPurchase(
   req: Request,
   env: Env,
 ): Promise<Response> {
@@ -204,7 +204,7 @@ interface RecordBundlePurchaseBody {
  * Records a successful bundle purchase in the Auth DB.
  * Called by skillpassport verify-bundle-payment handler via service binding.
  */
-export async function recordBundlePurchase(
+async function recordBundlePurchase(
   req: Request,
   env: Env,
 ): Promise<Response> {

@@ -536,7 +536,7 @@ sso-worker/
 │   │   ├── validate.ts       # Email + password validation
 │   │   └── response.ts       # json() and error() helpers
 │   ├── middleware/
-│   │   └── rateLimit.ts      # In-memory Map-based rate limiting (per-worker)
+│   │   └── rateLimit.ts      # Account lockout tracking (failed login attempts)
 │   └── routes/
 │       ├── signup.ts         ├── login.ts            ├── refresh.ts
 │       ├── logout.ts         ├── me.ts               ├── switch-org.ts
