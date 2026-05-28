@@ -24,7 +24,6 @@ import {
   listAddonCatalog, getAddonByFeatureKey,
   listBundles,
 } from "./routes/addon-catalog";
-import { rateLimit, rateLimits } from "./middleware/rateLimit";
 import { authenticate } from "./lib/auth";
 import { json, error } from "./lib/response";
 import { db } from "./lib/db";
@@ -163,47 +162,6 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
     const contentLength = parseInt(req.headers.get("Content-Length") ?? "0", 10);
     if (contentLength > MAX_BODY_SIZE) {
       return withCors(error("Request body too large", 413), cors);
-    }
-
-    // Rate limiting (skip health check and JWKS endpoint)
-    if (pathname !== "/health" && pathname !== "/.well-known/jwks.json") {
-      let rateLimitConfig: ReturnType<typeof rateLimit> | null = null;
-
-      switch (pathname) {
-        case "/auth/login":
-          rateLimitConfig = rateLimit(rateLimits.login);
-          break;
-        case "/auth/signup":
-        case "/auth/signup-member":
-          rateLimitConfig = rateLimit(rateLimits.signup);
-          break;
-        case "/auth/forgot-password":
-          rateLimitConfig = rateLimit(rateLimits.forgotPassword);
-          break;
-        case "/auth/reset-password":
-          rateLimitConfig = rateLimit(rateLimits.resetPassword);
-          break;
-        case "/auth/verify-email":
-          rateLimitConfig = rateLimit(rateLimits.verifyEmail);
-          break;
-        case "/auth/request-verification":
-          rateLimitConfig = rateLimit(rateLimits.resendVerification);
-          break;
-        case "/auth/refresh":
-          rateLimitConfig = rateLimit(rateLimits.refresh);
-          break;
-        case "/auth/me":
-          rateLimitConfig = rateLimit(rateLimits.me);
-          break;
-        case "/auth/logout":
-          rateLimitConfig = rateLimit(rateLimits.logout);
-          break;
-      }
-
-      if (rateLimitConfig) {
-        const rateLimited = await rateLimitConfig(req);
-        if (rateLimited) return withCors(rateLimited, cors);
-      }
     }
 
     // Route matching
