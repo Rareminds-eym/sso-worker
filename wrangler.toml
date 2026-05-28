@@ -37,6 +37,10 @@ ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:5173,http://localhost
 binding = "RATE_LIMIT_KV"
 id = "6f54bab45fd840678dde620cd1518705"
 
+[[kv_namespaces]]
+binding = "PREVIEW_KV"
+id = "" # TODO: Run `npx wrangler kv:namespace create PREVIEW_KV` and paste the id here
+
 [[services]]
 binding = "EMAIL_SERVICE"
 service = "shared-email-api"
