@@ -6,6 +6,13 @@ compatibility_flags = ["nodejs_compat"]
 [observability]
 enabled = true
 
+[observability.logs]
+head_sampling_rate = 1
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.01
+
 [vars]
 # Production Supabase (remote) — used when deploying
 SUPABASE_URL = "https://quvdgaydpctuspzeqknc.supabase.co"

@@ -259,7 +259,9 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
           ms: Date.now() - start,
         }),
       );
-      return withCors(error("Internal server error", 500), cors);
+      const errResponse = withCors(error("Internal server error", 500), cors);
+      errResponse.headers.set("X-Request-ID", requestId);
+      return errResponse;
     }
   }
 
