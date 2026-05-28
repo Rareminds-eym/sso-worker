@@ -6,7 +6,7 @@ import { setAuthCookies } from "../lib/cookies";
 import { validateEmail } from "../lib/validate";
 import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
-import { checkAccountLockout, recordFailedLogin, clearFailedLogins } from "../lib/rate-limit";
+import { checkAccountLockout, recordFailedLogin, clearFailedLogins, endpointRateLimit } from "../lib/rate-limit";
 import { SESSION_TTL_MS } from "../lib/constants";
 
 // Pre-computed bcrypt hash (cost 12) for constant-time comparison
@@ -35,6 +35,9 @@ export async function login(
   const email = body.email.toLowerCase().trim();
   const ip = req.headers.get("CF-Connecting-IP");
   const ua = req.headers.get("User-Agent");
+
+  const rateLimited = await endpointRateLimit(env, `login:ip:${ip ?? "unknown"}`, 10, 60);
+  if (rateLimited) return rateLimited;
 
   const locked = await checkAccountLockout(env, email);
   if (locked) return locked;

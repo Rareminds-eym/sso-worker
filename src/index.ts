@@ -27,6 +27,7 @@ import {
 import { authenticate } from "./lib/auth";
 import { json, error } from "./lib/response";
 import { db } from "./lib/db";
+import { addMonths, parseDurationMonths } from "./lib/date";
 
 /** Max request body size: 10 KB */
 const MAX_BODY_SIZE = 10_240;
@@ -253,12 +254,9 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
       throw new Error("user_id, plan_id, plan_code, and email are required");
     }
 
+    const billingCycle = data.billing_cycle || "lifetime";
     const now = new Date();
-    const endDate = new Date(now);
-    const months = parseDurationMonths(data.billing_cycle || "lifetime");
-    if (months > 0) {
-      endDate.setMonth(endDate.getMonth() + months);
-    }
+    const endDate = addMonths(now, parseDurationMonths(billingCycle));
 
     const database = db(this.env);
     const subscription = await database.mutate("subscriptions", {
@@ -267,15 +265,15 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
       plan_code: data.plan_code,
       plan_type: data.plan_type || data.plan_code,
       plan_amount: data.plan_amount || 0,
-      billing_cycle: data.billing_cycle || "lifetime",
+      billing_cycle: billingCycle,
       features: data.features || [],
       full_name: data.full_name || "",
       email: data.email,
       phone: data.phone || null,
       status: "active",
-      auto_renew: data.billing_cycle !== "lifetime",
+      auto_renew: billingCycle !== "lifetime",
       subscription_start_date: now.toISOString(),
-      subscription_end_date: data.billing_cycle === "lifetime" ? null : endDate.toISOString(),
+      subscription_end_date: billingCycle === "lifetime" ? null : endDate.toISOString(),
       razorpay_order_id: data.razorpay_order_id || null,
       razorpay_payment_id: data.razorpay_payment_id || null,
       organization_id: data.organization_id || null,
@@ -592,13 +590,14 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
       `addon_catalog?feature_key=eq.${encodeURIComponent(data.feature_key)}`,
     );
 
-    const now = new Date();
-    const endDate = new Date(now);
-    if (data.billing_period === "annual") {
-      endDate.setFullYear(endDate.getFullYear() + 1);
-    } else {
-      endDate.setMonth(endDate.getMonth() + 1);
+    if (!addon) {
+      throw new Error(`Addon not found for feature_key: ${data.feature_key}`);
     }
+
+    const now = new Date();
+    const endDate = data.billing_period === "annual"
+      ? addMonths(now, 12)
+      : addMonths(now, 1);
 
     const purchase = await database.mutate("addon_purchases", {
       user_id: data.user_id,
@@ -643,12 +642,9 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     const now = new Date();
-    const endDate = new Date(now);
-    if (data.billing_period === "annual") {
-      endDate.setFullYear(endDate.getFullYear() + 1);
-    } else {
-      endDate.setMonth(endDate.getMonth() + 1);
-    }
+    const endDate = data.billing_period === "annual"
+      ? addMonths(now, 12)
+      : addMonths(now, 1);
 
     const purchase = await database.mutate("bundle_purchases", {
       user_id: data.user_id,
@@ -669,12 +665,4 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
   }
 }
 
-// ─── Helper ────────────────────────────────────────────────────
-function parseDurationMonths(duration: string): number {
-  const lower = duration.toLowerCase();
-  if (lower === "lifetime") return 0;
-  if (lower.includes("annual") || lower.includes("year")) return 12;
-  if (lower.includes("quarter")) return 3;
-  if (lower.includes("month")) return 1;
-  return 1;
-}
+

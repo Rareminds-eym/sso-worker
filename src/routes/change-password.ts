@@ -4,6 +4,7 @@ import { hashPassword, verifyPassword } from "../lib/hash";
 import { validatePassword } from "../lib/validate";
 import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
+import { endpointRateLimit } from "../lib/rate-limit";
 
 interface ChangePasswordBody {
   current_password: string;
@@ -28,6 +29,9 @@ export async function changePassword(
   auth?: AccessTokenPayload,
 ): Promise<Response> {
   if (!auth) return error("Unauthorized", 401);
+  const rl = await endpointRateLimit(env, `change-password:user:${auth.sub}`, 3, 300);
+  if (rl) return rl;
+
   let body: ChangePasswordBody;
   try {
     body = (await req.json()) as ChangePasswordBody;
@@ -99,6 +103,9 @@ export async function adminResetPassword(
   auth?: AccessTokenPayload,
 ): Promise<Response> {
   if (!auth) return error("Unauthorized", 401);
+  const rl = await endpointRateLimit(env, `admin-reset-password:user:${auth.sub}`, 3, 300);
+  if (rl) return rl;
+
   // Check admin/owner role
   const isAdmin = auth.roles.some(
     (r) => r === "owner" || r === "admin" || r === "school_admin" || r === "college_admin" || r === "university_admin",
