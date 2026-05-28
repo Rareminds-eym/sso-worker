@@ -79,12 +79,12 @@ Require `Authorization: Bearer <token>` header or `access_token` cookie.
 ```
 Sets cookies: `access_token` (15 min), `refresh_token` (30 days). Errors: `400`, `409`, `500`.
 
-**Idempotency**: If a user exists but email is NOT verified, the endpoint allows re-signup by cleaning up the incomplete signup data (deletes user, which cascades to sessions, memberships, email_verifications) and creating a new user. This handles cases where:
-- User signed up but never verified email
-- Session/org creation failed after user creation
-- User wants to retry signup with a different organization name
+**Idempotency**: If a user with the same email already exists, the endpoint always returns `409`:
+- If email IS verified: `"An account with this email already exists. Please log in."`
+- If email is NOT verified: `"An account with this email exists but is not verified. Please check your inbox or log in to request a new verification link."`
+- On database duplicate constraint: `"An account with this email already exists. Please log in."`
 
-If the user exists and email IS verified, returns `409` with message: "An account with this email already exists. Please log in."
+Unverified users can still log in to trigger a new verification email. No automatic cleanup of incomplete signup data is performed — existing data is preserved to prevent account takeover race conditions.
 
 **Rollback**: If any step fails after user creation (session creation, JWT signing, email verification setup), the user and organization are automatically deleted from the database to maintain consistency.
 
@@ -104,7 +104,7 @@ If the user exists and email IS verified, returns `409` with message: "An accoun
 ```
 Creates a user without creating an organization. Optionally joins an existing org with the specified role. Used by learners, educators, recruiters who self-register. Sets cookies: `access_token` (15 min), `refresh_token` (30 days). Errors: `400`, `404`, `409`, `500`.
 
-**Idempotency**: Same behavior as `/auth/signup` - if a user exists but email is NOT verified, the endpoint allows re-signup by cleaning up the incomplete signup data and creating a new user. If the user exists and email IS verified, returns `409` with message: "An account with this email already exists. Please log in."
+**Idempotency**: Same behavior as `/auth/signup` - returns `409` for any existing user (both verified and unverified). No automatic cleanup is performed.
 
 **Rollback**: If any step fails after user creation (session creation, JWT signing, email verification setup), the user is automatically deleted from the database to maintain consistency.
 
@@ -327,9 +327,10 @@ npm run deploy                                 # 5. Deploy
 Configure `wrangler.toml`:
 ```toml
 [vars]
-SUPABASE_URL    = "https://your-project.supabase.co"
-ALLOWED_ORIGINS = "https://yourapp.com,https://admin.yourapp.com"
-APP_URL         = "https://yourapp.com"
+SUPABASE_URL       = "https://your-project.supabase.co"
+ALLOWED_ORIGINS    = "https://yourapp.com,https://admin.yourapp.com"
+ALLOWED_APP_URLS   = "https://yourapp.com"
+EMAIL_API_KEY      = "your-email-api-key"
 ```
 
 `nodejs_compat` flag is required for `bcryptjs`.
@@ -342,13 +343,15 @@ APP_URL         = "https://yourapp.com"
 |----------|------|-------------|
 | `SUPABASE_URL` | var | Supabase project URL |
 | `ALLOWED_ORIGINS` | var | Comma-separated CORS origins |
-| `APP_URL` | var | Base URL for email links (optional) |
+| `ALLOWED_APP_URLS` | var | Comma-separated allowlist of base URLs for email links (required, e.g. `https://yourapp.com,https://admin.yourapp.com`) |
 | `SUPABASE_SERVICE_ROLE_KEY` | secret | Supabase service role key (bypasses RLS) |
 | `JWT_PRIVATE_KEY` | secret | PEM-encoded RS256 private key |
 | `JWT_PUBLIC_KEY` | secret | PEM-encoded RS256 public key |
 | `JWT_KID` | secret | Key ID for JWT header and JWKS (e.g. `key-1`) |
 | `JWT_PUBLIC_KEY_PREVIOUS` | secret | Previous public key PEM (set during key rotation) |
 | `JWT_KID_PREVIOUS` | secret | Previous key ID (set during key rotation) |
+| `EMAIL_SERVICE` | binding | Service binding to the email-worker for sending emails |
+| `EMAIL_API_KEY` | secret | API key for authenticating with the email-worker |
 
 ---
 
@@ -384,7 +387,7 @@ npm run deploy
 
 ## Email Delivery
 
-The worker includes a pluggable email module (`src/lib/email.ts`) with template builders for password reset, email verification, and invite emails. Currently logs to console — replace `sendEmail()` with your Amazon SES integration.
+The worker includes a pluggable email module (`src/lib/email.ts`) with template builders for password reset, email verification, and invite emails. Email delivery uses the `EMAIL_SERVICE` service binding which sends through the email-worker.
 
 Templates: `passwordResetEmail(url)`, `verificationEmail(url)`, `inviteEmail(inviter, orgName, url)`
 
@@ -538,11 +541,12 @@ sso-worker/
 │   ├── middleware/
 │   │   └── rateLimit.ts      # Account lockout tracking (failed login attempts)
 │   └── routes/
-│       ├── signup.ts         ├── login.ts            ├── refresh.ts
-│       ├── logout.ts         ├── me.ts               ├── switch-org.ts
-│       ├── invite.ts         ├── invite-manage.ts    ├── orgs.ts
-│       ├── jwks.ts           ├── verify-email.ts     ├── password-reset.ts
-│       └── oauth.ts
+│       ├── signup.ts            ├── signup-member.ts     ├── login.ts
+│       ├── logout.ts            ├── refresh.ts           ├── me.ts
+│       ├── switch-org.ts        ├── invite.ts            ├── invite-manage.ts
+│       ├── orgs.ts              ├── jwks.ts              ├── verify-email.ts
+│       ├── password-reset.ts    ├── change-password.ts   ├── delete-account.ts
+│       ├── subscriptions.ts     ├── addon-catalog.ts     └── oauth.ts
 ├── scripts/
 │   ├── schema.sql            # Full DB schema with RLS deny-all policies
 │   └── generate-keys.mjs     # RS256 key pair generator
@@ -555,7 +559,7 @@ sso-worker/
 - **In-memory rate limiting is per-worker** — each worker instance has its own Map. Under load with multiple workers, effective limits are multiplied. For strict global limits, migrate to Durable Objects.
 - **No session listing endpoint** — users cannot view or selectively revoke individual sessions.
 - **OAuth not implemented** — routes return 501 until a provider is configured.
-- **Email delivery is a stub** — `sendEmail()` logs to console. Replace with Amazon SES.
+- **Email delivery** — Uses `EMAIL_SERVICE` service binding to send through the email-worker. Requires `EMAIL_API_KEY` secret for authentication.
 
 ## License
 
