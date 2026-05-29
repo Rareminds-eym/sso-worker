@@ -17,6 +17,8 @@ export interface Env {
   EMAIL_API_KEY: string;
   /** Comma-separated allowlist of base URLs for email links, e.g. "https://skillpassport.rareminds.in,https://courses.rareminds.in". */
   ALLOWED_APP_URLS: string;
+  /** SkillPassport API URL for email templates (optional, defaults to https://skillpassport.rareminds.in) */
+  SKILLPASSPORT_API_URL?: string;
 }
 
 // ─── Route Configuration ───────────────────────────────────────

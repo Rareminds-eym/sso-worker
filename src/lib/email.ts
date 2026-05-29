@@ -40,7 +40,201 @@ export async function sendEmail(env: Env, payload: EmailPayload): Promise<void> 
   }
 }
 
-/** Build a password reset email */
+/**
+ * Send email verification using SkillPassport's beautiful template
+ * Falls back to simple template if SkillPassport API is not available
+ * 
+ * Retries up to 3 times with exponential backoff to handle timing issues
+ * during startup when the Pages function might not be ready yet.
+ */
+export async function sendVerificationEmail(
+  env: Env,
+  to: string,
+  verifyUrl: string,
+): Promise<void> {
+  const skillpassportApiUrl = env.SKILLPASSPORT_API_URL || 'https://skillpassport.rareminds.in';
+  const maxRetries = 3;
+  
+  // Try multiple times with exponential backoff
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`[SSO] Attempt ${attempt}/${maxRetries}: Sending verification via SkillPassport: ${skillpassportApiUrl}/api/email/verification`);
+      
+      const res = await fetch(`${skillpassportApiUrl}/api/email/verification`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ to, verifyUrl }),
+      });
+
+      if (res.ok) {
+        console.log('[SSO] Verification email sent via SkillPassport template ✅');
+        return;
+      } else {
+        const errorText = await res.text().catch(() => 'unknown');
+        console.warn(`[SSO] SkillPassport template API failed (${res.status}): ${errorText}`);
+        
+        // Don't retry on 4xx errors (client errors)
+        if (res.status >= 400 && res.status < 500) {
+          console.warn('[SSO] Client error, skipping retries');
+          break;
+        }
+      }
+    } catch (err) {
+      console.warn(`[SSO] SkillPassport template API error (attempt ${attempt}/${maxRetries}):`, err);
+    }
+    
+    // Wait before retrying (exponential backoff: 100ms, 200ms, 400ms)
+    if (attempt < maxRetries) {
+      const delay = 100 * Math.pow(2, attempt - 1);
+      console.log(`[SSO] Waiting ${delay}ms before retry...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+
+  // Fallback to simple inline template after all retries
+  console.log('[SSO] All retries exhausted, using simple verification template (fallback)');
+  const { subject, html, text } = verificationEmail(verifyUrl);
+  await sendEmail(env, { to, subject, html, text });
+}
+
+/**
+ * Send password reset using SkillPassport's beautiful template
+ * Falls back to simple template if SkillPassport API is not available
+ * 
+ * Retries up to 3 times with exponential backoff to handle timing issues.
+ */
+export async function sendPasswordResetEmail(
+  env: Env,
+  to: string,
+  resetUrl: string,
+): Promise<void> {
+  console.error('=== PASSWORD RESET EMAIL FUNCTION CALLED ===');
+  console.error('Environment check:', {
+    hasSkillpassportUrl: !!env.SKILLPASSPORT_API_URL,
+    skillpassportUrl: env.SKILLPASSPORT_API_URL || 'NOT SET (will use default)',
+    to,
+    resetUrl
+  });
+  
+  const skillpassportApiUrl = env.SKILLPASSPORT_API_URL || 'https://skillpassport.rareminds.in';
+  const maxRetries = 3;
+  
+  // Try multiple times with exponential backoff
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.error(`Attempt ${attempt}/${maxRetries}: Sending password reset via SkillPassport: ${skillpassportApiUrl}/api/email/password-reset`);
+      
+      const res = await fetch(`${skillpassportApiUrl}/api/email/password-reset`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ to, resetUrl }),
+      });
+
+      console.error(`SkillPassport API response status: ${res.status}`);
+
+      if (res.ok) {
+        console.error('Password reset email sent via SkillPassport template ✅');
+        return;
+      } else {
+        const errorText = await res.text().catch(() => 'unknown');
+        console.warn(`SkillPassport template API failed (${res.status}): ${errorText}`);
+        
+        // Don't retry on 4xx errors (client errors)
+        if (res.status >= 400 && res.status < 500) {
+          console.warn('Client error, skipping retries');
+          break;
+        }
+      }
+    } catch (err) {
+      console.error(`SkillPassport template API error (attempt ${attempt}/${maxRetries}):`, err);
+    }
+    
+    // Wait before retrying (exponential backoff: 100ms, 200ms, 400ms)
+    if (attempt < maxRetries) {
+      const delay = 100 * Math.pow(2, attempt - 1);
+      console.error(`Waiting ${delay}ms before retry...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+
+  // Fallback to simple inline template after all retries
+  console.error('All retries exhausted, using simple password reset template (fallback)');
+  const { subject, html, text } = passwordResetEmail(resetUrl);
+  await sendEmail(env, { to, subject, html, text });
+}
+
+/**
+ * Send welcome email using SkillPassport's beautiful template
+ * Falls back to simple template if SkillPassport API is not available
+ * 
+ * Retries up to 3 times with exponential backoff to handle timing issues.
+ */
+export async function sendWelcomeEmail(
+  env: Env,
+  to: string,
+  name: string,
+  role: string,
+  baseUrl: string,
+): Promise<void> {
+  const skillpassportApiUrl = env.SKILLPASSPORT_API_URL || 'https://skillpassport.rareminds.in';
+  const maxRetries = 3;
+  
+  // Try multiple times with exponential backoff
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`[SSO] Attempt ${attempt}/${maxRetries}: Sending welcome email via SkillPassport: ${skillpassportApiUrl}/api/email/welcome`);
+      
+      const res = await fetch(`${skillpassportApiUrl}/api/email/welcome`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ to, name, role, baseUrl }),
+      });
+
+      if (res.ok) {
+        console.log('[SSO] Welcome email sent via SkillPassport template ✅');
+        return;
+      } else {
+        const errorText = await res.text().catch(() => 'unknown');
+        console.warn(`[SSO] SkillPassport welcome API failed (${res.status}): ${errorText}`);
+        
+        // Don't retry on 4xx errors (client errors)
+        if (res.status >= 400 && res.status < 500) {
+          console.warn('[SSO] Client error, skipping retries');
+          break;
+        }
+      }
+    } catch (err) {
+      console.warn(`[SSO] SkillPassport welcome API error (attempt ${attempt}/${maxRetries}):`, err);
+    }
+    
+    // Wait before retrying (exponential backoff: 100ms, 200ms, 400ms)
+    if (attempt < maxRetries) {
+      const delay = 100 * Math.pow(2, attempt - 1);
+      console.log(`[SSO] Waiting ${delay}ms before retry...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+
+  // Fallback to simple inline template after all retries
+  console.log('[SSO] All retries exhausted, using simple welcome template (fallback)');
+  const subject = "Welcome to SkillPassport!";
+  const html = `
+    <p>Hello ${name},</p>
+    <p>Welcome to SkillPassport! Your account has been created successfully.</p>
+    <p><a href="${baseUrl}/login">Login now</a></p>
+  `.trim();
+  const text = `Hello ${name},\n\nWelcome to SkillPassport! Your account has been created successfully.\n\nLogin: ${baseUrl}/login`;
+  
+  await sendEmail(env, { to, subject, html, text });
+}
+
+/** Build a password reset email (simple fallback template) */
 export function passwordResetEmail(resetUrl: string): { subject: string; html: string; text: string } {
   return {
     subject: "Reset your password",
@@ -53,7 +247,7 @@ export function passwordResetEmail(resetUrl: string): { subject: string; html: s
   };
 }
 
-/** Build an email verification email */
+/** Build an email verification email (simple fallback template) */
 export function verificationEmail(verifyUrl: string): { subject: string; html: string; text: string } {
   return {
     subject: "Verify your email address",
