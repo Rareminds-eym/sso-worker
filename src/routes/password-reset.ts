@@ -115,14 +115,28 @@ export async function resetPassword(
   try {
     body = await req.json() as { token?: string; password?: string };
   } catch {
-    return error("Invalid JSON body");
+    const err = error("Invalid JSON body");
+    console.error("[reset-password] Invalid JSON body");
+    return err;
   }
 
-  if (!body.token) return error("token is required");
-  if (!body.password) return error("password is required");
+  if (!body.token) {
+    const err = error("token is required");
+    console.error("[reset-password] Missing token");
+    return err;
+  }
+  
+  if (!body.password) {
+    const err = error("password is required");
+    console.error("[reset-password] Missing password");
+    return err;
+  }
 
   const passErr = validatePassword(body.password);
-  if (passErr) return passErr;
+  if (passErr) {
+    console.error("[reset-password] Password validation failed:", await passErr.clone().text());
+    return passErr;
+  }
 
   const ip = req.headers.get("CF-Connecting-IP");
   const ua = req.headers.get("User-Agent");
