@@ -94,6 +94,13 @@ export async function signup(
         p_org_slug: slug,
       },
     );
+
+    // TEMPORARY: Mark email as verified by default (skip email verification flow)
+    await database.update(
+      "users",
+      { id: `eq.${result.user_id}` },
+      { is_email_verified: true },
+    );
   } catch (err: any) {
     if (err?.message?.includes("duplicate") || err?.message?.includes("23505")) {
       return error("An account with this email already exists. Please log in.", 409);
@@ -129,29 +136,15 @@ export async function signup(
         roles: claims?.roles ?? [],
         products: claims?.products ?? [],
         membership_status: claims?.membership_status ?? "active",
-        is_email_verified: false,
+        is_email_verified: true,
       },
       env,
     );
 
-    // ─── Step 3: Send verification email (non-blocking, no rollback) ──
-    let emailSent = true;
-    try {
-      const verifyToken = crypto.randomUUID();
-      const verifyTokenHash = await hashToken(verifyToken);
-      await database.mutate("email_verifications", {
-        user_id: result.user_id,
-        token_hash: verifyTokenHash,
-        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      });
-      const appUrl = resolveAppUrl(body.redirect_url, env);
-      const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
-      const { subject, html, text } = verificationEmail(verifyUrl);
-      ctx.waitUntil(sendEmail(env, { to: email, subject, html, text }));
-    } catch (emailErr) {
-      emailSent = false;
-      console.error("[SSO] Verification email setup failed:", emailErr);
-    }
+    // ─── Step 3: Skip verification email (TEMPORARY: email verification disabled) ──
+    // TEMPORARY: Email verification is disabled - users are marked as verified by default
+    // No verification email is sent during signup
+    const emailSent = false; // Not sending verification email
 
     // ─── Step 4: Build response ──────────────────────────────────
     const response = json(

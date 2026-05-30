@@ -170,7 +170,7 @@ export async function acceptInvite(
     user = await database.mutate<User>("users", {
       email: invite.email,
       password_hash,
-      is_email_verified: false,
+      is_email_verified: true,
     });
   }
 
