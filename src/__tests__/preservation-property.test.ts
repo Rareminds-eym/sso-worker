@@ -87,8 +87,8 @@ describe('Property: Public Endpoints Work Correctly', () => {
       .setProtectedHeader({ alg: 'RS256', kid: mockEnv.JWT_KID, typ: 'JWT' })
       .setIssuedAt()
       .setExpirationTime('15m')
-      .setIssuer('https://sso.rareminds.in')
-      .setAudience('https://skillpassport.rareminds.in')
+      .setIssuer('sso-api')
+      .setAudience('sso-client')
       .sign(privateKey);
 
     expiredUserJWT = await new SignJWT({
@@ -103,8 +103,8 @@ describe('Property: Public Endpoints Work Correctly', () => {
       .setProtectedHeader({ alg: 'RS256', kid: mockEnv.JWT_KID, typ: 'JWT' })
       .setIssuedAt(Math.floor(Date.now() / 1000) - 3600)
       .setExpirationTime('-30m')
-      .setIssuer('https://sso.rareminds.in')
-      .setAudience('https://skillpassport.rareminds.in')
+      .setIssuer('sso-api')
+      .setAudience('sso-client')
       .sign(privateKey);
   });
 
