@@ -6,7 +6,7 @@ import { setAuthCookies } from "../lib/cookies";
 import { validateEmail, validatePassword, validateRedirectUrl, resolveAppUrl } from "../lib/validate";
 import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
-import { sendEmail, verificationEmail } from "../lib/email";
+import { sendVerificationEmail } from "../lib/email";
 import { SESSION_TTL_MS } from "../lib/constants";
 
 /**
@@ -153,9 +153,9 @@ export async function signupMember(
       });
       const appUrl = resolveAppUrl(body.redirect_url, env);
       const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
-      const { subject, html, text } = verificationEmail(verifyUrl);
-      // Fire-and-forget — don't await, don't block the response
-      ctx.waitUntil(sendEmail(env, { to: email, subject, html, text }));
+      
+      // Send beautiful verification email via SkillPassport
+      ctx.waitUntil(sendVerificationEmail(env, email, verifyUrl));
     } catch (emailErr) {
       // Email failure is non-critical — user is created, session is valid
       emailSent = false;

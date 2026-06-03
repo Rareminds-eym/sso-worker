@@ -7,7 +7,6 @@ import { audit } from "../lib/audit";
 import { sendPasswordResetEmail } from "../lib/email";
 import { checkEmailThrottle } from "../lib/email-throttle";
 
-// VERSION: 2.0 - Added debug logging for template troubleshooting
 const RESET_TTL_MS = 1 * 60 * 60 * 1000; // 1 hour
 
 /**
@@ -20,20 +19,12 @@ export async function forgotPassword(
   env: Env,
   ctx: ExecutionContext,
 ): Promise<Response> {
-  // Use console.error to ensure logs appear (console.log might be filtered)
-  console.error('='.repeat(80));
-  console.error('FORGOT PASSWORD HANDLER CALLED - VERSION 2.0');
-  console.error('Timestamp:', new Date().toISOString());
-  console.error('='.repeat(80));
-  
   let body: { email?: string; redirect_url?: string };
   try {
     body = await req.json() as { email?: string; redirect_url?: string };
   } catch {
     return error("Invalid JSON body");
   }
-  
-  console.error('Request body parsed, email:', body.email);
 
   if (!body.email) return error("email is required");
 
@@ -80,17 +71,11 @@ export async function forgotPassword(
     expires_at: expiresAt,
   });
 
-  // Send password reset email
+  // Send password reset email via template router (platform-specific template)
   const appUrl = resolveAppUrl(body.redirect_url, env);
   const resetUrl = `${appUrl}/reset-password?token=${token}`;
-  console.error('About to call sendPasswordResetEmail');
-  console.error('Email:', email);
-  console.error('Reset URL:', resetUrl);
-  console.error('SKILLPASSPORT_API_URL:', env.SKILLPASSPORT_API_URL);
   
-  // Call synchronously to see logs immediately (for debugging)
-  await sendPasswordResetEmail(env, email, resetUrl);
-  console.error('sendPasswordResetEmail completed');
+  ctx.waitUntil(sendPasswordResetEmail(env, email, resetUrl, body.redirect_url));
 
   audit(ctx, env, "password_reset_requested", {
     user_id: user.id,
