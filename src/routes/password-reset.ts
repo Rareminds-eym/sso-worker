@@ -75,7 +75,7 @@ export async function forgotPassword(
   const appUrl = resolveAppUrl(body.redirect_url, env);
   const resetUrl = `${appUrl}/reset-password?token=${token}`;
   
-  ctx.waitUntil(sendPasswordResetEmail(env, email, resetUrl, body.redirect_url));
+  ctx.waitUntil(sendPasswordResetEmail(env, email, resetUrl));
 
   audit(ctx, env, "password_reset_requested", {
     user_id: user.id,
@@ -100,26 +100,23 @@ export async function resetPassword(
   try {
     body = await req.json() as { token?: string; password?: string };
   } catch {
-    const err = error("Invalid JSON body");
     console.error("[reset-password] Invalid JSON body");
-    return err;
+    return error("Invalid JSON body");
   }
 
   if (!body.token) {
-    const err = error("token is required");
     console.error("[reset-password] Missing token");
-    return err;
+    return error("token is required");
   }
   
   if (!body.password) {
-    const err = error("password is required");
     console.error("[reset-password] Missing password");
-    return err;
+    return error("password is required");
   }
 
   const passErr = validatePassword(body.password);
   if (passErr) {
-    console.error("[reset-password] Password validation failed:", await passErr.clone().text());
+    console.error("[reset-password] Password validation failed");
     return passErr;
   }
 

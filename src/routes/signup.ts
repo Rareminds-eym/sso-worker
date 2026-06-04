@@ -146,7 +146,7 @@ export async function signup(
       });
       const appUrl = resolveAppUrl(body.redirect_url, env);
       const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
-      ctx.waitUntil(sendVerificationEmail(env, email, verifyUrl, body.redirect_url));
+      ctx.waitUntil(sendVerificationEmail(env, email, verifyUrl));
     } catch (emailErr) {
       emailSent = false;
       console.error("[SSO] Verification email setup failed:", emailErr);
