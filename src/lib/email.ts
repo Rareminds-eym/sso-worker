@@ -8,15 +8,16 @@ export interface EmailPayload {
   text: string;
 }
 
-interface EmailTemplate extends JsonObject {
+interface EmailTemplate {
   html: string;
   subject: string;
   text: string;
+  [key: string]: JsonPrimitive | JsonObject | JsonArray;
 }
 
-type JsonValue = string | number | boolean | null | JsonObject | JsonArray;
-type JsonObject = { [key: string]: JsonValue };
-type JsonArray = JsonValue[];
+type JsonPrimitive = string | number | boolean | null;
+type JsonObject = { [key: string]: JsonPrimitive | JsonObject | JsonArray };
+type JsonArray = (JsonPrimitive | JsonObject | JsonArray)[];
 
 /**
  * Type guard to validate email template structure
@@ -59,7 +60,7 @@ export async function sendEmail(env: Env, payload: EmailPayload): Promise<void> 
       }),
     );
     if (!res.ok) {
-      const err = await res.text().catch(() => "");
+      const err = await res.text().catch(() => "Response body unreadable");
       console.error(`[SSO] Email delivery failed: ${res.status} ${err}`);
     }
   } catch (err) {
@@ -95,17 +96,18 @@ export async function sendVerificationEmail(
     );
 
     if (!templateResponse.ok) {
-      const errorText = await templateResponse.text().catch(() => "");
+      const errorText = await templateResponse.text().catch(() => "Response body unreadable");
       throw new Error(`Failed to fetch verification email template from SkillPassport service: ${templateResponse.status} ${templateResponse.statusText} - ${errorText}`);
     }
 
     const rawData = await templateResponse.json();
 
-    if (!isValidEmailTemplate(rawData as JsonObject)) {
+    const validated = rawData as JsonObject;
+    if (!isValidEmailTemplate(validated)) {
       throw new Error('Invalid template response structure from SkillPassport service');
     }
 
-    const templateData: EmailTemplate = rawData as EmailTemplate;
+    const templateData: EmailTemplate = validated;
     
     // Send email via service binding to email-worker
     await sendEmail(env, { 
@@ -146,17 +148,18 @@ export async function sendPasswordResetEmail(
     );
 
     if (!templateResponse.ok) {
-      const errorText = await templateResponse.text().catch(() => "");
+      const errorText = await templateResponse.text().catch(() => "Response body unreadable");
       throw new Error(`Failed to fetch password reset email template from SkillPassport service: ${templateResponse.status} ${templateResponse.statusText} - ${errorText}`);
     }
 
     const rawData = await templateResponse.json();
 
-    if (!isValidEmailTemplate(rawData as JsonObject)) {
+    const validated = rawData as JsonObject;
+    if (!isValidEmailTemplate(validated)) {
       throw new Error('Invalid template response structure from SkillPassport service');
     }
 
-    const templateData: EmailTemplate = rawData as EmailTemplate;
+    const templateData: EmailTemplate = validated;
     
     // Send email via service binding to email-worker
     await sendEmail(env, { 
@@ -180,15 +183,20 @@ export async function sendWelcomeEmail(
   name: string,
   baseUrl: string,
 ): Promise<void> {
-  const subject = "Welcome to SkillPassport!";
-  const html = `
-    <p>Hello ${escapeHtmlAttr(name)},</p>
-    <p>Welcome to SkillPassport! Your account has been created successfully.</p>
-    <p><a href="${escapeHrefAttr(baseUrl)}/login">Login now</a></p>
-  `.trim();
-  const text = `Hello ${name},\n\nWelcome to SkillPassport! Your account has been created successfully.\n\nLogin: ${baseUrl}/login`;
-  
-  await sendEmail(env, { to, subject, html, text });
+  try {
+    const subject = "Welcome to SkillPassport!";
+    const html = `
+      <p>Hello ${escapeHtmlAttr(name)},</p>
+      <p>Welcome to SkillPassport! Your account has been created successfully.</p>
+      <p><a href="${escapeHrefAttr(baseUrl)}/login">Login now</a></p>
+    `.trim();
+    const text = `Hello ${name},\n\nWelcome to SkillPassport! Your account has been created successfully.\n\nLogin: ${baseUrl}/login`;
+    
+    await sendEmail(env, { to, subject, html, text });
+  } catch (error) {
+    console.error(`[SSO] Failed to send welcome email:`, error);
+    throw new Error(`Welcome email failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 /** Build an invite email */
