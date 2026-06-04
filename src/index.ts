@@ -1,5 +1,5 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import type { Env, RouteConfig, AccessTokenPayload } from "./types";
+import type { Env, RouteConfig, AccessTokenPayload, Session, JwtClaims } from "./types";
 import { signup } from "./routes/signup";
 import { signupMember } from "./routes/signup-member";
 import { login } from "./routes/login";
@@ -28,6 +28,10 @@ import { authenticate } from "./lib/auth";
 import { json, error } from "./lib/response";
 import { db } from "./lib/db";
 import { addMonths, parseDurationMonths } from "./lib/date";
+import { signAccessToken, verifyAccessToken, getPublicJWK, exportPemAsJwk } from "./lib/jwt";
+import { hashToken, generateRefreshToken } from "./lib/hash";
+import { audit } from "./lib/audit";
+import { SESSION_TTL_MS } from "./lib/constants";
 
 /** Max request body size: 10 KB */
 const MAX_BODY_SIZE = 10_240;
@@ -662,6 +666,142 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
     });
 
     return purchase as Record<string, unknown>;
+  }
+
+  // ── Auth RPC Methods ──────────────────────────────────────────
+
+  async getJWKS(): Promise<{ keys: any[] }> {
+    const keys = [await getPublicJWK(this.env)];
+    if (this.env.JWT_PUBLIC_KEY_PREVIOUS && this.env.JWT_KID_PREVIOUS) {
+      try {
+        const prevJwk = await exportPemAsJwk(this.env.JWT_PUBLIC_KEY_PREVIOUS, this.env.JWT_KID_PREVIOUS);
+        keys.push(prevJwk);
+      } catch (err) {
+        console.warn("[SSO] Failed to export previous JWKS key:", err);
+      }
+    }
+    return { keys };
+  }
+
+  async refreshSession(refreshToken: string, ip?: string, ua?: string): Promise<{ access_token: string, refresh_token: string }> {
+    if (!refreshToken) throw new Error("No refresh token provided");
+
+    const database = db(this.env);
+    const tokenHash = await hashToken(refreshToken);
+
+    const session = await database.queryOne<Session>(
+      `sessions?refresh_token_hash=eq.${tokenHash}&select=*`,
+    );
+
+    if (!session) throw new Error("Invalid refresh token");
+
+    if (session.revoked) {
+      await database.update("sessions", { user_id: `eq.${session.user_id}` }, { revoked: true });
+      audit(this.ctx, this.env, "refresh_theft_detected", {
+        user_id: session.user_id,
+        ip_address: ip || null,
+        user_agent: ua || null,
+      });
+      throw new Error("Refresh token reuse detected. All sessions revoked.");
+    }
+
+    if (new Date(session.expires_at) < new Date()) {
+      await database.update("sessions", { id: `eq.${session.id}` }, { revoked: true });
+      throw new Error("Session expired");
+    }
+
+    await database.update("sessions", { id: `eq.${session.id}` }, { revoked: true });
+
+    const newRefreshToken = generateRefreshToken();
+    const newRefreshHash = await hashToken(newRefreshToken);
+
+    await database.mutate("sessions", {
+      user_id: session.user_id,
+      org_id: session.org_id,
+      refresh_token_hash: newRefreshHash,
+      user_agent: ua || null,
+      ip_address: ip || null,
+      revoked: false,
+      expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+      rotated_from: session.id,
+      last_used_at: new Date().toISOString(),
+    });
+
+    const [user, claims] = await Promise.all([
+      database.queryOne<{ id: string; email: string; is_email_verified: boolean }>(
+        `users?id=eq.${session.user_id}&select=id,email,is_email_verified`,
+      ),
+      database.rpc<JwtClaims>("get_jwt_claims", {
+        p_user_id: session.user_id,
+        p_org_id: session.org_id,
+      }),
+    ]);
+
+    const accessToken = await signAccessToken(
+      {
+        sub: session.user_id,
+        email: user?.email ?? "",
+        org_id: session.org_id ?? "",
+        roles: claims?.roles ?? [],
+        products: claims?.products ?? [],
+        membership_status: claims?.membership_status ?? "active",
+        is_email_verified: user?.is_email_verified ?? false,
+      },
+      this.env,
+    );
+
+    audit(this.ctx, this.env, "refresh", {
+      user_id: session.user_id,
+      org_id: session.org_id,
+      ip_address: ip || null,
+      user_agent: ua || null,
+    });
+
+    return { access_token: accessToken, refresh_token: newRefreshToken };
+  }
+
+  async getMe(accessToken: string): Promise<Record<string, unknown>> {
+    if (!accessToken) throw new Error("No access token provided");
+    const payload = await verifyAccessToken(accessToken, this.env);
+    return {
+      sub: payload.sub,
+      email: payload.email,
+      org_id: payload.org_id,
+      roles: payload.roles,
+      products: payload.products,
+      membership_status: payload.membership_status,
+      is_email_verified: payload.is_email_verified,
+    };
+  }
+
+  async logoutSession(refreshToken: string, ip?: string, ua?: string): Promise<{ success: boolean }> {
+    if (!refreshToken) return { success: true };
+
+    const database = db(this.env);
+    const tokenHash = await hashToken(refreshToken);
+
+    const session = await database.queryOne<Session>(
+      `sessions?refresh_token_hash=eq.${tokenHash}&select=user_id,org_id`,
+    );
+
+    if (session) {
+      await database.update(
+        "sessions",
+        { refresh_token_hash: `eq.${tokenHash}` },
+        { revoked: true },
+      ).catch((err) => {
+        console.warn("[SSO] Session revocation failed on logout:", err);
+      });
+
+      audit(this.ctx, this.env, "logout", {
+        user_id: session.user_id,
+        org_id: session.org_id,
+        ip_address: ip || null,
+        user_agent: ua || null,
+      });
+    }
+
+    return { success: true };
   }
 }
 
