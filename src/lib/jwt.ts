@@ -49,11 +49,15 @@ export async function verifyAccessToken(
 ): Promise<AccessTokenPayload> {
   const publicKey = await getPublicKey(env);
 
-  const { payload } = await jwtVerify(token, publicKey, {
+  const { payload, protectedHeader } = await jwtVerify(token, publicKey, {
     algorithms: [ALG],
     issuer: JWT_ISSUER,
     audience: JWT_AUDIENCE,
   });
+
+  if (protectedHeader.typ !== "JWT") {
+    throw new Error("Invalid token type");
+  }
 
   return payload as unknown as AccessTokenPayload;
 }

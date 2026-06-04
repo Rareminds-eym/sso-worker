@@ -11,6 +11,7 @@
 import type { Env } from "../types";
 import { db } from "../lib/db";
 import { json, error } from "../lib/response";
+import { addMonths } from "../lib/date";
 
 // ─── Public: Addon Catalog ────────────────────────────────────────
 
@@ -161,13 +162,14 @@ async function recordAddonPurchase(
     `addon_catalog?feature_key=eq.${encodeURIComponent(body.feature_key)}`,
   );
 
-  const now = new Date();
-  const endDate = new Date(now);
-  if (body.billing_period === "annual") {
-    endDate.setFullYear(endDate.getFullYear() + 1);
-  } else {
-    endDate.setMonth(endDate.getMonth() + 1);
+  if (!addon) {
+    return error(`Addon not found for feature_key: ${body.feature_key}`, 404);
   }
+
+  const now = new Date();
+  const endDate = body.billing_period === "annual"
+    ? addMonths(now, 12)
+    : addMonths(now, 1);
 
   const purchase = await database.mutate("addon_purchases", {
     user_id: body.user_id,
@@ -231,12 +233,9 @@ async function recordBundlePurchase(
   }
 
   const now = new Date();
-  const endDate = new Date(now);
-  if (body.billing_period === "annual") {
-    endDate.setFullYear(endDate.getFullYear() + 1);
-  } else {
-    endDate.setMonth(endDate.getMonth() + 1);
-  }
+  const endDate = body.billing_period === "annual"
+    ? addMonths(now, 12)
+    : addMonths(now, 1);
 
   const purchase = await database.mutate("bundle_purchases", {
     user_id: body.user_id,

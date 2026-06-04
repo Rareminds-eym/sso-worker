@@ -10,6 +10,7 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { SignJWT, importPKCS8 } from 'jose';
+import { JWT_ISSUER, JWT_AUDIENCE } from '../lib/constants';
 import type { Env } from '../types';
 import type { ExecutionContext } from '@cloudflare/workers-types';
 
@@ -87,8 +88,8 @@ describe('Property: Public Endpoints Work Correctly', () => {
       .setProtectedHeader({ alg: 'RS256', kid: mockEnv.JWT_KID, typ: 'JWT' })
       .setIssuedAt()
       .setExpirationTime('15m')
-      .setIssuer('sso-api')
-      .setAudience('sso-client')
+      .setIssuer(JWT_ISSUER)
+      .setAudience(JWT_AUDIENCE)
       .sign(privateKey);
 
     expiredUserJWT = await new SignJWT({
@@ -103,8 +104,8 @@ describe('Property: Public Endpoints Work Correctly', () => {
       .setProtectedHeader({ alg: 'RS256', kid: mockEnv.JWT_KID, typ: 'JWT' })
       .setIssuedAt(Math.floor(Date.now() / 1000) - 3600)
       .setExpirationTime('-30m')
-      .setIssuer('sso-api')
-      .setAudience('sso-client')
+      .setIssuer(JWT_ISSUER)
+      .setAudience(JWT_AUDIENCE)
       .sign(privateKey);
   });
 

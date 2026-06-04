@@ -3,12 +3,13 @@ import { ACCESS_TOKEN_MAX_AGE, SESSION_TTL_MS } from "./constants";
 const COOKIE_OPTIONS = "HttpOnly; Secure; Path=/; SameSite=None";
 const REFRESH_MAX_AGE = Math.floor(SESSION_TTL_MS / 1000);
 
-/** Set access + refresh token cookies on a Response */
+/** Set access + refresh token cookies and expose the access token header */
 export function setAuthCookies(
   res: Response,
   accessToken: string,
   refreshToken: string,
 ): void {
+  res.headers.set("X-Access-Token", accessToken);
   res.headers.append(
     "Set-Cookie",
     `access_token=${accessToken}; ${COOKIE_OPTIONS}; Max-Age=${ACCESS_TOKEN_MAX_AGE}`,

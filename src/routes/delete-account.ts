@@ -2,6 +2,7 @@ import type { Env, AccessTokenPayload } from "../types";
 import { clearCookies } from "../lib/cookies";
 import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
+import { endpointRateLimit } from "../lib/rate-limit";
 
 /**
  * POST /auth/delete-account
@@ -19,6 +20,9 @@ export async function deleteAccount(
   auth?: AccessTokenPayload,
 ): Promise<Response> {
   const payload = auth!;
+  const rateLimited = await endpointRateLimit(env, `delete-account:user:${payload.sub}`, 3, 60);
+  if (rateLimited) return rateLimited;
+
   const ip = req.headers.get("CF-Connecting-IP");
   const ua = req.headers.get("User-Agent");
 
