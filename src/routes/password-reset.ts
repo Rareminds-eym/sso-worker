@@ -100,23 +100,19 @@ export async function resetPassword(
   try {
     body = await req.json() as { token?: string; password?: string };
   } catch {
-    console.error("[reset-password] Invalid JSON body");
     return error("Invalid JSON body");
   }
 
   if (!body.token) {
-    console.error("[reset-password] Missing token");
     return error("token is required");
   }
   
   if (!body.password) {
-    console.error("[reset-password] Missing password");
     return error("password is required");
   }
 
   const passErr = validatePassword(body.password);
   if (passErr) {
-    console.error("[reset-password] Password validation failed");
     return passErr;
   }
 

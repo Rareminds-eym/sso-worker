@@ -8,6 +8,33 @@ export interface EmailPayload {
   text: string;
 }
 
+interface EmailTemplate extends JsonObject {
+  html: string;
+  subject: string;
+  text: string;
+}
+
+type JsonValue = string | number | boolean | null | JsonObject | JsonArray;
+type JsonObject = { [key: string]: JsonValue };
+type JsonArray = JsonValue[];
+
+/**
+ * Type guard to validate email template structure
+ */
+function isValidEmailTemplate(data: JsonObject): data is EmailTemplate {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    !Array.isArray(data) &&
+    'html' in data &&
+    'subject' in data &&
+    'text' in data &&
+    typeof data.html === 'string' &&
+    typeof data.subject === 'string' &&
+    typeof data.text === 'string'
+  );
+}
+
 /**
  * Send an email via the email-worker service binding.
  *
@@ -32,7 +59,7 @@ export async function sendEmail(env: Env, payload: EmailPayload): Promise<void> 
       }),
     );
     if (!res.ok) {
-      const err = await res.text();
+      const err = await res.text().catch(() => "");
       console.error(`[SSO] Email delivery failed: ${res.status} ${err}`);
     }
   } catch (err) {
@@ -68,25 +95,17 @@ export async function sendVerificationEmail(
     );
 
     if (!templateResponse.ok) {
-      const errorText = await templateResponse.text();
+      const errorText = await templateResponse.text().catch(() => "");
       throw new Error(`Failed to fetch verification email template from SkillPassport service: ${templateResponse.status} ${templateResponse.statusText} - ${errorText}`);
     }
 
     const rawData = await templateResponse.json();
 
-    if (!rawData || typeof rawData !== 'object') {
+    if (!isValidEmailTemplate(rawData as JsonObject)) {
       throw new Error('Invalid template response structure from SkillPassport service');
     }
 
-    const templateData = rawData as { html: string; subject: string; text: string };
-
-    if (
-      typeof templateData.html !== 'string' ||
-      typeof templateData.subject !== 'string' ||
-      typeof templateData.text !== 'string'
-    ) {
-      throw new Error('Invalid template response structure from SkillPassport service');
-    }
+    const templateData: EmailTemplate = rawData as EmailTemplate;
     
     // Send email via service binding to email-worker
     await sendEmail(env, { 
@@ -127,25 +146,17 @@ export async function sendPasswordResetEmail(
     );
 
     if (!templateResponse.ok) {
-      const errorText = await templateResponse.text();
+      const errorText = await templateResponse.text().catch(() => "");
       throw new Error(`Failed to fetch password reset email template from SkillPassport service: ${templateResponse.status} ${templateResponse.statusText} - ${errorText}`);
     }
 
     const rawData = await templateResponse.json();
 
-    if (!rawData || typeof rawData !== 'object') {
+    if (!isValidEmailTemplate(rawData as JsonObject)) {
       throw new Error('Invalid template response structure from SkillPassport service');
     }
 
-    const templateData = rawData as { html: string; subject: string; text: string };
-
-    if (
-      typeof templateData.html !== 'string' ||
-      typeof templateData.subject !== 'string' ||
-      typeof templateData.text !== 'string'
-    ) {
-      throw new Error('Invalid template response structure from SkillPassport service');
-    }
+    const templateData: EmailTemplate = rawData as EmailTemplate;
     
     // Send email via service binding to email-worker
     await sendEmail(env, { 
@@ -173,7 +184,7 @@ export async function sendWelcomeEmail(
   const html = `
     <p>Hello ${escapeHtmlAttr(name)},</p>
     <p>Welcome to SkillPassport! Your account has been created successfully.</p>
-    <p><a href="${baseUrl}/login">Login now</a></p>
+    <p><a href="${escapeHrefAttr(baseUrl)}/login">Login now</a></p>
   `.trim();
   const text = `Hello ${name},\n\nWelcome to SkillPassport! Your account has been created successfully.\n\nLogin: ${baseUrl}/login`;
   
