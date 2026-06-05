@@ -29,6 +29,7 @@ import {
   listBundles,
   recordAddonPurchase, recordBundlePurchase,
 } from "./routes/addon-catalog";
+import { createMembership, updateMembershipStatus, assignMembershipRole } from "./handlers/memberships";
 import { rateLimit, rateLimits } from "./middleware/rateLimit";
 import { authenticate } from "./lib/auth";
 import { json, error } from "./lib/response";
@@ -40,57 +41,62 @@ const MAX_BODY_SIZE = 10_240;
 // ─── Declarative Route Table ───────────────────────────────────
 const routes: Record<string, Record<string, RouteConfig>> = {
   POST: {
-    "/auth/signup":              { handler: signup },
-    "/auth/signup-member":       { handler: signupMember },
-    "/auth/login":               { handler: login },
-    "/auth/refresh":             { handler: refresh },
-    "/auth/logout":              { handler: logout },
-    "/auth/switch-org":          { handler: switchOrg,           auth: true },
-    "/auth/invite":              { handler: createInvite,        auth: true },
-    "/auth/invite/accept":       { handler: acceptInvite },
-    "/auth/invite/cancel":       { handler: cancelInvite,        auth: true },
-    "/auth/invite/resend":       { handler: resendInvite,        auth: true },
+    "/auth/signup": { handler: signup },
+    "/auth/signup-member": { handler: signupMember },
+    "/auth/login": { handler: login },
+    "/auth/refresh": { handler: refresh },
+    "/auth/logout": { handler: logout },
+    "/auth/switch-org": { handler: switchOrg, auth: true },
+    "/auth/invite": { handler: createInvite, auth: true },
+    "/auth/invite/accept": { handler: acceptInvite },
+    "/auth/invite/cancel": { handler: cancelInvite, auth: true },
+    "/auth/invite/resend": { handler: resendInvite, auth: true },
     "/auth/request-verification": { handler: requestVerification, auth: true },
-    "/auth/verify-email":        { handler: verifyEmail },
-    "/auth/forgot-password":     { handler: forgotPassword },
-    "/auth/reset-password":      { handler: resetPassword },
-    "/auth/change-password":     { handler: changePassword,      auth: true },
+    "/auth/verify-email": { handler: verifyEmail },
+    "/auth/forgot-password": { handler: forgotPassword },
+    "/auth/reset-password": { handler: resetPassword },
+    "/auth/change-password": { handler: changePassword, auth: true },
     "/auth/admin-reset-password": { handler: adminResetPassword, auth: true },
-    "/auth/delete-account":      { handler: deleteAccount,       auth: true },
+    "/auth/delete-account": { handler: deleteAccount, auth: true },
     // Subscription management — all require SERVICE_AUTH_SECRET
     // These endpoints are only callable by the skillpassport backend via
     // Cloudflare Service Binding + SERVICE_AUTH_SECRET. User JWTs are rejected.
-    "/api/subscriptions/create":          { handler: createSubscription,         serviceAuth: true },
+    "/api/subscriptions/create": { handler: createSubscription, serviceAuth: true },
     "/api/subscriptions/create-freemium": { handler: createFreemiumSubscription, serviceAuth: true },
-    "/api/transactions/record":           { handler: recordTransaction,          serviceAuth: true },
-    "/api/events/webhook":                { handler: processWebhookEvent },
+    "/api/transactions/record": { handler: recordTransaction, serviceAuth: true },
+    "/api/events/webhook": { handler: processWebhookEvent },
     // Addon & bundle purchase recording (service-auth only)
-    "/api/addon-purchases/record":  { handler: recordAddonPurchase,  serviceAuth: true },
+    "/api/addon-purchases/record": { handler: recordAddonPurchase, serviceAuth: true },
     "/api/bundle-purchases/record": { handler: recordBundlePurchase, serviceAuth: true },
     // Sync endpoints (called by skillpassport workers)
-    "/api/sync/subscription":   { handler: syncSubscription,  serviceAuth: true },
-    "/api/sync/plans":          { handler: syncPlans,         serviceAuth: true },
-    "/api/sync/reconcile":      { handler: syncReconcile,     serviceAuth: true },
+    "/api/sync/subscription": { handler: syncSubscription, serviceAuth: true },
+    "/api/sync/plans": { handler: syncPlans, serviceAuth: true },
+    "/api/sync/reconcile": { handler: syncReconcile, serviceAuth: true },
+    // Membership management (called by skillpassport for invitation acceptance)
+    "/api/memberships/create": { handler: createMembership, serviceAuth: true },
+    "/api/memberships/assign-role": { handler: assignMembershipRole, serviceAuth: true },
   },
   PUT: {
     "/api/subscriptions/cancel": { handler: cancelSubscription, serviceAuth: true },
     "/api/subscriptions/status": { handler: updateSubscriptionStatus, serviceAuth: true },
-    "/api/subscriptions/update": { handler: updateSubscriptionField,  serviceAuth: true },
+    "/api/subscriptions/update": { handler: updateSubscriptionField, serviceAuth: true },
+    // Membership status updates
+    "/api/memberships/update-status": { handler: updateMembershipStatus, serviceAuth: true },
   },
   GET: {
-    "/auth/me":               { handler: me, auth: true },
-    "/auth/orgs":             { handler: listOrgs, auth: true },
-    "/auth/oauth/google":     { handler: oauthRedirect },
-    "/auth/oauth/github":     { handler: oauthRedirect },
+    "/auth/me": { handler: me, auth: true },
+    "/auth/orgs": { handler: listOrgs, auth: true },
+    "/auth/oauth/google": { handler: oauthRedirect },
+    "/auth/oauth/github": { handler: oauthRedirect },
     "/auth/oauth/google/callback": { handler: oauthCallback },
     "/auth/oauth/github/callback": { handler: oauthCallback },
     "/.well-known/jwks.json": { handler: (_req, env) => jwks(env) },
-    "/health":                { handler: () => Promise.resolve(json({ status: "ok" })) },
+    "/health": { handler: () => Promise.resolve(json({ status: "ok" })) },
     // Plans (public)
-    "/api/plans":             { handler: listPlans },
+    "/api/plans": { handler: listPlans },
     // Addon catalog & bundles (public)
-    "/api/addon-catalog":     { handler: listAddonCatalog },
-    "/api/bundles":           { handler: listBundles },
+    "/api/addon-catalog": { handler: listAddonCatalog },
+    "/api/bundles": { handler: listBundles },
     // Transactions
     "/api/transactions/user": { handler: getUserTransactions, serviceAuth: true },
   },
@@ -207,7 +213,7 @@ export default {
     // Rate limiting (skip health check and JWKS endpoint)
     if (pathname !== "/health" && pathname !== "/.well-known/jwks.json") {
       let rateLimitConfig: ReturnType<typeof rateLimit> | null = null;
-      
+
       // Map routes to rate limit configs
       switch (pathname) {
         case "/auth/login":
@@ -239,7 +245,7 @@ export default {
           rateLimitConfig = rateLimit(rateLimits.logout);
           break;
       }
-      
+
       if (rateLimitConfig) {
         const rateLimited = await rateLimitConfig(req);
         if (rateLimited) return withCors(rateLimited, cors);

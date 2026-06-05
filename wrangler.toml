@@ -22,6 +22,7 @@ ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:5173,http://localhost
 # JWT_PUBLIC_KEY   (PEM-encoded RS256 public key)
 # JWT_KID          (Key ID for JWKS, e.g. "key-1")
 # EMAIL_API_KEY    (Shared API key for email-worker service binding)
+# SERVICE_AUTH_SECRET (Shared secret for service-to-service authentication with SkillPassport worker)
 
 [[kv_namespaces]]
 binding = "RATE_LIMIT_KV"
