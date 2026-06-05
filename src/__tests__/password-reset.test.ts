@@ -340,7 +340,7 @@ describe("forgotPassword", () => {
 
     const res = await forgotPassword(req, env, ctx);
     expect(res.status).toBe(400);
-    const data = await res.json();
+    const data = (await res.json()) as any;
     expect(data.error).toBe("Invalid email format");
 
     // No email should be sent (validation failed before throttle/lookup)
@@ -444,7 +444,7 @@ describe("forgotPassword", () => {
 
     const res = await forgotPassword(req, envNoUrls, ctx);
     expect(res.status).toBe(500);
-    const data = await res.json();
+    const data = (await res.json()) as any;
     expect(data.error).toContain("Server misconfiguration");
   });
 
@@ -579,7 +579,7 @@ describe("forgotPassword", () => {
     const res = await forgotPassword(req, env, ctx);
 
     expect(res.status).toBe(429);
-    const data = await res.json();
+    const data = (await res.json()) as any;
     expect(data.error).toContain("Too many");
   });
 
@@ -783,7 +783,7 @@ describe("resetPassword", () => {
       (p: any) => p.body && typeof p.body.password_hash === "string",
     );
     expect(passwordPatch).toBeDefined();
-    expect(passwordPatch.body.password_hash).not.toBe("$2a$12$hashedpassword");
+    expect(passwordPatch!.body.password_hash).not.toBe("$2a$12$hashedpassword");
 
     // Audit log written with IP and User-Agent
     expect(dbState.audit_logs.length).toBe(1);
@@ -831,7 +831,7 @@ describe("resetPassword", () => {
     });
 
     const res = await resetPassword(req, env, ctx);
-    const data = await res.json();
+    const data = (await res.json()) as any;
 
     expect(res.status).toBe(400);
     expect(data.error).toContain("at least 10");
@@ -846,7 +846,7 @@ describe("resetPassword", () => {
     });
 
     const res = await resetPassword(req, env, ctx);
-    const data = await res.json();
+    const data = (await res.json()) as any;
 
     expect(res.status).toBe(400);
     expect(data.error).toContain("at least 3 of");
@@ -862,7 +862,7 @@ describe("resetPassword", () => {
     });
 
     const res = await resetPassword(req, env, ctx);
-    const data = await res.json();
+    const data = (await res.json()) as any;
 
     expect(res.status).toBe(400);
     expect(data.error).toContain("at most 72");
