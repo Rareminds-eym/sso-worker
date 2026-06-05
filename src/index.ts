@@ -1,5 +1,5 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import type { Env, RouteConfig, AccessTokenPayload } from "./types";
+import type { Env, RouteConfig, AccessTokenPayload, Session, JwtClaims } from "./types";
 import { signup } from "./routes/signup";
 import { signupMember } from "./routes/signup-member";
 import { login } from "./routes/login";
@@ -24,10 +24,14 @@ import {
   listAddonCatalog, getAddonByFeatureKey,
   listBundles,
 } from "./routes/addon-catalog";
-import { rateLimit, rateLimits } from "./middleware/rateLimit";
 import { authenticate } from "./lib/auth";
 import { json, error } from "./lib/response";
 import { db } from "./lib/db";
+import { addMonths, parseDurationMonths } from "./lib/date";
+import { signAccessToken, verifyAccessToken, getPublicJWK, exportPemAsJwk } from "./lib/jwt";
+import { hashToken, generateRefreshToken } from "./lib/hash";
+import { audit } from "./lib/audit";
+import { SESSION_TTL_MS } from "./lib/constants";
 
 /** Max request body size: 10 KB */
 const MAX_BODY_SIZE = 10_240;
@@ -165,47 +169,6 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
       return withCors(error("Request body too large", 413), cors);
     }
 
-    // Rate limiting (skip health check and JWKS endpoint)
-    if (pathname !== "/health" && pathname !== "/.well-known/jwks.json") {
-      let rateLimitConfig: ReturnType<typeof rateLimit> | null = null;
-
-      switch (pathname) {
-        case "/auth/login":
-          rateLimitConfig = rateLimit(rateLimits.login);
-          break;
-        case "/auth/signup":
-        case "/auth/signup-member":
-          rateLimitConfig = rateLimit(rateLimits.signup);
-          break;
-        case "/auth/forgot-password":
-          rateLimitConfig = rateLimit(rateLimits.forgotPassword);
-          break;
-        case "/auth/reset-password":
-          rateLimitConfig = rateLimit(rateLimits.resetPassword);
-          break;
-        case "/auth/verify-email":
-          rateLimitConfig = rateLimit(rateLimits.verifyEmail);
-          break;
-        case "/auth/request-verification":
-          rateLimitConfig = rateLimit(rateLimits.resendVerification);
-          break;
-        case "/auth/refresh":
-          rateLimitConfig = rateLimit(rateLimits.refresh);
-          break;
-        case "/auth/me":
-          rateLimitConfig = rateLimit(rateLimits.me);
-          break;
-        case "/auth/logout":
-          rateLimitConfig = rateLimit(rateLimits.logout);
-          break;
-      }
-
-      if (rateLimitConfig) {
-        const rateLimited = await rateLimitConfig(req);
-        if (rateLimited) return withCors(rateLimited, cors);
-      }
-    }
-
     // Route matching
     let config = routes[method]?.[pathname];
 
@@ -259,7 +222,9 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
           ms: Date.now() - start,
         }),
       );
-      return withCors(error("Internal server error", 500), cors);
+      const errResponse = withCors(error("Internal server error", 500), cors);
+      errResponse.headers.set("X-Request-ID", requestId);
+      return errResponse;
     }
   }
 
@@ -293,12 +258,9 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
       throw new Error("user_id, plan_id, plan_code, and email are required");
     }
 
+    const billingCycle = data.billing_cycle || "lifetime";
     const now = new Date();
-    const endDate = new Date(now);
-    const months = parseDurationMonths(data.billing_cycle || "lifetime");
-    if (months > 0) {
-      endDate.setMonth(endDate.getMonth() + months);
-    }
+    const endDate = addMonths(now, parseDurationMonths(billingCycle));
 
     const database = db(this.env);
     const subscription = await database.mutate("subscriptions", {
@@ -307,15 +269,15 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
       plan_code: data.plan_code,
       plan_type: data.plan_type || data.plan_code,
       plan_amount: data.plan_amount || 0,
-      billing_cycle: data.billing_cycle || "lifetime",
+      billing_cycle: billingCycle,
       features: data.features || [],
       full_name: data.full_name || "",
       email: data.email,
       phone: data.phone || null,
       status: "active",
-      auto_renew: data.billing_cycle !== "lifetime",
+      auto_renew: billingCycle !== "lifetime",
       subscription_start_date: now.toISOString(),
-      subscription_end_date: data.billing_cycle === "lifetime" ? null : endDate.toISOString(),
+      subscription_end_date: billingCycle === "lifetime" ? null : endDate.toISOString(),
       razorpay_order_id: data.razorpay_order_id || null,
       razorpay_payment_id: data.razorpay_payment_id || null,
       organization_id: data.organization_id || null,
@@ -632,13 +594,14 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
       `addon_catalog?feature_key=eq.${encodeURIComponent(data.feature_key)}`,
     );
 
-    const now = new Date();
-    const endDate = new Date(now);
-    if (data.billing_period === "annual") {
-      endDate.setFullYear(endDate.getFullYear() + 1);
-    } else {
-      endDate.setMonth(endDate.getMonth() + 1);
+    if (!addon) {
+      throw new Error(`Addon not found for feature_key: ${data.feature_key}`);
     }
+
+    const now = new Date();
+    const endDate = data.billing_period === "annual"
+      ? addMonths(now, 12)
+      : addMonths(now, 1);
 
     const purchase = await database.mutate("addon_purchases", {
       user_id: data.user_id,
@@ -683,12 +646,9 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     const now = new Date();
-    const endDate = new Date(now);
-    if (data.billing_period === "annual") {
-      endDate.setFullYear(endDate.getFullYear() + 1);
-    } else {
-      endDate.setMonth(endDate.getMonth() + 1);
-    }
+    const endDate = data.billing_period === "annual"
+      ? addMonths(now, 12)
+      : addMonths(now, 1);
 
     const purchase = await database.mutate("bundle_purchases", {
       user_id: data.user_id,
@@ -707,14 +667,142 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
 
     return purchase as Record<string, unknown>;
   }
+
+  // ── Auth RPC Methods ──────────────────────────────────────────
+
+  async getJWKS(): Promise<{ keys: any[] }> {
+    const keys = [await getPublicJWK(this.env)];
+    if (this.env.JWT_PUBLIC_KEY_PREVIOUS && this.env.JWT_KID_PREVIOUS) {
+      try {
+        const prevJwk = await exportPemAsJwk(this.env.JWT_PUBLIC_KEY_PREVIOUS, this.env.JWT_KID_PREVIOUS);
+        keys.push(prevJwk);
+      } catch (err) {
+        console.warn("[SSO] Failed to export previous JWKS key:", err);
+      }
+    }
+    return { keys };
+  }
+
+  async refreshSession(refreshToken: string, ip?: string, ua?: string): Promise<{ access_token: string, refresh_token: string }> {
+    if (!refreshToken) throw new Error("No refresh token provided");
+
+    const database = db(this.env);
+    const tokenHash = await hashToken(refreshToken);
+
+    const session = await database.queryOne<Session>(
+      `sessions?refresh_token_hash=eq.${tokenHash}&select=*`,
+    );
+
+    if (!session) throw new Error("Invalid refresh token");
+
+    if (session.revoked) {
+      await database.update("sessions", { user_id: `eq.${session.user_id}` }, { revoked: true });
+      audit(this.ctx, this.env, "refresh_theft_detected", {
+        user_id: session.user_id,
+        ip_address: ip || null,
+        user_agent: ua || null,
+      });
+      throw new Error("Refresh token reuse detected. All sessions revoked.");
+    }
+
+    if (new Date(session.expires_at) < new Date()) {
+      await database.update("sessions", { id: `eq.${session.id}` }, { revoked: true });
+      throw new Error("Session expired");
+    }
+
+    await database.update("sessions", { id: `eq.${session.id}` }, { revoked: true });
+
+    const newRefreshToken = generateRefreshToken();
+    const newRefreshHash = await hashToken(newRefreshToken);
+
+    await database.mutate("sessions", {
+      user_id: session.user_id,
+      org_id: session.org_id,
+      refresh_token_hash: newRefreshHash,
+      user_agent: ua || null,
+      ip_address: ip || null,
+      revoked: false,
+      expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+      rotated_from: session.id,
+      last_used_at: new Date().toISOString(),
+    });
+
+    const [user, claims] = await Promise.all([
+      database.queryOne<{ id: string; email: string; is_email_verified: boolean }>(
+        `users?id=eq.${session.user_id}&select=id,email,is_email_verified`,
+      ),
+      database.rpc<JwtClaims>("get_jwt_claims", {
+        p_user_id: session.user_id,
+        p_org_id: session.org_id,
+      }),
+    ]);
+
+    const accessToken = await signAccessToken(
+      {
+        sub: session.user_id,
+        email: user?.email ?? "",
+        org_id: session.org_id ?? "",
+        roles: claims?.roles ?? [],
+        products: claims?.products ?? [],
+        membership_status: claims?.membership_status ?? "active",
+        is_email_verified: user?.is_email_verified ?? false,
+      },
+      this.env,
+    );
+
+    audit(this.ctx, this.env, "refresh", {
+      user_id: session.user_id,
+      org_id: session.org_id,
+      ip_address: ip || null,
+      user_agent: ua || null,
+    });
+
+    return { access_token: accessToken, refresh_token: newRefreshToken };
+  }
+
+  async getMe(accessToken: string): Promise<Record<string, unknown>> {
+    if (!accessToken) throw new Error("No access token provided");
+    const payload = await verifyAccessToken(accessToken, this.env);
+    return {
+      sub: payload.sub,
+      email: payload.email,
+      org_id: payload.org_id,
+      roles: payload.roles,
+      products: payload.products,
+      membership_status: payload.membership_status,
+      is_email_verified: payload.is_email_verified,
+    };
+  }
+
+  async logoutSession(refreshToken: string, ip?: string, ua?: string): Promise<{ success: boolean }> {
+    if (!refreshToken) return { success: true };
+
+    const database = db(this.env);
+    const tokenHash = await hashToken(refreshToken);
+
+    const session = await database.queryOne<Session>(
+      `sessions?refresh_token_hash=eq.${tokenHash}&select=user_id,org_id`,
+    );
+
+    if (session) {
+      await database.update(
+        "sessions",
+        { refresh_token_hash: `eq.${tokenHash}` },
+        { revoked: true },
+      ).catch((err) => {
+        console.warn("[SSO] Session revocation failed on logout:", err);
+      });
+
+      audit(this.ctx, this.env, "logout", {
+        user_id: session.user_id,
+        org_id: session.org_id,
+        ip_address: ip || null,
+        user_agent: ua || null,
+      });
+    }
+
+    return { success: true };
+  }
 }
 
-// ─── Helper ────────────────────────────────────────────────────
-function parseDurationMonths(duration: string): number {
-  const lower = duration.toLowerCase();
-  if (lower === "lifetime") return 0;
-  if (lower.includes("annual") || lower.includes("year")) return 12;
-  if (lower.includes("quarter")) return 3;
-  if (lower.includes("month")) return 1;
-  return 1;
-}
+

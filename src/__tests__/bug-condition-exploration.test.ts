@@ -14,6 +14,7 @@ import { describe, it, expect } from 'vitest';
 import type { Env } from '../types';
 import type { ExecutionContext } from '@cloudflare/workers-types';
 
+const mockStore = new Map<string, string>();
 const mockEnv: Env = {
   SUPABASE_URL: 'https://test.supabase.co',
   SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
@@ -21,7 +22,13 @@ const mockEnv: Env = {
   JWT_PUBLIC_KEY: 'test-public-key',
   JWT_KID: 'test-key-1',
   ALLOWED_ORIGINS: 'http://localhost:3000',
-  RATE_LIMIT_KV: {} as KVNamespace,
+  RATE_LIMIT_KV: {
+    get: (k: string) => Promise.resolve(mockStore.get(k) ?? null),
+    put: (k: string, v: string) => { mockStore.set(k, v); return Promise.resolve(); },
+    delete: (k: string) => { mockStore.delete(k); return Promise.resolve(); },
+    list: () => Promise.resolve({ keys: [] }),
+    getWithMetadata: () => Promise.resolve({ value: null, metadata: null }),
+  } as unknown as KVNamespace,
   EMAIL_SERVICE: {} as Fetcher,
   EMAIL_API_KEY: 'test-email-api-key',
   ALLOWED_APP_URLS: 'http://localhost:3000',

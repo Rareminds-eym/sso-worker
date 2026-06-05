@@ -6,6 +6,7 @@ import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
 import { sendPasswordResetEmail } from "../lib/email";
 import { checkEmailThrottle } from "../lib/email-throttle";
+import { endpointRateLimit } from "../lib/rate-limit";
 
 const RESET_TTL_MS = 1 * 60 * 60 * 1000; // 1 hour
 
@@ -35,8 +36,12 @@ export async function forgotPassword(
   if (redirectErr) return redirectErr;
 
   const email = body.email.toLowerCase().trim();
-  const ip = req.headers.get("CF-Connecting-IP");
+  const ip = req.headers.get("CF-Connecting-IP") ?? "unknown";
   const ua = req.headers.get("User-Agent");
+
+  const rateLimited = await endpointRateLimit(env, `forgot-password:ip:${ip}`, 3, 300);
+  if (rateLimited) return rateLimited;
+
   const database = db(env);
 
   // Throttle BEFORE user lookup to prevent enumeration via throttle behavior
