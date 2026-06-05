@@ -1,7 +1,10 @@
 name = "sso-api"
 main = "src/index.ts"
-compatibility_date = "2026-05-25"
+compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
+
+[entrypoints]
+SSOEntrypoint = "src/entrypoint.ts"
 
 [observability]
 enabled = true

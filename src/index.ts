@@ -1,5 +1,8 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Env, RouteConfig, AccessTokenPayload } from "./types";
+
+// Export the RPC entrypoint for service binding
+export { SSOEntrypoint } from "./entrypoint";
 import { signup } from "./routes/signup";
 import { signupMember } from "./routes/signup-member";
 import { login } from "./routes/login";

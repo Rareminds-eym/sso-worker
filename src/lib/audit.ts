@@ -18,7 +18,14 @@ export type AuditAction =
   | "email_verified"
   | "password_reset_requested"
   | "password_reset_completed"
-  | "account_deleted";
+  | "account_deleted"
+  // RPC admin actions
+  | "admin_issue_token"
+  | "user_blocked"
+  | "user_unblocked"
+  | "admin_verify_email"
+  | "admin_revoke_all_sessions"
+  | "admin_cancel_invite";
 
 /**
  * Non-blocking audit log entry.
