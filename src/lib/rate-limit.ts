@@ -1,58 +1,6 @@
 import type { Env } from "../types";
 import { ACCOUNT_LOCKOUT_THRESHOLD, ACCOUNT_LOCKOUT_WINDOW } from "./constants";
 
-interface RateLimitConfig {
-  limit: number;
-  windowSeconds: number;
-}
-
-const ROUTE_LIMITS: Record<string, RateLimitConfig> = {
-  "/auth/login": { limit: 5, windowSeconds: 60 },
-  "/auth/signup": { limit: 3, windowSeconds: 60 },
-  "/auth/signup-member": { limit: 3, windowSeconds: 60 },
-  "/auth/refresh": { limit: 10, windowSeconds: 60 },
-  "/auth/invite": { limit: 5, windowSeconds: 60 },
-  "/auth/invite/accept": { limit: 5, windowSeconds: 60 },
-  "/auth/invite/cancel": { limit: 5, windowSeconds: 60 },
-  "/auth/invite/resend": { limit: 3, windowSeconds: 60 },
-  "/auth/request-verification": { limit: 3, windowSeconds: 60 },
-  "/auth/verify-email": { limit: 5, windowSeconds: 60 },
-  "/auth/forgot-password": { limit: 3, windowSeconds: 60 },
-  "/auth/reset-password": { limit: 5, windowSeconds: 60 },
-  "/auth/change-password": { limit: 3, windowSeconds: 60 },
-  "/auth/admin-reset-password": { limit: 5, windowSeconds: 60 },
-  "/auth/delete-account": { limit: 3, windowSeconds: 60 },
-};
-
-/**
- * KV-based fixed-window rate limiter (per-IP).
- * Returns a 429 Response if the limit is exceeded, or null if allowed.
- */
-export async function rateLimit(
-  req: Request,
-  env: Env,
-  pathname: string,
-): Promise<Response | null> {
-  const config = ROUTE_LIMITS[pathname];
-  if (!config) return null;
-
-  const ip = req.headers.get("CF-Connecting-IP") ?? "unknown";
-  const windowSlot = Math.floor(Date.now() / (config.windowSeconds * 1000));
-  const key = `rl:${pathname}:${ip}:${windowSlot}`;
-
-  const current = parseInt((await env.RATE_LIMIT_KV.get(key)) ?? "0", 10);
-
-  if (current >= config.limit) {
-    return rateLimitResponse(config.windowSeconds);
-  }
-
-  await env.RATE_LIMIT_KV.put(key, String(current + 1), {
-    expirationTtl: config.windowSeconds * 2,
-  });
-
-  return null;
-}
-
 /**
  * Per-account lockout after repeated failed login attempts.
  * Tracks by email, not IP — prevents distributed brute-force.
@@ -83,6 +31,49 @@ export async function recordFailedLogin(env: Env, email: string): Promise<void> 
 /** Clear the failed login counter on successful login */
 export async function clearFailedLogins(env: Env, email: string): Promise<void> {
   await env.RATE_LIMIT_KV.delete(`lockout:${email}`);
+}
+
+/**
+ * Generic fixed-window endpoint rate limiter backed by KV.
+ *
+ * Returns a 429 Response if `key` has exceeded `maxRequests` within the
+ * `windowSeconds` window.  The window resets after `windowSeconds` seconds
+ * (KV TTL).  Under concurrent requests the limit may be slightly exceeded
+ * (KV lacks atomic increment) — acceptable for rate limiting purposes.
+ *
+ * @example
+ *   const blocked = await endpointRateLimit(env, "invite:user_123", 10, 60);
+ *   if (blocked) return blocked;
+ */
+export async function endpointRateLimit(
+  env: Env,
+  key: string,
+  maxRequests: number,
+  windowSeconds: number = 60,
+): Promise<Response | null> {
+  const kvKey = `rl:${key}`;
+  const current = parseInt((await env.RATE_LIMIT_KV.get(kvKey)) ?? "0", 10);
+
+  if (current >= maxRequests) {
+    return new Response(
+      JSON.stringify({ error: "Too many requests. Please try again later." }),
+      {
+        status: 429,
+        headers: {
+          "Content-Type": "application/json",
+          "Retry-After": String(windowSeconds),
+          "X-RateLimit-Limit": String(maxRequests),
+          "X-RateLimit-Remaining": "0",
+        },
+      },
+    );
+  }
+
+  await env.RATE_LIMIT_KV.put(kvKey, String(current + 1), {
+    expirationTtl: windowSeconds,
+  });
+
+  return null;
 }
 
 function rateLimitResponse(retryAfter: number): Response {

@@ -5,6 +5,7 @@ import { hashToken, generateRefreshToken } from "../lib/hash";
 import { getCookie, setAuthCookies } from "../lib/cookies";
 import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
+import { endpointRateLimit } from "../lib/rate-limit";
 import { SESSION_TTL_MS } from "../lib/constants";
 
 export async function switchOrg(
@@ -14,6 +15,9 @@ export async function switchOrg(
   auth?: AccessTokenPayload,
 ): Promise<Response> {
   const currentPayload = auth!;
+  const rateLimited = await endpointRateLimit(env, `switch-org:user:${currentPayload.sub}`, 30, 60);
+  if (rateLimited) return rateLimited;
+
   const ip = req.headers.get("CF-Connecting-IP");
   const ua = req.headers.get("User-Agent");
 

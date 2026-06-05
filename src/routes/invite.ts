@@ -8,6 +8,7 @@ import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
 import { sendEmail, inviteEmail } from "../lib/email";
 import { checkEmailThrottle } from "../lib/email-throttle";
+import { endpointRateLimit } from "../lib/rate-limit";
 import { SESSION_TTL_MS, INVITE_TTL_MS } from "../lib/constants";
 
 const ALLOWED_INVITE_ROLES = ["admin", "member"] as const;
@@ -55,6 +56,9 @@ export async function createInvite(
   if (body.org_id !== caller.org_id) {
     return error("You can only invite to your active organization", 403);
   }
+
+  const rateLimited = await endpointRateLimit(env, `invite:org:${caller.org_id}`, 5, 60);
+  if (rateLimited) return rateLimited;
 
   const database = db(env);
   const inviteEmailAddress = body.email.toLowerCase().trim();
@@ -132,6 +136,10 @@ export async function acceptInvite(
   env: Env,
   ctx: ExecutionContext,
 ): Promise<Response> {
+  const ip = req.headers.get("CF-Connecting-IP") ?? "unknown";
+  const rateLimited = await endpointRateLimit(env, `invite:ip:${ip}`, 10, 60);
+  if (rateLimited) return rateLimited;
+
   let body: AcceptInviteBody;
   try {
     body = await req.json() as AcceptInviteBody;
@@ -143,7 +151,6 @@ export async function acceptInvite(
     return error("token is required");
   }
 
-  const ip = req.headers.get("CF-Connecting-IP");
   const ua = req.headers.get("User-Agent");
   const database = db(env);
 

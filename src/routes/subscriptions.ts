@@ -1,6 +1,8 @@
 import type { Env, AccessTokenPayload } from "../types";
 import { db } from "../lib/db";
 import { json, error } from "../lib/response";
+import { addMonths, parseDurationMonths } from "../lib/date";
+import { endpointRateLimit } from "../lib/rate-limit";
 
 interface CreateSubscriptionBody {
   user_id: string;
@@ -84,7 +86,7 @@ export async function getPlanByCode(
 
 // ─── Subscriptions ────────────────────────────────────────────
 
-export async function createSubscription(
+async function createSubscription(
   req: Request,
   env: Env,
   _ctx: ExecutionContext,
@@ -101,12 +103,9 @@ export async function createSubscription(
     return error("user_id, plan_id, plan_code, and email are required", 400);
   }
 
+  const billingCycle = body.billing_cycle || "lifetime";
   const now = new Date();
-  const endDate = new Date(now);
-  const months = parseDurationMonths(body.billing_cycle || "lifetime");
-  if (months > 0) {
-    endDate.setMonth(endDate.getMonth() + months);
-  }
+  const endDate = addMonths(now, parseDurationMonths(billingCycle));
 
   const database = db(env);
   const subscription = await database.mutate("subscriptions", {
@@ -115,15 +114,15 @@ export async function createSubscription(
     plan_code: body.plan_code,
     plan_type: body.plan_type || body.plan_code,
     plan_amount: body.plan_amount || 0,
-    billing_cycle: body.billing_cycle || "lifetime",
+    billing_cycle: billingCycle,
     features: body.features || [],
     full_name: body.full_name || "",
     email: body.email,
     phone: body.phone || null,
     status: "active",
-    auto_renew: body.billing_cycle !== "lifetime",
+    auto_renew: billingCycle !== "lifetime",
     subscription_start_date: now.toISOString(),
-    subscription_end_date: body.billing_cycle === "lifetime" ? null : endDate.toISOString(),
+    subscription_end_date: billingCycle === "lifetime" ? null : endDate.toISOString(),
     razorpay_order_id: body.razorpay_order_id || null,
     razorpay_payment_id: body.razorpay_payment_id || null,
     organization_id: body.organization_id || null,
@@ -137,7 +136,7 @@ export async function createSubscription(
   return json(subscription, 201);
 }
 
-export async function createFreemiumSubscription(
+async function createFreemiumSubscription(
   req: Request,
   env: Env,
 ): Promise<Response> {
@@ -189,7 +188,7 @@ export async function createFreemiumSubscription(
   return json(subscription, 201);
 }
 
-export async function getUserSubscription(
+async function getUserSubscription(
   req: Request,
   env: Env,
 ): Promise<Response> {
@@ -214,7 +213,7 @@ export async function getUserSubscription(
   return json({ subscription, plan });
 }
 
-export async function getOrgSubscription(
+async function getOrgSubscription(
   req: Request,
   env: Env,
 ): Promise<Response> {
@@ -230,7 +229,7 @@ export async function getOrgSubscription(
   return json({ subscriptions });
 }
 
-export async function updateSubscriptionStatus(
+async function updateSubscriptionStatus(
   req: Request,
   env: Env,
 ): Promise<Response> {
@@ -279,7 +278,7 @@ export async function updateSubscriptionStatus(
   return json(updated);
 }
 
-export async function cancelSubscription(
+async function cancelSubscription(
   req: Request,
   env: Env,
 ): Promise<Response> {
@@ -315,7 +314,7 @@ export async function cancelSubscription(
   return json(updated);
 }
 
-export async function updateSubscriptionField(
+async function updateSubscriptionField(
   req: Request,
   env: Env,
 ): Promise<Response> {
@@ -353,7 +352,7 @@ export async function updateSubscriptionField(
 
 // ─── Transactions ─────────────────────────────────────────────
 
-export async function recordTransaction(
+async function recordTransaction(
   req: Request,
   env: Env,
 ): Promise<Response> {
@@ -393,7 +392,7 @@ export async function recordTransaction(
   return json(transaction, 201);
 }
 
-export async function getUserTransactions(
+async function getUserTransactions(
   req: Request,
   env: Env,
 ): Promise<Response> {
@@ -422,6 +421,10 @@ export async function processWebhookEvent(
   req: Request,
   env: Env,
 ): Promise<Response> {
+  const ip = req.headers.get("CF-Connecting-IP") ?? "unknown";
+  const rateLimited = await endpointRateLimit(env, `webhook:ip:${ip}`, 60, 60);
+  if (rateLimited) return rateLimited;
+
   let body: { event_id: string; event_type: string; payload: unknown; user_id?: string; subscription_id?: string; razorpay_payment_id?: string };
   try {
     body = (await req.json()) as typeof body;
@@ -458,7 +461,7 @@ export async function processWebhookEvent(
 
 // ─── Sync endpoints (for shadow tables) ───────────────────────
 
-export async function syncSubscription(
+async function syncSubscription(
   req: Request,
   env: Env,
 ): Promise<Response> {
@@ -487,7 +490,7 @@ export async function syncSubscription(
   return json({ subscription, plan });
 }
 
-export async function syncPlans(
+async function syncPlans(
   _req: Request,
   env: Env,
 ): Promise<Response> {
@@ -498,7 +501,7 @@ export async function syncPlans(
   return json({ plans });
 }
 
-export async function syncReconcile(
+async function syncReconcile(
   req: Request,
   env: Env,
 ): Promise<Response> {
@@ -522,13 +525,4 @@ export async function syncReconcile(
   return json({ subscriptions });
 }
 
-// ─── Helpers ──────────────────────────────────────────────────
 
-function parseDurationMonths(duration: string): number {
-  const lower = duration.toLowerCase();
-  if (lower === "lifetime") return 0;
-  if (lower.includes("annual") || lower.includes("year")) return 12;
-  if (lower.includes("quarter")) return 3;
-  if (lower.includes("month")) return 1;
-  return 1;
-}
