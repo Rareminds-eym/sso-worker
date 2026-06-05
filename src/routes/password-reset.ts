@@ -4,7 +4,7 @@ import { hashPassword, hashToken } from "../lib/hash";
 import { validateEmail, validatePassword, validateRedirectUrl, resolveAppUrl } from "../lib/validate";
 import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
-import { sendEmail, passwordResetEmail } from "../lib/email";
+import { sendPasswordResetEmail } from "../lib/email";
 import { checkEmailThrottle } from "../lib/email-throttle";
 import { endpointRateLimit } from "../lib/rate-limit";
 
@@ -76,11 +76,11 @@ export async function forgotPassword(
     expires_at: expiresAt,
   });
 
-  // Send password reset email
+  // Send password reset email via template router (platform-specific template)
   const appUrl = resolveAppUrl(body.redirect_url, env);
   const resetUrl = `${appUrl}/reset-password?token=${token}`;
-  const { subject, html, text } = passwordResetEmail(resetUrl);
-  ctx.waitUntil(sendEmail(env, { to: email, subject, html, text }));
+  
+  ctx.waitUntil(sendPasswordResetEmail(env, email, resetUrl));
 
   audit(ctx, env, "password_reset_requested", {
     user_id: user.id,
@@ -108,11 +108,18 @@ export async function resetPassword(
     return error("Invalid JSON body");
   }
 
-  if (!body.token) return error("token is required");
-  if (!body.password) return error("password is required");
+  if (!body.token) {
+    return error("token is required");
+  }
+  
+  if (!body.password) {
+    return error("password is required");
+  }
 
   const passErr = validatePassword(body.password);
-  if (passErr) return passErr;
+  if (passErr) {
+    return passErr;
+  }
 
   const ip = req.headers.get("CF-Connecting-IP");
   const ua = req.headers.get("User-Agent");

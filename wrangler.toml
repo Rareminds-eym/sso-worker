@@ -41,5 +41,11 @@ id = "6f54bab45fd840678dde620cd1518705"
 binding = "EMAIL_SERVICE"
 service = "shared-email-api"
 
+# Platform-specific service bindings for email templates
+[[services]]
+binding = "SKILLPASSPORT_SERVICE"
+service = "skill-passport-portal"
+
+
 [triggers]
 crons = ["0 3 * * *"]

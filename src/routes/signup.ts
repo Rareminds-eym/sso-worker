@@ -6,7 +6,7 @@ import { setAuthCookies } from "../lib/cookies";
 import { validateEmail, validatePassword, validateRedirectUrl, resolveAppUrl } from "../lib/validate";
 import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
-import { sendEmail, verificationEmail } from "../lib/email";
+import { sendVerificationEmail } from "../lib/email";
 import { endpointRateLimit } from "../lib/rate-limit";
 import { SESSION_TTL_MS } from "../lib/constants";
 
@@ -151,8 +151,7 @@ export async function signup(
       });
       const appUrl = resolveAppUrl(body.redirect_url, env);
       const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
-      const { subject, html, text } = verificationEmail(verifyUrl);
-      ctx.waitUntil(sendEmail(env, { to: email, subject, html, text }));
+      ctx.waitUntil(sendVerificationEmail(env, email, verifyUrl));
     } catch (emailErr) {
       emailSent = false;
       console.error("[SSO] Verification email setup failed:", emailErr);

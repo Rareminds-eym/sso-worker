@@ -15,6 +15,12 @@ export interface Env {
   EMAIL_SERVICE: Fetcher;
   /** API key for authenticating with the email-worker. */
   EMAIL_API_KEY: string;
+  
+  // Platform-specific service bindings for email templates
+  /** Service binding to SkillPassport platform for email templates (optional). */
+  SKILLPASSPORT_SERVICE?: Fetcher;
+
+  
   /** Comma-separated allowlist of base URLs for email links, e.g. "https://skillpassport.rareminds.in,https://courses.rareminds.in". */
   ALLOWED_APP_URLS: string;
 }
