@@ -762,7 +762,12 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
 
   async getMe(accessToken: string): Promise<Record<string, unknown>> {
     if (!accessToken) throw new Error("No access token provided");
-    const payload = await verifyAccessToken(accessToken, this.env);
+    let payload: AccessTokenPayload;
+    try {
+      payload = await verifyAccessToken(accessToken, this.env);
+    } catch {
+      throw new Error("Invalid or expired access token");
+    }
     return {
       sub: payload.sub,
       email: payload.email,
