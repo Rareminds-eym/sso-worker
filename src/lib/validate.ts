@@ -1,8 +1,7 @@
 import { error } from "./response";
+import { PASSWORD_MIN, PASSWORD_MAX } from "./constants";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const PASSWORD_MIN = 10; // Updated from 8 to 10 characters
-const PASSWORD_MAX = 72; // bcrypt silently truncates at 72 bytes
 
 /** Validate email format. Returns an error Response or null if valid. */
 export function validateEmail(email: unknown): Response | null {

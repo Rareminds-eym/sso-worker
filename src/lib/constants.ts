@@ -24,3 +24,9 @@ export const JWT_AUDIENCE = "sso-client";
 
 /** Platform default org ID — users without a specific org get membership here */
 export const PLATFORM_ORG_ID = "00000000-0000-0000-0000-000000000001";
+
+/** Minimum password length — must match frontend validation */
+export const PASSWORD_MIN = 10;
+
+/** Maximum password length — bcrypt silently truncates at 72 bytes */
+export const PASSWORD_MAX = 72;
