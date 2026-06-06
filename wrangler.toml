@@ -1,7 +1,17 @@
 name = "sso-api"
 main = "src/index.ts"
-compatibility_date = "2025-01-01"
+compatibility_date = "2026-05-25"
 compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+
+[observability.logs]
+head_sampling_rate = 1
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.01
 
 [vars]
 # Production Supabase (remote) — used when deploying
@@ -31,6 +41,12 @@ id = "6f54bab45fd840678dde620cd1518705"
 [[services]]
 binding = "EMAIL_SERVICE"
 service = "shared-email-api"
+
+# Platform-specific service bindings for email templates
+[[services]]
+binding = "SKILLPASSPORT_SERVICE"
+service = "skill-passport-portal"
+
 
 [triggers]
 crons = ["0 3 * * *"]

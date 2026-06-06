@@ -9,14 +9,18 @@ export interface Env {
   JWT_PUBLIC_KEY_PREVIOUS?: string;
   /** Previous key ID (optional). Set during rotation window. */
   JWT_KID_PREVIOUS?: string;
-  /** Shared secret for service-to-service authentication (sync endpoints). */
-  SERVICE_AUTH_SECRET: string;
   ALLOWED_ORIGINS: string;
   RATE_LIMIT_KV: KVNamespace;
   /** Service binding to the email-worker for sending emails. */
   EMAIL_SERVICE: Fetcher;
   /** API key for authenticating with the email-worker. */
   EMAIL_API_KEY: string;
+  
+  // Platform-specific service bindings for email templates
+  /** Service binding to SkillPassport platform for email templates (optional). */
+  SKILLPASSPORT_SERVICE?: Fetcher;
+
+  
   /** Comma-separated allowlist of base URLs for email links, e.g. "https://skillpassport.rareminds.in,https://courses.rareminds.in". */
   ALLOWED_APP_URLS: string;
 }
@@ -25,7 +29,6 @@ export interface Env {
 export interface RouteConfig {
   handler: RouteHandler;
   auth?: boolean;
-  serviceAuth?: boolean;
 }
 
 export type RouteHandler = (

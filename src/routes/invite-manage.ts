@@ -4,8 +4,9 @@ import { hashToken } from "../lib/hash";
 import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
 import { sendEmail, inviteEmail } from "../lib/email";
-import { validateRedirectUrl, resolveAppUrl } from "../lib/validate";
 import { checkEmailThrottle } from "../lib/email-throttle";
+import { endpointRateLimit } from "../lib/rate-limit";
+import { validateRedirectUrl, resolveAppUrl } from "../lib/validate";
 import { INVITE_TTL_MS } from "../lib/constants";
 
 /**
@@ -19,6 +20,9 @@ export async function cancelInvite(
   auth?: AccessTokenPayload,
 ): Promise<Response> {
   const caller = auth!;
+  const rateLimited = await endpointRateLimit(env, `invite:org:${caller.org_id}`, 5, 60);
+  if (rateLimited) return rateLimited;
+
   const ip = req.headers.get("CF-Connecting-IP");
   const ua = req.headers.get("User-Agent");
 
@@ -78,6 +82,9 @@ export async function resendInvite(
   auth?: AccessTokenPayload,
 ): Promise<Response> {
   const caller = auth!;
+  const rateLimited = await endpointRateLimit(env, `invite:org:${caller.org_id}`, 5, 60);
+  if (rateLimited) return rateLimited;
+
   const ip = req.headers.get("CF-Connecting-IP");
   const ua = req.headers.get("User-Agent");
 

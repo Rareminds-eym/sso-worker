@@ -6,7 +6,8 @@ import { setAuthCookies } from "../lib/cookies";
 import { validateEmail, validatePassword, validateRedirectUrl, resolveAppUrl } from "../lib/validate";
 import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
-import { sendEmail, verificationEmail } from "../lib/email";
+import { sendVerificationEmail } from "../lib/email";
+import { endpointRateLimit } from "../lib/rate-limit";
 import { SESSION_TTL_MS } from "../lib/constants";
 
 /**
@@ -48,8 +49,12 @@ export async function signupMember(
   if (redirectErr) return redirectErr;
 
   const email = body.email.toLowerCase().trim();
-  const ip = req.headers.get("CF-Connecting-IP");
+  const ip = req.headers.get("CF-Connecting-IP") ?? "unknown";
   const ua = req.headers.get("User-Agent");
+
+  const rateLimited = await endpointRateLimit(env, `signup:ip:${ip}`, 5, 60);
+  if (rateLimited) return rateLimited;
+
   const database = db(env);
 
   // ─── Idempotency Check: Allow re-signup for unverified users ───
@@ -153,9 +158,9 @@ export async function signupMember(
       });
       const appUrl = resolveAppUrl(body.redirect_url, env);
       const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
-      const { subject, html, text } = verificationEmail(verifyUrl);
-      // Fire-and-forget — don't await, don't block the response
-      ctx.waitUntil(sendEmail(env, { to: email, subject, html, text }));
+      
+      // Send beautiful verification email via SkillPassport
+      ctx.waitUntil(sendVerificationEmail(env, email, verifyUrl));
     } catch (emailErr) {
       // Email failure is non-critical — user is created, session is valid
       emailSent = false;
@@ -187,11 +192,25 @@ export async function signupMember(
     return response;
   } catch (err) {
     // ─── Rollback: delete the user if session/JWT creation failed ──
-    console.error("[SSO] Signup post-creation failed, rolling back user:", err);
+    console.error(
+      JSON.stringify({
+        msg: "[SSO] Signup post-creation failed, rolling back",
+        user_id: result.user_id,
+        org_id: result.org_id,
+        error: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
+      }),
+    );
     try {
       await database.query(`users?id=eq.${result.user_id}`, { method: "DELETE" });
     } catch (rollbackErr) {
-      console.error("[SSO] Rollback failed:", rollbackErr);
+      console.error(
+        JSON.stringify({
+          msg: "[SSO] Rollback failed — orphan records may exist",
+          user_id: result.user_id,
+          org_id: result.org_id,
+          error: rollbackErr instanceof Error ? { message: rollbackErr.message, stack: rollbackErr.stack } : String(rollbackErr),
+        }),
+      );
     }
     return error("Signup failed. Please try again.", 500);
   }

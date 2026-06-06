@@ -6,7 +6,8 @@ import { setAuthCookies } from "../lib/cookies";
 import { validateEmail, validatePassword, validateRedirectUrl, resolveAppUrl } from "../lib/validate";
 import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
-import { sendEmail, verificationEmail } from "../lib/email";
+import { sendVerificationEmail } from "../lib/email";
+import { endpointRateLimit } from "../lib/rate-limit";
 import { SESSION_TTL_MS } from "../lib/constants";
 
 /**
@@ -47,8 +48,12 @@ export async function signup(
   if (redirectErr) return redirectErr;
 
   const email = body.email.toLowerCase().trim();
-  const ip = req.headers.get("CF-Connecting-IP");
+  const ip = req.headers.get("CF-Connecting-IP") ?? "unknown";
   const ua = req.headers.get("User-Agent");
+
+  const rateLimited = await endpointRateLimit(env, `signup:ip:${ip}`, 5, 60);
+  if (rateLimited) return rateLimited;
+
   const database = db(env);
 
   // ─── Idempotency Check: Allow re-signup for unverified users ───
@@ -146,8 +151,7 @@ export async function signup(
       });
       const appUrl = resolveAppUrl(body.redirect_url, env);
       const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
-      const { subject, html, text } = verificationEmail(verifyUrl);
-      ctx.waitUntil(sendEmail(env, { to: email, subject, html, text }));
+      ctx.waitUntil(sendVerificationEmail(env, email, verifyUrl));
     } catch (emailErr) {
       emailSent = false;
       console.error("[SSO] Verification email setup failed:", emailErr);
@@ -177,11 +181,27 @@ export async function signup(
     return response;
   } catch (err) {
     // ─── Rollback: delete user (cascades to membership, org if created_by) ──
-    console.error("[SSO] Signup post-creation failed, rolling back:", err);
+    console.error(
+      JSON.stringify({
+        msg: "[SSO] Signup post-creation failed, rolling back",
+        user_id: result.user_id,
+        org_id: result.org_id,
+        slug: result.slug,
+        error: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
+      }),
+    );
     try {
       await database.query(`users?id=eq.${result.user_id}`, { method: "DELETE" });
     } catch (rollbackErr) {
-      console.error("[SSO] Rollback failed:", rollbackErr);
+      console.error(
+        JSON.stringify({
+          msg: "[SSO] Rollback failed — orphan records may exist",
+          user_id: result.user_id,
+          org_id: result.org_id,
+          slug: result.slug,
+          error: rollbackErr instanceof Error ? { message: rollbackErr.message, stack: rollbackErr.stack } : String(rollbackErr),
+        }),
+      );
     }
     return error("Signup failed. Please try again.", 500);
   }
