@@ -101,6 +101,7 @@ const routes: Record<string, Record<string, RouteConfig>> = {
     "/api/transactions/user": { handler: getUserTransactions, serviceAuth: true },
     "/api/addon-catalog/:featureKey": { handler: getAddonByFeatureKey },
     "/api/bundles": { handler: listBundles },
+>>>>>>>>> Temporary merge branch 2
   },
 };
 
