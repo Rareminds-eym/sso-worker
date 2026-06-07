@@ -35,8 +35,8 @@ export async function signup(
     return error("Invalid JSON body");
   }
 
-  if (!body.email || !body.password || !body.org_name) {
-    return error("email, password, and org_name are required");
+  if (!body.email || !body.password || !body.org_name || !body.role) {
+    return error("email, password, org_name, and role are required");
   }
 
   const emailErr = validateEmail(body.email);
@@ -98,6 +98,7 @@ export async function signup(
         p_password_hash: password_hash,
         p_org_name: body.org_name,
         p_org_slug: slug,
+        p_role: body.role,
       },
     );
   } catch (err: any) {
@@ -185,7 +186,7 @@ export async function signup(
     publishSyncEvent(env.SYNC_QUEUE, ctx, 'membership.created', {
       user_id: result.user_id,
       organization_id: result.org_id,
-      roles: ['owner'],
+      roles: claims?.roles ?? [],
       status: 'active',
     });
 
