@@ -1,37 +1,39 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import type { Env, RouteConfig, AccessTokenPayload, Session, JwtClaims } from "./types";
-import { signup } from "./routes/signup";
-import { signupMember } from "./routes/signup-member";
-import { login } from "./routes/login";
-import { refresh } from "./routes/refresh";
-import { logout } from "./routes/logout";
-import { me } from "./routes/me";
-import { switchOrg } from "./routes/switch-org";
-import { createInvite, acceptInvite } from "./routes/invite";
-import { listOrgs } from "./routes/orgs";
-import { jwks } from "./routes/jwks";
-import { requestVerification, verifyEmail } from "./routes/verify-email";
-import { forgotPassword, resetPassword } from "./routes/password-reset";
-import { cancelInvite, resendInvite } from "./routes/invite-manage";
-import { oauthRedirect, oauthCallback } from "./routes/oauth";
-import { changePassword, adminResetPassword } from "./routes/change-password";
-import { deleteAccount } from "./routes/delete-account";
+import { audit } from "./lib/audit";
+import { authenticate } from "./lib/auth";
+import { SESSION_TTL_MS } from "./lib/constants";
+import { addMonths, parseDurationMonths } from "./lib/date";
+import { db } from "./lib/db";
+import { generateRefreshToken, hashToken } from "./lib/hash";
+import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "./lib/jwt";
+import { error, json } from "./lib/response";
 import {
-  listPlans, getPlanByCode,
-  processWebhookEvent,
-} from "./routes/subscriptions";
-import {
-  listAddonCatalog, getAddonByFeatureKey,
+  getAddonByFeatureKey,
+  listAddonCatalog,
   listBundles,
 } from "./routes/addon-catalog";
-import { authenticate } from "./lib/auth";
-import { json, error } from "./lib/response";
-import { db } from "./lib/db";
-import { addMonths, parseDurationMonths } from "./lib/date";
-import { signAccessToken, verifyAccessToken, getPublicJWK, exportPemAsJwk } from "./lib/jwt";
-import { hashToken, generateRefreshToken } from "./lib/hash";
-import { audit } from "./lib/audit";
-import { SESSION_TTL_MS } from "./lib/constants";
+import { adminResetPassword, changePassword } from "./routes/change-password";
+import { deleteAccount } from "./routes/delete-account";
+import { acceptInvite, createInvite } from "./routes/invite";
+import { cancelInvite, resendInvite } from "./routes/invite-manage";
+import { jwks } from "./routes/jwks";
+import { login } from "./routes/login";
+import { logout } from "./routes/logout";
+import { me } from "./routes/me";
+import { oauthCallback, oauthRedirect } from "./routes/oauth";
+import { listOrgs } from "./routes/orgs";
+import { forgotPassword, resetPassword } from "./routes/password-reset";
+import { refresh } from "./routes/refresh";
+import { signup } from "./routes/signup";
+import { signupMember } from "./routes/signup-member";
+import {
+  getPlanByCode,
+  listPlans,
+  processWebhookEvent,
+} from "./routes/subscriptions";
+import { switchOrg } from "./routes/switch-org";
+import { requestVerification, verifyEmail } from "./routes/verify-email";
+import type { AccessTokenPayload, Env, JwtClaims, RouteConfig, Session } from "./types";
 
 /** Max request body size: 10 KB */
 const MAX_BODY_SIZE = 10_240;
@@ -39,38 +41,38 @@ const MAX_BODY_SIZE = 10_240;
 // ─── Public Route Table ───────────────────────────────────────
 const routes: Record<string, Record<string, RouteConfig>> = {
   POST: {
-    "/auth/signup":              { handler: signup },
-    "/auth/signup-member":       { handler: signupMember },
-    "/auth/login":               { handler: login },
-    "/auth/refresh":             { handler: refresh },
-    "/auth/logout":              { handler: logout },
-    "/auth/switch-org":          { handler: switchOrg,           auth: true },
-    "/auth/invite":              { handler: createInvite,        auth: true },
-    "/auth/invite/accept":       { handler: acceptInvite },
-    "/auth/invite/cancel":       { handler: cancelInvite,        auth: true },
-    "/auth/invite/resend":       { handler: resendInvite,        auth: true },
+    "/auth/signup": { handler: signup },
+    "/auth/signup-member": { handler: signupMember },
+    "/auth/login": { handler: login },
+    "/auth/refresh": { handler: refresh },
+    "/auth/logout": { handler: logout },
+    "/auth/switch-org": { handler: switchOrg, auth: true },
+    "/auth/invite": { handler: createInvite, auth: true },
+    "/auth/invite/accept": { handler: acceptInvite },
+    "/auth/invite/cancel": { handler: cancelInvite, auth: true },
+    "/auth/invite/resend": { handler: resendInvite, auth: true },
     "/auth/request-verification": { handler: requestVerification, auth: true },
-    "/auth/verify-email":        { handler: verifyEmail },
-    "/auth/forgot-password":     { handler: forgotPassword },
-    "/auth/reset-password":      { handler: resetPassword },
-    "/auth/change-password":     { handler: changePassword,      auth: true },
+    "/auth/verify-email": { handler: verifyEmail },
+    "/auth/forgot-password": { handler: forgotPassword },
+    "/auth/reset-password": { handler: resetPassword },
+    "/auth/change-password": { handler: changePassword, auth: true },
     "/auth/admin-reset-password": { handler: adminResetPassword, auth: true },
-    "/auth/delete-account":      { handler: deleteAccount,       auth: true },
-    "/api/events/webhook":       { handler: processWebhookEvent },
+    "/auth/delete-account": { handler: deleteAccount, auth: true },
+    "/api/events/webhook": { handler: processWebhookEvent },
   },
   GET: {
-    "/auth/me":               { handler: me, auth: true },
-    "/auth/orgs":             { handler: listOrgs, auth: true },
-    "/auth/oauth/google":     { handler: oauthRedirect },
-    "/auth/oauth/github":     { handler: oauthRedirect },
+    "/auth/me": { handler: me, auth: true },
+    "/auth/orgs": { handler: listOrgs, auth: true },
+    "/auth/oauth/google": { handler: oauthRedirect },
+    "/auth/oauth/github": { handler: oauthRedirect },
     "/auth/oauth/google/callback": { handler: oauthCallback },
     "/auth/oauth/github/callback": { handler: oauthCallback },
     "/.well-known/jwks.json": { handler: (_req, env) => jwks(env) },
-    "/health":                { handler: () => Promise.resolve(json({ status: "ok" })) },
-    "/api/plans":             { handler: listPlans },
-    "/api/addon-catalog":     { handler: listAddonCatalog },
+    "/health": { handler: () => Promise.resolve(json({ status: "ok" })) },
+    "/api/plans": { handler: listPlans },
+    "/api/addon-catalog": { handler: listAddonCatalog },
     "/api/addon-catalog/:featureKey": { handler: getAddonByFeatureKey },
-    "/api/bundles":           { handler: listBundles },
+    "/api/bundles": { handler: listBundles },
   },
 };
 
@@ -556,6 +558,30 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
       "plans?is_active=eq.true&order=display_order.asc",
     );
     return { plans: (plans || []) as Record<string, unknown>[] };
+  }
+
+  /**
+   * List the canonical authorization roles (single source of truth).
+   *
+   * Mirrors {@link syncPlans}: read-only pull of `public.roles` used by the
+   * skillpassport app DB to keep its read-only `roles` shadow in sync
+   * (`functions/lib/sync-shadow.ts` → `syncRolesShadow`). Called by the
+   * skillpassport scheduled reconcile and on-demand cache-miss refresh.
+   *
+   * The shadow is NOT an authorization source — Cloudflare Functions enforce
+   * authz from the verified JWT; this list only mirrors role metadata for the
+   * app-side type generator (task 18) and reference data (task 17).
+   *
+   * @returns `{ roles }` — each role's `id`, `name`, and `description`.
+   */
+  async listRoles(): Promise<{
+    roles: { id: string; name: string; description: string | null }[];
+  }> {
+    const database = db(this.env);
+    const roles = await database.query<{ id: string; name: string; description: string | null }>(
+      "roles?select=id,name,description&order=name.asc",
+    );
+    return { roles: (roles || []) as { id: string; name: string; description: string | null }[] };
   }
 
   async syncReconcile(userIds: string[]): Promise<{ subscriptions: Record<string, unknown>[] }> {
