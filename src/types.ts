@@ -1,3 +1,5 @@
+import type { SyncEvent } from './lib/sync-queue';
+
 // ─── Environment ───────────────────────────────────────────────
 export interface Env {
   SUPABASE_URL: string;
@@ -20,7 +22,9 @@ export interface Env {
   /** Service binding to SkillPassport platform for email templates (optional). */
   SKILLPASSPORT_SERVICE?: Fetcher;
 
-  
+  /** Queue for pushing auth DB sync events to SkillPassport. */
+  SYNC_QUEUE: Queue<SyncEvent>;
+
   /** Comma-separated allowlist of base URLs for email links, e.g. "https://skillpassport.rareminds.in,https://courses.rareminds.in". */
   ALLOWED_APP_URLS: string;
 }

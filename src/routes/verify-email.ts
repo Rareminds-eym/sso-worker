@@ -6,6 +6,7 @@ import { audit } from "../lib/audit";
 import { sendVerificationEmail } from "../lib/email";
 import { validateRedirectUrl, resolveAppUrl } from "../lib/validate";
 import { checkEmailThrottle } from "../lib/email-throttle";
+import { publishSyncEvent } from "../lib/sync-queue";
 
 /**
  * POST /auth/request-verification — sends a verification email.
@@ -110,6 +111,10 @@ export async function verifyEmail(
     { id: `eq.${record.user_id}` },
     { is_email_verified: true },
   );
+
+  publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.email_verified', {
+    user_id: record.user_id,
+  });
 
   audit(ctx, env, "email_verified", {
     user_id: record.user_id,

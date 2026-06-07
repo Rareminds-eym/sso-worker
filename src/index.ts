@@ -386,6 +386,27 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
     // in immediately without an email-verification step.
     await database.update("users", { id: `eq.${result.user_id}` }, { is_email_verified: true });
 
+    // Emit sync events — await directly (RPC method, no ctx.waitUntil)
+    try {
+      await this.env.SYNC_QUEUE.send({
+        type: 'user.created',
+        payload: { id: result.user_id, email },
+        timestamp: new Date().toISOString(),
+      });
+      await this.env.SYNC_QUEUE.send({
+        type: 'membership.created',
+        payload: {
+          user_id: result.user_id,
+          organization_id: data.org_id,
+          roles: [data.role],
+          status: 'active',
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.error('[SSO] Failed to emit sync events:', e);
+    }
+
     return result;
   }
 
@@ -744,6 +765,33 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
     });
 
     return purchase as Record<string, unknown>;
+  }
+
+  // ── Membership Sync ─────────────────────────────────────────
+
+  async getUserMemberships(userId: string): Promise<{
+    memberships: { org_id: string; role: string; status: string }[];
+  }> {
+    if (!userId) throw new Error("userId is required");
+    const database = db(this.env);
+
+    const rows = await database.query<{
+      id: string;
+      org_id: string;
+      status: string;
+      membership_roles?: { roles?: { name: string } }[];
+    }>(`memberships?user_id=eq.${encodeURIComponent(userId)}&select=id,org_id,status,membership_roles(roles(name))`);
+
+    return {
+      memberships: (rows || []).map((r) => {
+        const mrole = r.membership_roles?.[0]?.roles;
+        return {
+          org_id: r.org_id,
+          status: r.status,
+          role: mrole?.name || "member",
+        };
+      }),
+    };
   }
 
   // ── Auth RPC Methods ──────────────────────────────────────────

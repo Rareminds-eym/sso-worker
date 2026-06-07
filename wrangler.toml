@@ -46,6 +46,10 @@ service = "shared-email-api"
 binding = "SKILLPASSPORT_SERVICE"
 service = "skill-passport-portal"
 
+# Queue for pushing auth DB sync events to SkillPassport
+[[queues.producers]]
+binding = "SYNC_QUEUE"
+queue = "auth-db-sync-queue"
 
 [triggers]
 crons = ["0 3 * * *"]

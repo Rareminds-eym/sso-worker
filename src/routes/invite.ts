@@ -10,6 +10,7 @@ import { sendEmail, inviteEmail } from "../lib/email";
 import { checkEmailThrottle } from "../lib/email-throttle";
 import { endpointRateLimit } from "../lib/rate-limit";
 import { SESSION_TTL_MS, INVITE_TTL_MS } from "../lib/constants";
+import { publishSyncEvent } from "../lib/sync-queue";
 
 const ALLOWED_INVITE_ROLES = ["admin", "member"] as const;
 
@@ -169,7 +170,9 @@ export async function acceptInvite(
     `users?email=eq.${encodeURIComponent(invite.email)}&select=*`,
   );
 
+  let isNewUser = false;
   if (!user) {
+    isNewUser = true;
     const passErr = validatePassword(body.password);
     if (passErr) return passErr;
 
@@ -272,6 +275,29 @@ export async function acceptInvite(
   });
 
   setAuthCookies(response, accessToken, refreshToken);
+
+  // Emit sync events (non-blocking, post-response)
+  if (isNewUser) {
+    publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.created', {
+      id: user.id,
+      email: user.email,
+    });
+  }
+  if (existingMembership && existingMembership.status !== 'active') {
+    publishSyncEvent(env.SYNC_QUEUE, ctx, 'membership.role_changed', {
+      user_id: user.id,
+      organization_id: invite.org_id,
+      roles: inviteRoles,
+      status: 'active',
+    });
+  } else if (!existingMembership) {
+    publishSyncEvent(env.SYNC_QUEUE, ctx, 'membership.created', {
+      user_id: user.id,
+      organization_id: invite.org_id,
+      roles: inviteRoles,
+      status: 'active',
+    });
+  }
 
   audit(ctx, env, "invite_accepted", {
     user_id: user.id,

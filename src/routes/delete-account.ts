@@ -3,6 +3,7 @@ import { clearCookies } from "../lib/cookies";
 import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
 import { endpointRateLimit } from "../lib/rate-limit";
+import { publishSyncEvent } from "../lib/sync-queue";
 
 /**
  * POST /auth/delete-account
@@ -48,6 +49,11 @@ export async function deleteAccount(
 
     const response = json({ deleted: true });
     clearCookies(response);
+
+    // Response fully built — emit sync events
+    publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.deleted', {
+      user_id: payload.sub,
+    });
 
     audit(ctx, env, "account_deleted", {
       user_id: payload.sub,

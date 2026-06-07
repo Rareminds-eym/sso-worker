@@ -32,6 +32,7 @@ const mockEnv: Env = {
   EMAIL_SERVICE: {} as Fetcher,
   EMAIL_API_KEY: 'test-email-api-key',
   ALLOWED_APP_URLS: 'http://localhost:3000',
+  SYNC_QUEUE: { send: () => Promise.resolve() } as unknown as Queue<any>,
 };
 
 async function createWorker() {

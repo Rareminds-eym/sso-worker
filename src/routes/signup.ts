@@ -9,6 +9,7 @@ import { audit } from "../lib/audit";
 import { sendVerificationEmail } from "../lib/email";
 import { endpointRateLimit } from "../lib/rate-limit";
 import { SESSION_TTL_MS } from "../lib/constants";
+import { publishSyncEvent } from "../lib/sync-queue";
 
 /**
  * POST /auth/signup
@@ -169,6 +170,24 @@ export async function signup(
     );
 
     setAuthCookies(response, accessToken, refreshToken);
+
+    // Response fully built — emit sync events (safe, no rollback after this point)
+    publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.created', {
+      id: result.user_id,
+      email,
+    });
+    publishSyncEvent(env.SYNC_QUEUE, ctx, 'organization.created', {
+      id: result.org_id,
+      name: body.org_name,
+      slug: result.slug,
+      created_by: result.user_id,
+    });
+    publishSyncEvent(env.SYNC_QUEUE, ctx, 'membership.created', {
+      user_id: result.user_id,
+      organization_id: result.org_id,
+      roles: ['owner'],
+      status: 'active',
+    });
 
     audit(ctx, env, "signup", {
       user_id: result.user_id,

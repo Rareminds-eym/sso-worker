@@ -9,6 +9,7 @@ import { audit } from "../lib/audit";
 import { sendVerificationEmail } from "../lib/email";
 import { endpointRateLimit } from "../lib/rate-limit";
 import { SESSION_TTL_MS } from "../lib/constants";
+import { publishSyncEvent } from "../lib/sync-queue";
 
 /**
  * POST /auth/signup-member
@@ -180,6 +181,20 @@ export async function signupMember(
 
     const response = json(responseBody, 201);
     setAuthCookies(response, accessToken, refreshToken);
+
+    // Response fully built — emit sync events
+    publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.created', {
+      id: result.user_id,
+      email,
+    });
+    if (result.org_id) {
+      publishSyncEvent(env.SYNC_QUEUE, ctx, 'membership.created', {
+        user_id: result.user_id,
+        organization_id: result.org_id,
+        roles: [body.role],
+        status: 'active',
+      });
+    }
 
     audit(ctx, env, "signup_member", {
       user_id: result.user_id,
