@@ -4,7 +4,7 @@ import { authenticate } from "./lib/auth";
 import { SESSION_TTL_MS } from "./lib/constants";
 import { addMonths, parseDurationMonths } from "./lib/date";
 import { db } from "./lib/db";
-import { generateRefreshToken, hashToken } from "./lib/hash";
+import { generateRefreshToken, hashPassword, hashToken } from "./lib/hash";
 import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "./lib/jwt";
 import { error, json } from "./lib/response";
 import {
@@ -335,6 +335,58 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
     });
 
     return subscription as Record<string, unknown>;
+  }
+
+  /**
+   * Admin-create a member user (e.g. a school admin adding a teacher).
+   *
+   * Creates an SSO user with a temporary password, joins them to the given org
+   * with an ACTIVE membership, and assigns the supplied role. No subscription is
+   * created — members get access through their organization's subscription/seats.
+   *
+   * Callable only via the SSO_SERVICE binding (the binding is the trust boundary).
+   *
+   * @returns { user_id, org_id, membership_id } from the signup_member RPC.
+   * @throws if email/password/role/org_id are missing, the role is invalid, or
+   *   the email already exists (duplicate).
+   */
+  async createMember(data: {
+    email: string;
+    password: string;
+    role: string;
+    org_id: string;
+  }): Promise<{ user_id: string; org_id: string; membership_id: string }> {
+    if (!data.email || !data.password || !data.role || !data.org_id) {
+      throw new Error("email, password, role, and org_id are required");
+    }
+
+    const email = data.email.toLowerCase().trim();
+    const password_hash = await hashPassword(data.password);
+    const database = db(this.env);
+
+    let result: { user_id: string; org_id: string; membership_id: string };
+    try {
+      result = await database.rpc<{ user_id: string; org_id: string; membership_id: string }>(
+        "signup_member",
+        {
+          p_email: email,
+          p_password_hash: password_hash,
+          p_role: data.role,
+          p_org_id: data.org_id,
+        },
+      );
+    } catch (err: any) {
+      if (err?.message?.includes("duplicate") || err?.message?.includes("23505")) {
+        throw new Error(`A user with email ${email} already exists`);
+      }
+      throw err;
+    }
+
+    // Admin-created members are trusted — auto-verify their email so they can log
+    // in immediately without an email-verification step.
+    await database.update("users", { id: `eq.${result.user_id}` }, { is_email_verified: true });
+
+    return result;
   }
 
   async getUserSubscription(userId: string): Promise<{
