@@ -18,9 +18,8 @@ export interface Env {
   /** API key for authenticating with the email-worker. */
   EMAIL_API_KEY: string;
   
-  // Platform-specific service bindings for email templates
-  /** Service binding to SkillPassport platform for email templates (optional). */
-  SKILLPASSPORT_SERVICE?: Fetcher;
+  /** Base URL for the SkillPassport Pages app (e.g. https://skillpassport.rareminds.in) */
+  SKILLPASSPORT_URL: string;
 
   /** Queue for pushing auth DB sync events to SkillPassport. */
   SYNC_QUEUE: Queue<SyncEvent>;

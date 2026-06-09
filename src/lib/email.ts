@@ -79,12 +79,8 @@ export async function sendVerificationEmail(
   verifyUrl: string,
 ): Promise<void> {
   try {
-    if (!env.SKILLPASSPORT_SERVICE) {
-      throw new Error('SKILLPASSPORT_SERVICE binding is not configured');
-    }
-
-    const templateResponse = await env.SKILLPASSPORT_SERVICE.fetch(
-      new Request('https://internal/api/email/verification', {
+    const templateResponse = await fetch(
+      new Request(`${env.SKILLPASSPORT_URL}/api/email/verification`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -131,12 +127,8 @@ export async function sendPasswordResetEmail(
   resetUrl: string,
 ): Promise<void> {
   try {
-    if (!env.SKILLPASSPORT_SERVICE) {
-      throw new Error('SKILLPASSPORT_SERVICE binding is not configured');
-    }
-
-    const templateResponse = await env.SKILLPASSPORT_SERVICE.fetch(
-      new Request('https://internal/api/email/password-reset', {
+    const templateResponse = await fetch(
+      new Request(`${env.SKILLPASSPORT_URL}/api/email/password-reset`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
