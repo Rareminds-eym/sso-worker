@@ -1,12 +1,12 @@
-import type { Env, SwitchOrgBody, Membership, AccessTokenPayload, JwtClaims } from "../types";
-import { db } from "../lib/db";
-import { signAccessToken } from "../lib/jwt";
-import { hashToken, generateRefreshToken } from "../lib/hash";
-import { getCookie, setAuthCookies } from "../lib/cookies";
-import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
-import { endpointRateLimit } from "../lib/rate-limit";
 import { SESSION_TTL_MS } from "../lib/constants";
+import { getCookie, setAuthCookies } from "../lib/cookies";
+import { db } from "../lib/db";
+import { generateRefreshToken, hashToken } from "../lib/hash";
+import { signAccessToken } from "../lib/jwt";
+import { endpointRateLimit } from "../lib/rate-limit";
+import { error, json } from "../lib/response";
+import type { AccessTokenPayload, Env, JwtClaims, Membership, SwitchOrgBody } from "../types";
 
 export async function switchOrg(
   req: Request,
@@ -96,7 +96,7 @@ export async function switchOrg(
     org_id: body.org_id,
     roles: claims.roles,
   });
-  setAuthCookies(response, accessToken, refreshToken);
+  setAuthCookies(response, accessToken, refreshToken, env);
 
   audit(ctx, env, "switch_org", {
     user_id: currentPayload.sub,

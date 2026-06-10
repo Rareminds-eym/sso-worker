@@ -1,13 +1,13 @@
-import type { Env, LoginBody, User, Membership, JwtClaims } from "../types";
-import { db } from "../lib/db";
-import { verifyPassword, hashToken, generateRefreshToken } from "../lib/hash";
-import { signAccessToken } from "../lib/jwt";
-import { setAuthCookies } from "../lib/cookies";
-import { validateEmail } from "../lib/validate";
-import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
-import { checkAccountLockout, recordFailedLogin, clearFailedLogins, endpointRateLimit } from "../lib/rate-limit";
 import { SESSION_TTL_MS } from "../lib/constants";
+import { setAuthCookies } from "../lib/cookies";
+import { db } from "../lib/db";
+import { generateRefreshToken, hashToken, verifyPassword } from "../lib/hash";
+import { signAccessToken } from "../lib/jwt";
+import { checkAccountLockout, clearFailedLogins, endpointRateLimit, recordFailedLogin } from "../lib/rate-limit";
+import { error, json } from "../lib/response";
+import { validateEmail } from "../lib/validate";
+import type { Env, JwtClaims, LoginBody, Membership, User } from "../types";
 
 // Pre-computed bcrypt hash (cost 12) for constant-time comparison
 // when user doesn't exist. MUST match SALT_ROUNDS in hash.ts.
@@ -131,7 +131,7 @@ export async function login(
     organizations: memberships.map((m) => ({ org_id: m.org_id })),
   });
 
-  setAuthCookies(response, accessToken, refreshToken);
+  setAuthCookies(response, accessToken, refreshToken, env);
 
   audit(ctx, env, "login", {
     user_id: user.id,

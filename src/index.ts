@@ -1,12 +1,12 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { audit } from "./lib/audit";
 import { authenticate } from "./lib/auth";
-import { SESSION_TTL_MS } from "./lib/constants";
 import { addMonths, parseDurationMonths } from "./lib/date";
 import { db } from "./lib/db";
-import { generateRefreshToken, hashPassword, hashToken } from "./lib/hash";
-import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "./lib/jwt";
+import { hashPassword, hashToken } from "./lib/hash";
+import { exportPemAsJwk, getPublicJWK, verifyAccessToken } from "./lib/jwt";
 import { error, json } from "./lib/response";
+import { rotateRefreshToken } from "./lib/session-rotation";
 import {
   getAddonByFeatureKey,
   listAddonCatalog,
@@ -33,7 +33,7 @@ import {
 } from "./routes/subscriptions";
 import { switchOrg } from "./routes/switch-org";
 import { requestVerification, verifyEmail } from "./routes/verify-email";
-import type { AccessTokenPayload, Env, JwtClaims, RouteConfig, Session } from "./types";
+import type { AccessTokenPayload, Env, RouteConfig, Session } from "./types";
 
 /** Max request body size: 10 KB */
 const MAX_BODY_SIZE = 10_240;
@@ -120,11 +120,14 @@ function withCors(response: Response, cors: Record<string, string>): Response {
 }
 
 function validateOrigin(req: Request, env: Env): boolean {
+  // For read-only methods (GET, OPTIONS), allow missing Origin (simple CORS requests)
   if (req.method === "GET" || req.method === "OPTIONS") return true;
 
+  // For state-changing methods (POST, PUT, DELETE, PATCH), require Origin header
   const origin = req.headers.get("Origin");
-  if (!origin) return true;
+  if (!origin) return false; // Missing Origin on state-changing request → reject
 
+  // Origin present: validate against allowlist
   const allowed = env.ALLOWED_ORIGINS.split(",").map((o) => o.trim());
   return allowed.some((pattern) => originMatchesPattern(origin, pattern));
 }
@@ -809,81 +812,67 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
     return { keys };
   }
 
+  /**
+   * RPC entry point for refresh-token rotation, callable via service binding.
+   *
+   * Thin adapter over the shared rotation module
+   * (`lib/session-rotation.ts::rotateRefreshToken`). Accepts the presented
+   * refresh token plus optional IP/UA context, delegates rotation logic to the
+   * shared module, then translates the `RotationOutcome` into the RPC return
+   * shape `{ access_token, refresh_token }` or throws errors.
+   *
+   * The behavioral contract (what succeeds, what fails) is now identical to the
+   * `POST /auth/refresh` HTTP route because both call the same shared module
+   * (Requirement 4.2, Property 7).
+   *
+   * @param refreshToken The opaque refresh token presented by the caller.
+   * @param ip Optional client IP address forwarded from auth-core.
+   * @param ua Optional User-Agent forwarded from auth-core.
+   * @returns `{ access_token, refresh_token }` on successful rotation or
+   *   benign overlap.
+   * @throws Error on invalid, revoked (theft), lifetime-exceeded, or
+   *   session-expired outcomes, preserving the existing failure contract so
+   *   auth-core's consumers continue to work.
+   */
   async refreshSession(refreshToken: string, ip?: string, ua?: string): Promise<{ access_token: string, refresh_token: string }> {
     if (!refreshToken) throw new Error("No refresh token provided");
 
-    const database = db(this.env);
-    const tokenHash = await hashToken(refreshToken);
+    // Build rotation context from ip/ua arguments (Requirement 4.3, task 4.3).
+    const rotationCtx = { ip: ip ?? null, ua: ua ?? null };
 
-    const session = await database.queryOne<Session>(
-      `sessions?refresh_token_hash=eq.${tokenHash}&select=*`,
-    );
+    // Delegate to the shared rotation module (Requirement 4.1).
+    const outcome = await rotateRefreshToken(this.env, this.ctx, refreshToken, rotationCtx);
 
-    if (!session) throw new Error("Invalid refresh token");
+    // Translate RotationOutcome into RPC return shape or throw (Requirement 4.3).
+    switch (outcome.kind) {
+      case "rotated":
+      case "overlap":
+        // Success outcomes: return the pair. Both "rotated" and "overlap" produce
+        // a valid access+refresh token pair; the RPC caller does not distinguish.
+        return {
+          access_token: outcome.accessToken,
+          refresh_token: outcome.refreshToken,
+        };
 
-    if (session.revoked) {
-      await database.update("sessions", { user_id: `eq.${session.user_id}` }, { revoked: true });
-      audit(this.ctx, this.env, "refresh_theft_detected", {
-        user_id: session.user_id,
-        ip_address: ip || null,
-        user_agent: ua || null,
-      });
-      throw new Error("Refresh token reuse detected. All sessions revoked.");
+      case "theft":
+        // Family-scoped revocation already performed by rotateRefreshToken.
+        // Throw the same error message as the old inline logic so auth-core
+        // consumers see consistent behavior.
+        throw new Error("Refresh token reuse detected. All sessions revoked.");
+
+      case "expired_lifetime":
+        // Absolute session lifetime exceeded (Requirement 5.2).
+        throw new Error("Session expired");
+
+      case "session_expired":
+        // Per-token TTL expiry.
+        throw new Error("Session expired");
+
+      case "invalid":
+      default:
+        // Unknown or missing refresh token.
+        throw new Error("Invalid refresh token");
     }
-
-    if (new Date(session.expires_at) < new Date()) {
-      await database.update("sessions", { id: `eq.${session.id}` }, { revoked: true });
-      throw new Error("Session expired");
-    }
-
-    await database.update("sessions", { id: `eq.${session.id}` }, { revoked: true });
-
-    const newRefreshToken = generateRefreshToken();
-    const newRefreshHash = await hashToken(newRefreshToken);
-
-    await database.mutate("sessions", {
-      user_id: session.user_id,
-      org_id: session.org_id,
-      refresh_token_hash: newRefreshHash,
-      user_agent: ua || null,
-      ip_address: ip || null,
-      revoked: false,
-      expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
-      rotated_from: session.id,
-      last_used_at: new Date().toISOString(),
-    });
-
-    const [user, claims] = await Promise.all([
-      database.queryOne<{ id: string; email: string; is_email_verified: boolean }>(
-        `users?id=eq.${session.user_id}&select=id,email,is_email_verified`,
-      ),
-      database.rpc<JwtClaims>("get_jwt_claims", {
-        p_user_id: session.user_id,
-        p_org_id: session.org_id,
-      }),
-    ]);
-
-    const accessToken = await signAccessToken(
-      {
-        sub: session.user_id,
-        email: user?.email ?? "",
-        org_id: session.org_id ?? "",
-        roles: claims?.roles ?? [],
-        products: claims?.products ?? [],
-        membership_status: claims?.membership_status ?? "active",
-        is_email_verified: user?.is_email_verified ?? false,
-      },
-      this.env,
-    );
-
-    audit(this.ctx, this.env, "refresh", {
-      user_id: session.user_id,
-      org_id: session.org_id,
-      ip_address: ip || null,
-      user_agent: ua || null,
-    });
-
-    return { access_token: accessToken, refresh_token: newRefreshToken };
   }
 
   async getMe(accessToken: string): Promise<Record<string, unknown>> {

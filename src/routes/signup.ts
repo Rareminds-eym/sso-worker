@@ -1,15 +1,15 @@
-import type { Env, SignupBody, JwtClaims } from "../types";
-import { db } from "../lib/db";
-import { hashPassword, hashToken, generateRefreshToken } from "../lib/hash";
-import { signAccessToken } from "../lib/jwt";
-import { setAuthCookies } from "../lib/cookies";
-import { validateEmail, validatePassword, validateRedirectUrl, resolveAppUrl } from "../lib/validate";
-import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
-import { sendVerificationEmail } from "../lib/email";
-import { endpointRateLimit } from "../lib/rate-limit";
 import { SESSION_TTL_MS } from "../lib/constants";
+import { setAuthCookies } from "../lib/cookies";
+import { db } from "../lib/db";
+import { sendVerificationEmail } from "../lib/email";
+import { generateRefreshToken, hashPassword, hashToken } from "../lib/hash";
+import { signAccessToken } from "../lib/jwt";
+import { endpointRateLimit } from "../lib/rate-limit";
+import { error, json } from "../lib/response";
 import { publishSyncEvent } from "../lib/sync-queue";
+import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "../lib/validate";
+import type { Env, JwtClaims, SignupBody } from "../types";
 
 /**
  * POST /auth/signup
@@ -170,7 +170,7 @@ export async function signup(
       201,
     );
 
-    setAuthCookies(response, accessToken, refreshToken);
+    setAuthCookies(response, accessToken, refreshToken, env);
 
     // Response fully built — emit sync events (safe, no rollback after this point)
     publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.created', {

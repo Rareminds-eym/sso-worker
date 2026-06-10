@@ -1,9 +1,9 @@
-import type { Env, AccessTokenPayload } from "../types";
-import { clearCookies } from "../lib/cookies";
-import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
+import { clearCookies } from "../lib/cookies";
 import { endpointRateLimit } from "../lib/rate-limit";
+import { error, json } from "../lib/response";
 import { publishSyncEvent } from "../lib/sync-queue";
+import type { AccessTokenPayload, Env } from "../types";
 
 /**
  * POST /auth/delete-account
@@ -48,7 +48,7 @@ export async function deleteAccount(
     }
 
     const response = json({ deleted: true });
-    clearCookies(response);
+    clearCookies(response, env);
 
     // Response fully built — emit sync events
     publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.deleted', {

@@ -17,7 +17,7 @@ export interface Env {
   EMAIL_SERVICE: Fetcher;
   /** API key for authenticating with the email-worker. */
   EMAIL_API_KEY: string;
-  
+
   /** Base URL for the SkillPassport Pages app (e.g. https://skillpassport.rareminds.in) */
   SKILLPASSPORT_URL: string;
 
@@ -26,6 +26,9 @@ export interface Env {
 
   /** Comma-separated allowlist of base URLs for email links, e.g. "https://skillpassport.rareminds.in,https://courses.rareminds.in". */
   ALLOWED_APP_URLS: string;
+
+  /** Optional registrable parent domain for refresh_token cookie (e.g., ".rareminds.in"). When unset, cookie is host-only. */
+  REFRESH_COOKIE_DOMAIN?: string;
 }
 
 // ─── Route Configuration ───────────────────────────────────────

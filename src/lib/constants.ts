@@ -1,6 +1,21 @@
 /** Session / refresh token lifetime: 30 days in milliseconds */
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
+/**
+ * Reuse grace window (Decision A): how long after a refresh token is rotated
+ * the just-superseded token may still return its already-issued replacement
+ * instead of tripping theft detection. Stored as the TTL of the `grace:<hash>`
+ * KV entry. 30 seconds.
+ */
+export const REUSE_GRACE_INTERVAL_SEC = 30;
+
+/**
+ * Absolute session lifetime cap (Decision C): the maximum age, measured from
+ * the token family's initial-login timestamp, beyond which a refresh is refused
+ * regardless of activity. 30 days in milliseconds.
+ */
+export const ABSOLUTE_SESSION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
+
 /** Access token cookie Max-Age in seconds (15 min) */
 export const ACCESS_TOKEN_MAX_AGE = 900;
 
