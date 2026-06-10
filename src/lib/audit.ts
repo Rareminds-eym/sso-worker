@@ -18,6 +18,7 @@ export type AuditAction =
   | "invite_cancelled"
   | "invite_resent"
   | "verification_requested"
+  | "verification_resend"
   | "email_verified"
   | "password_reset_requested"
   | "password_reset_completed"

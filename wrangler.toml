@@ -1,4 +1,4 @@
-name = "sso-api-dev"
+name = "sso-api"
 main = "src/index.ts"
 compatibility_date = "2026-05-25"
 compatibility_flags = ["nodejs_compat"]
@@ -18,7 +18,7 @@ head_sampling_rate = 0.01
 
 # ============================================================================
 # DEV — wrangler deploy (default, no --env flag)
-# Deploys as: sso-api-dev
+# Deploys as: sso-api
 # ============================================================================
 
 [vars]
@@ -49,12 +49,12 @@ id = "a01a250ae61941a6adb3b4c702b6ea2f"
 
 [[services]]
 binding = "EMAIL_SERVICE"
-service = "shared-email-api-dev"
+service = "shared-email-api"
 
 # Queue for pushing auth DB sync events to SkillPassport
 [[queues.producers]]
 binding = "SYNC_QUEUE"
-queue = "auth-db-sync-queue-dev"
+queue = "auth-db-sync-queue"
 
 # ============================================================================
 # STAGING — wrangler deploy --env staging

@@ -3,7 +3,7 @@ import { db } from "../lib/db";
 import { hashToken } from "../lib/hash";
 import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
-import { sendEmail, retrySendEmail, verificationEmail } from "../lib/email";
+import { sendVerificationEmail } from "../lib/email";
 import { validateEmail, resolveAppUrl } from "../lib/validate";
 import { checkEmailThrottle } from "../lib/email-throttle";
 
@@ -74,13 +74,7 @@ export async function resendVerification(
 
   const appUrl = resolveAppUrl(undefined, env);
   const verifyUrl = `${appUrl}/verify-email?token=${token}`;
-  const { subject, html, text } = verificationEmail(verifyUrl);
-  ctx.waitUntil((async () => {
-    const delivered = await sendEmail(env, { to: user.email, subject, html, text });
-    if (!delivered) {
-      await retrySendEmail(env, { to: user.email, subject, html, text });
-    }
-  })());
+  ctx.waitUntil(sendVerificationEmail(env, user.email, verifyUrl));
 
   audit(ctx, env, "verification_resend", {
     user_id: user.id,

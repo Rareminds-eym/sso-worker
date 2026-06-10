@@ -100,8 +100,10 @@ export async function login(
 
   const refreshToken = generateRefreshToken();
   const refreshHash = await hashToken(refreshToken);
+  const sessionId = crypto.randomUUID();
 
   await database.mutate("sessions", {
+    id: sessionId,
     user_id: user.id,
     org_id: activeMembership?.org_id ?? null,
     refresh_token_hash: refreshHash,
@@ -109,6 +111,8 @@ export async function login(
     ip_address: ip,
     revoked: false,
     expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+    family_id: sessionId,
+    family_created_at: new Date().toISOString(),
   });
 
   const accessToken = await signAccessToken(

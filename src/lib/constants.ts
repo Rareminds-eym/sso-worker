@@ -5,9 +5,9 @@ export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
  * Reuse grace window (Decision A): how long after a refresh token is rotated
  * the just-superseded token may still return its already-issued replacement
  * instead of tripping theft detection. Stored as the TTL of the `grace:<hash>`
- * KV entry. 30 seconds.
+ * KV entry. 60 seconds (minimum required by Cloudflare KV).
  */
-export const REUSE_GRACE_INTERVAL_SEC = 30;
+export const REUSE_GRACE_INTERVAL_SEC = 60;
 
 /**
  * Absolute session lifetime cap (Decision C): the maximum age, measured from

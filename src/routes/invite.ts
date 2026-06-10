@@ -244,8 +244,10 @@ export async function acceptInvite(
 
   const refreshToken = generateRefreshToken();
   const refreshHash = await hashToken(refreshToken);
+  const sessionId = crypto.randomUUID();
 
   await database.mutate("sessions", {
+    id: sessionId,
     user_id: user.id,
     org_id: invite.org_id,
     refresh_token_hash: refreshHash,
@@ -253,6 +255,8 @@ export async function acceptInvite(
     ip_address: ip,
     revoked: false,
     expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+    family_id: sessionId,
+    family_created_at: new Date().toISOString(),
   });
 
   const accessToken = await signAccessToken(
