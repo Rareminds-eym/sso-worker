@@ -16,11 +16,18 @@ head_sampling_rate = 1
 enabled = true
 head_sampling_rate = 0.01
 
+# ============================================================================
+# DEV — wrangler deploy (default, no --env flag)
+# Deploys as: sso-api
+# ============================================================================
+
 [vars]
-# Production Supabase (remote) — used when deploying
-SUPABASE_URL = "https://quvdgaydpctuspzeqknc.supabase.co"
-ALLOWED_ORIGINS = "http://localhost:3000,http://localhost:5173,http://localhost:8788,https://*.rareminds.in,https://*.pages.dev,http://127.0.0.1:8788"
-ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:5173,http://localhost:8788,http://127.0.0.1:8788,https://skillpassport.rareminds.in,https://*.rareminds.in,https://*.pages.dev"
+ENVIRONMENT = "dev"
+# ⚠️ Replace with dev SSO-auth Supabase project URL
+SUPABASE_URL = "https://<DEV_SSO_SUPABASE_PROJECT>.supabase.co"
+ALLOWED_ORIGINS = "http://localhost:3000,http://localhost:5173,http://localhost:8788,https://*.rareminds.in,https://*.pages.dev,http://127.0.0.1:8788,https://dev.skillpassports.com"
+ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:5173,http://localhost:8788,http://127.0.0.1:8788,https://*.rareminds.in,https://*.pages.dev,https://dev.skillpassports.com"
+SKILLPASSPORT_URL = "https://dev.skillpassports.com"
 
 # Local development overrides — wrangler dev reads .dev.vars for secrets
 # and this section for vars. Override SUPABASE_URL for local dev by
@@ -38,21 +45,118 @@ ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:5173,http://localhost
 
 [[kv_namespaces]]
 binding = "RATE_LIMIT_KV"
-id = "6f54bab45fd840678dde620cd1518705"
+id = "a01a250ae61941a6adb3b4c702b6ea2f"
 
 [[services]]
 binding = "EMAIL_SERVICE"
 service = "shared-email-api"
 
-# Platform-specific service bindings for email templates
-# [[services]]
-# binding = "SKILLPASSPORT_SERVICE"
-# service = "skill-passport-portal"
 
 # Queue for pushing auth DB sync events to SkillPassport
 [[queues.producers]]
 binding = "SYNC_QUEUE"
 queue = "auth-db-sync-queue"
 
-[triggers]
-crons = ["0 3 * * *"]
+# ============================================================================
+# STAGING — wrangler deploy --env staging
+# Deploys as: sso-api-staging
+# ============================================================================
+
+[env.staging]
+name = "sso-api-staging"
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+# ⚠️ Replace with staging SSO-auth Supabase project URL
+SUPABASE_URL = "https://staging-sso-supabase.supabase.co"
+ALLOWED_ORIGINS = "http://localhost:3000,http://localhost:5173,http://localhost:8788,https://*.rareminds.in,https://*.pages.dev,https://staging.skillpassports.com"
+ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:5173,http://localhost:8788,https://*.rareminds.in,https://*.pages.dev,https://staging.skillpassports.com"
+SKILLPASSPORT_URL = "https://staging.skillpassports.com"
+
+[[env.staging.kv_namespaces]]
+binding = "RATE_LIMIT_KV"
+id = "bd5c0a1fa7554a91b6acbff1b345997e"
+
+[[env.staging.services]]
+binding = "EMAIL_SERVICE"
+service = "shared-email-api-staging"
+
+[[env.staging.queues.producers]]
+binding = "SYNC_QUEUE"
+queue = "auth-db-sync-queue-staging"
+
+# Secrets for staging (set via `wrangler secret put --env staging`):
+# SUPABASE_SERVICE_ROLE_KEY
+# JWT_PRIVATE_KEY
+# JWT_PUBLIC_KEY
+# JWT_KID
+# EMAIL_API_KEY
+
+# ============================================================================
+# DEMO — wrangler deploy --env demo
+# Deploys as: sso-api-demo
+# ============================================================================
+
+[env.demo]
+name = "sso-api-demo"
+
+[env.demo.vars]
+ENVIRONMENT = "demo"
+# ⚠️ Replace with demo SSO-auth Supabase project URL
+SUPABASE_URL = "https://demo-sso-supabase.supabase.co"
+ALLOWED_ORIGINS = "http://localhost:3000,http://localhost:5173,http://localhost:8788,https://*.rareminds.in,https://*.pages.dev,https://demo.skillpassports.com"
+ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:5173,http://localhost:8788,https://*.rareminds.in,https://*.pages.dev,https://demo.skillpassports.com"
+SKILLPASSPORT_URL = "https://demo.skillpassports.com"
+
+[[env.demo.kv_namespaces]]
+binding = "RATE_LIMIT_KV"
+id = "ea3223cc72424e06a73f5916b024f906"
+
+[[env.demo.services]]
+binding = "EMAIL_SERVICE"
+service = "shared-email-api-demo"
+
+[[env.demo.queues.producers]]
+binding = "SYNC_QUEUE"
+queue = "auth-db-sync-queue-demo"
+
+# Secrets for demo (set via `wrangler secret put --env demo`):
+# SUPABASE_SERVICE_ROLE_KEY
+# JWT_PRIVATE_KEY
+# JWT_PUBLIC_KEY
+# JWT_KID
+# EMAIL_API_KEY
+
+# ============================================================================
+# PRODUCTION — wrangler deploy --env production
+# Deploys as: sso-api-production
+# ============================================================================
+
+[env.production]
+name = "sso-api-production"
+
+[env.production.vars]
+ENVIRONMENT = "production"
+SUPABASE_URL = "https://quvdgaydpctuspzeqknc.supabase.co"
+ALLOWED_ORIGINS = "http://localhost:3000,http://localhost:5173,http://localhost:8788,https://*.rareminds.in,https://*.pages.dev,http://127.0.0.1:8788"
+ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:5173,http://localhost:8788,http://127.0.0.1:8788,https://skillpassport.rareminds.in,https://*.rareminds.in,https://*.pages.dev"
+SKILLPASSPORT_URL = "https://skillpassport.rareminds.in"
+
+[[env.production.kv_namespaces]]
+binding = "RATE_LIMIT_KV"
+id = "6f54bab45fd840678dde620cd1518705"
+
+[[env.production.services]]
+binding = "EMAIL_SERVICE"
+service = "shared-email-api-production"
+
+[[env.production.queues.producers]]
+binding = "SYNC_QUEUE"
+queue = "auth-db-sync-queue"
+
+# Secrets for production (set via `wrangler secret put`):
+# SUPABASE_SERVICE_ROLE_KEY
+# JWT_PRIVATE_KEY
+# JWT_PUBLIC_KEY
+# JWT_KID
+# EMAIL_API_KEY

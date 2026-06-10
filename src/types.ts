@@ -17,16 +17,18 @@ export interface Env {
   EMAIL_SERVICE: Fetcher;
   /** API key for authenticating with the email-worker. */
   EMAIL_API_KEY: string;
-  
-  // Platform-specific service bindings for email templates
-  /** Service binding to SkillPassport platform for email templates (optional). */
-  SKILLPASSPORT_SERVICE?: Fetcher;
+
+  /** Base URL for the SkillPassport Pages app (e.g. https://skillpassport.rareminds.in) */
+  SKILLPASSPORT_URL: string;
 
   /** Queue for pushing auth DB sync events to SkillPassport. */
   SYNC_QUEUE: Queue<SyncEvent>;
 
   /** Comma-separated allowlist of base URLs for email links, e.g. "https://skillpassport.rareminds.in,https://courses.rareminds.in". */
   ALLOWED_APP_URLS: string;
+
+  /** Optional registrable parent domain for refresh_token cookie (e.g., ".rareminds.in"). When unset, cookie is host-only. */
+  REFRESH_COOKIE_DOMAIN?: string;
 }
 
 // ─── Route Configuration ───────────────────────────────────────

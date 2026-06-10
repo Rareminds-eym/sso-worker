@@ -1,12 +1,12 @@
-import type { Env, SwitchOrgBody, Membership, AccessTokenPayload, JwtClaims } from "../types";
-import { db } from "../lib/db";
-import { signAccessToken } from "../lib/jwt";
-import { hashToken, generateRefreshToken } from "../lib/hash";
-import { getCookie, setAuthCookies } from "../lib/cookies";
-import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
-import { endpointRateLimit } from "../lib/rate-limit";
 import { SESSION_TTL_MS } from "../lib/constants";
+import { getCookie, setAuthCookies } from "../lib/cookies";
+import { db } from "../lib/db";
+import { generateRefreshToken, hashToken } from "../lib/hash";
+import { signAccessToken } from "../lib/jwt";
+import { endpointRateLimit } from "../lib/rate-limit";
+import { error, json } from "../lib/response";
+import type { AccessTokenPayload, Env, JwtClaims, Membership, SwitchOrgBody } from "../types";
 
 export async function switchOrg(
   req: Request,
@@ -67,8 +67,10 @@ export async function switchOrg(
 
   const refreshToken = generateRefreshToken();
   const refreshHash = await hashToken(refreshToken);
+  const sessionId = crypto.randomUUID();
 
   await database.mutate("sessions", {
+    id: sessionId,
     user_id: currentPayload.sub,
     org_id: body.org_id,
     refresh_token_hash: refreshHash,
@@ -76,6 +78,8 @@ export async function switchOrg(
     ip_address: ip,
     revoked: false,
     expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+    family_id: sessionId,
+    family_created_at: new Date().toISOString(),
   });
 
   const accessToken = await signAccessToken(
@@ -96,7 +100,7 @@ export async function switchOrg(
     org_id: body.org_id,
     roles: claims.roles,
   });
-  setAuthCookies(response, accessToken, refreshToken);
+  setAuthCookies(response, accessToken, refreshToken, env);
 
   audit(ctx, env, "switch_org", {
     user_id: currentPayload.sub,

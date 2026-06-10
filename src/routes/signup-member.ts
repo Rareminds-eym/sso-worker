@@ -1,15 +1,15 @@
-import type { Env, JwtClaims, SignupMemberBody } from "../types";
-import { db } from "../lib/db";
-import { hashPassword, hashToken, generateRefreshToken } from "../lib/hash";
-import { signAccessToken } from "../lib/jwt";
-import { setAuthCookies } from "../lib/cookies";
-import { validateEmail, validatePassword, validateRedirectUrl, resolveAppUrl } from "../lib/validate";
-import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
-import { sendVerificationEmail } from "../lib/email";
-import { endpointRateLimit } from "../lib/rate-limit";
 import { SESSION_TTL_MS } from "../lib/constants";
+import { setAuthCookies } from "../lib/cookies";
+import { db } from "../lib/db";
+import { sendVerificationEmail } from "../lib/email";
+import { generateRefreshToken, hashPassword, hashToken } from "../lib/hash";
+import { signAccessToken } from "../lib/jwt";
+import { endpointRateLimit } from "../lib/rate-limit";
+import { error, json } from "../lib/response";
 import { publishSyncEvent } from "../lib/sync-queue";
+import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "../lib/validate";
+import type { Env, JwtClaims, SignupMemberBody } from "../types";
 
 /**
  * POST /auth/signup-member
@@ -123,8 +123,10 @@ export async function signupMember(
 
     const refreshToken = generateRefreshToken();
     const refreshHash = await hashToken(refreshToken);
+    const sessionId = crypto.randomUUID();
 
     await database.mutate("sessions", {
+      id: sessionId,
       user_id: result.user_id,
       org_id: result.org_id,
       refresh_token_hash: refreshHash,
@@ -132,6 +134,8 @@ export async function signupMember(
       ip_address: ip,
       revoked: false,
       expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+      family_id: sessionId,
+      family_created_at: new Date().toISOString(),
     });
 
     const accessToken = await signAccessToken(
@@ -159,7 +163,7 @@ export async function signupMember(
       });
       const appUrl = resolveAppUrl(body.redirect_url, env);
       const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
-      
+
       // Send beautiful verification email via SkillPassport
       ctx.waitUntil(sendVerificationEmail(env, email, verifyUrl));
     } catch (emailErr) {
@@ -180,7 +184,7 @@ export async function signupMember(
     }
 
     const response = json(responseBody, 201);
-    setAuthCookies(response, accessToken, refreshToken);
+    setAuthCookies(response, accessToken, refreshToken, env);
 
     // Response fully built — emit sync events
     publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.created', {

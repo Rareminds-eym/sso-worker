@@ -1,16 +1,16 @@
-import type { Env, InviteBody, AcceptInviteBody, Invite, User, Membership, AccessTokenPayload, JwtClaims } from "../types";
-import { db } from "../lib/db";
-import { signAccessToken } from "../lib/jwt";
-import { hashPassword, hashToken, generateRefreshToken } from "../lib/hash";
-import { setAuthCookies } from "../lib/cookies";
-import { validateEmail, validatePassword, validateRedirectUrl, resolveAppUrl } from "../lib/validate";
-import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
-import { sendEmail, inviteEmail } from "../lib/email";
+import { INVITE_TTL_MS, SESSION_TTL_MS } from "../lib/constants";
+import { setAuthCookies } from "../lib/cookies";
+import { db } from "../lib/db";
+import { inviteEmail, sendEmail } from "../lib/email";
 import { checkEmailThrottle } from "../lib/email-throttle";
+import { generateRefreshToken, hashPassword, hashToken } from "../lib/hash";
+import { signAccessToken } from "../lib/jwt";
 import { endpointRateLimit } from "../lib/rate-limit";
-import { SESSION_TTL_MS, INVITE_TTL_MS } from "../lib/constants";
+import { error, json } from "../lib/response";
 import { publishSyncEvent } from "../lib/sync-queue";
+import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "../lib/validate";
+import type { AcceptInviteBody, AccessTokenPayload, Env, Invite, InviteBody, JwtClaims, Membership, User } from "../types";
 
 const ALLOWED_INVITE_ROLES = ["admin", "member"] as const;
 
@@ -244,8 +244,10 @@ export async function acceptInvite(
 
   const refreshToken = generateRefreshToken();
   const refreshHash = await hashToken(refreshToken);
+  const sessionId = crypto.randomUUID();
 
   await database.mutate("sessions", {
+    id: sessionId,
     user_id: user.id,
     org_id: invite.org_id,
     refresh_token_hash: refreshHash,
@@ -253,6 +255,8 @@ export async function acceptInvite(
     ip_address: ip,
     revoked: false,
     expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+    family_id: sessionId,
+    family_created_at: new Date().toISOString(),
   });
 
   const accessToken = await signAccessToken(
@@ -274,7 +278,7 @@ export async function acceptInvite(
     org_id: invite.org_id,
   });
 
-  setAuthCookies(response, accessToken, refreshToken);
+  setAuthCookies(response, accessToken, refreshToken, env);
 
   // Emit sync events (non-blocking, post-response)
   if (isNewUser) {
