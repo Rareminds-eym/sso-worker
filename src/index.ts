@@ -16,6 +16,7 @@ import { adminResetPassword, changePassword } from "./routes/change-password";
 import { deleteAccount } from "./routes/delete-account";
 import { acceptInvite, createInvite } from "./routes/invite";
 import { cancelInvite, resendInvite } from "./routes/invite-manage";
+import { createMembership, assignMembershipRole, updateMembershipStatus } from "./routes/memberships";
 import { jwks } from "./routes/jwks";
 import { login } from "./routes/login";
 import { logout } from "./routes/logout";
@@ -59,6 +60,11 @@ const routes: Record<string, Record<string, RouteConfig>> = {
     "/auth/admin-reset-password": { handler: adminResetPassword, auth: true },
     "/auth/delete-account": { handler: deleteAccount, auth: true },
     "/api/events/webhook": { handler: processWebhookEvent },
+    "/api/memberships/create": { handler: createMembership },
+    "/api/memberships/assign-role": { handler: assignMembershipRole },
+  },
+  PUT: {
+    "/api/memberships/update-status": { handler: updateMembershipStatus },
   },
   GET: {
     "/auth/me": { handler: me, auth: true },
