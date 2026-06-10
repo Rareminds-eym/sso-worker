@@ -130,7 +130,7 @@ function validateOrigin(req: Request, env: Env): boolean {
 }
 
 // ─── WorkerEntrypoint ─────────────────────────────────────────
-export default class SsoWorker extends WorkerEntrypoint<Env> {
+export class SsoWorker extends WorkerEntrypoint<Env> {
   // ── Scheduled (cron) ──────────────────────────────────────────
   async scheduled(_event: ScheduledEvent): Promise<void> {
     const database = db(this.env);
@@ -936,4 +936,4 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
   }
 }
 
-
+export default SsoWorker;

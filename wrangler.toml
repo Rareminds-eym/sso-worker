@@ -45,9 +45,9 @@ binding = "EMAIL_SERVICE"
 service = "shared-email-api"
 
 # Platform-specific service bindings for email templates
-[[services]]
-binding = "SKILLPASSPORT_SERVICE"
-service = "skill-passport-portal"
+# [[services]]
+# binding = "SKILLPASSPORT_SERVICE"
+# service = "skill-passport-portal"
 
 # Queue for pushing auth DB sync events to SkillPassport
 [[queues.producers]]
