@@ -165,7 +165,10 @@ export async function signupMember(
       const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
 
       // Send beautiful verification email via SkillPassport
-      ctx.waitUntil(sendVerificationEmail(env, email, verifyUrl));
+      ctx.waitUntil(
+        sendVerificationEmail(env, email, verifyUrl)
+          .catch(err => console.error("[SSO] Verification email background task failed:", err))
+      );
     } catch (emailErr) {
       // Email failure is non-critical — user is created, session is valid
       emailSent = false;

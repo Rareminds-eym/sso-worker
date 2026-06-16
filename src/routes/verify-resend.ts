@@ -74,7 +74,10 @@ export async function resendVerification(
 
   const appUrl = resolveAppUrl(undefined, env);
   const verifyUrl = `${appUrl}/verify-email?token=${token}`;
-  ctx.waitUntil(sendVerificationEmail(env, user.email, verifyUrl));
+  ctx.waitUntil(
+    sendVerificationEmail(env, user.email, verifyUrl)
+      .catch(err => console.error("[SSO] Verification email background task failed:", err))
+  );
 
   audit(ctx, env, "verification_resend", {
     user_id: user.id,

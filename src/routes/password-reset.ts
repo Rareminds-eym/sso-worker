@@ -80,7 +80,10 @@ export async function forgotPassword(
   const appUrl = resolveAppUrl(body.redirect_url, env);
   const resetUrl = `${appUrl}/reset-password?token=${token}`;
   
-  ctx.waitUntil(sendPasswordResetEmail(env, email, resetUrl));
+  ctx.waitUntil(
+    sendPasswordResetEmail(env, email, resetUrl)
+      .catch(err => console.error("[SSO] Password reset email background task failed:", err))
+  );
 
   audit(ctx, env, "password_reset_requested", {
     user_id: user.id,

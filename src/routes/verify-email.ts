@@ -55,7 +55,10 @@ export async function requestVerification(
   // Send verification email
   const appUrl = resolveAppUrl(body.redirect_url, env);
   const verifyUrl = `${appUrl}/verify-email?token=${token}`;
-  ctx.waitUntil(sendVerificationEmail(env, user.email, verifyUrl));
+  ctx.waitUntil(
+    sendVerificationEmail(env, user.email, verifyUrl)
+      .catch(err => console.error("[SSO] Verification email background task failed:", err))
+  );
 
   audit(ctx, env, "verification_requested", {
     user_id: payload.sub,

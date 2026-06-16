@@ -30,10 +30,11 @@ const mockEnv: Env = {
     getWithMetadata: () => Promise.resolve({ value: null, metadata: null }),
   } as unknown as KVNamespace,
   EMAIL_SERVICE: {} as Fetcher,
-  EMAIL_API_KEY: 'test-email-api-key',
-  ALLOWED_APP_URLS: 'http://localhost:3000',
+  EMAIL_API_KEY: "test_email_key",
+  ALLOWED_APP_URLS: "https://skillpassport.rareminds.in",
   SYNC_QUEUE: { send: () => Promise.resolve() } as unknown as Queue<any>,
-  SKILLPASSPORT_URL: 'http://localhost:3000',
+  SKILLPASSPORT_URL: "https://skillpassport.rareminds.in",
+  INTERNAL_WEBHOOK_SECRET: "test_webhook_secret"
 };
 
 async function createWorker() {

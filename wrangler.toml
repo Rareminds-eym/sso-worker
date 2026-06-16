@@ -55,7 +55,13 @@ service = "shared-email-api"
 # Queue for pushing auth DB sync events to SkillPassport
 [[queues.producers]]
 binding = "SYNC_QUEUE"
-queue = "auth-db-sync-queue"
+queue = "auth-db-sync-queue-dev"
+
+# Consumer for generic webhook events
+[[queues.consumers]]
+queue = "payment-webhooks-queue-dev"
+max_batch_size = 10
+max_batch_timeout = 5
 
 # ============================================================================
 # STAGING — wrangler deploy --env staging
@@ -84,6 +90,11 @@ service = "shared-email-api-staging"
 [[env.staging.queues.producers]]
 binding = "SYNC_QUEUE"
 queue = "auth-db-sync-queue-staging"
+
+[[env.staging.queues.consumers]]
+queue = "payment-webhooks-queue-staging"
+max_batch_size = 10
+max_batch_timeout = 5
 
 # Secrets for staging (set via `wrangler secret put --env staging`):
 # SUPABASE_SERVICE_ROLE_KEY
@@ -120,6 +131,11 @@ service = "shared-email-api-demo"
 binding = "SYNC_QUEUE"
 queue = "auth-db-sync-queue-demo"
 
+[[env.demo.queues.consumers]]
+queue = "payment-webhooks-queue-demo"
+max_batch_size = 10
+max_batch_timeout = 5
+
 # Secrets for demo (set via `wrangler secret put --env demo`):
 # SUPABASE_SERVICE_ROLE_KEY
 # JWT_PRIVATE_KEY
@@ -153,6 +169,11 @@ service = "shared-email-api-production"
 [[env.production.queues.producers]]
 binding = "SYNC_QUEUE"
 queue = "auth-db-sync-queue"
+
+[[env.production.queues.consumers]]
+queue = "payment-webhooks-queue"
+max_batch_size = 10
+max_batch_timeout = 5
 
 # Secrets for production (set via `wrangler secret put`):
 # SUPABASE_SERVICE_ROLE_KEY

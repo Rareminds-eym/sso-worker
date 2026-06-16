@@ -29,7 +29,6 @@ import { signupMember } from "./routes/signup-member";
 import {
   getPlanByCode,
   listPlans,
-  processWebhookEvent,
 } from "./routes/subscriptions";
 import { switchOrg } from "./routes/switch-org";
 import { requestVerification, verifyEmail } from "./routes/verify-email";
@@ -58,7 +57,6 @@ const routes: Record<string, Record<string, RouteConfig>> = {
     "/auth/change-password": { handler: changePassword, auth: true },
     "/auth/admin-reset-password": { handler: adminResetPassword, auth: true },
     "/auth/delete-account": { handler: deleteAccount, auth: true },
-    "/api/events/webhook": { handler: processWebhookEvent },
   },
   GET: {
     "/auth/me": { handler: me, auth: true },
@@ -146,6 +144,55 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       if (expired > 0) console.log(`[SSO] Expired ${expired} subscription(s)`);
     } catch (err: any) {
       console.error(`[SSO] Failed to expire subscriptions: ${err?.message}`);
+    }
+
+    try {
+      const pendingEvents = await database.query<Record<string, any>>(
+        "events?status=eq.received&order=created_at.asc&limit=10"
+      );
+      if (pendingEvents && pendingEvents.length > 0) {
+        for (const event of pendingEvents) {
+          await database.update("events", { id: `eq.${event.id}` }, { status: "processing" });
+          try {
+            if (event.event_type === 'payment.captured' || event.event_type === 'order.paid') {
+              if (!this.env.SKILLPASSPORT_URL || !this.env.INTERNAL_WEBHOOK_SECRET) {
+                throw new Error("SKILLPASSPORT_URL or INTERNAL_WEBHOOK_SECRET not configured. Cannot dispatch webhook.");
+              }
+
+              const targetUrl = `${this.env.SKILLPASSPORT_URL}/api/internal/webhooks/payment`;
+              const dispatchResponse = await fetch(targetUrl, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${this.env.INTERNAL_WEBHOOK_SECRET}`,
+                  'X-Webhook-Event': event.event_type
+                },
+                body: JSON.stringify(event.payload)
+              });
+
+              if (!dispatchResponse.ok) {
+                const resBody = await dispatchResponse.text();
+                throw new Error(`Fulfillment failed with status ${dispatchResponse.status}: ${resBody}`);
+              }
+            }
+
+            // Mark as completed since fulfillment succeeded (or event type was ignored)
+            await database.update("events", { id: `eq.${event.id}` }, { 
+              status: "completed",
+              processed_at: new Date().toISOString()
+            });
+            console.log(`[SSO] Processed webhook event ${event.event_id} of type ${event.event_type}`);
+          } catch (processErr: any) {
+            await database.update("events", { id: `eq.${event.id}` }, { 
+              status: "failed",
+              error_message: processErr?.message || "Unknown error",
+              retry_count: (event.retry_count || 0) + 1
+            });
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error(`[SSO] Failed to process webhook events: ${err?.message}`);
     }
   }
 
@@ -238,6 +285,47 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   // ══════════════════════════════════════════════════════════════
 
   // ── Subscription Management ─────────────────────────────────
+
+  // ── Queue Handler (Asynchronous Events) ─────────────────────
+  async queue(batch: any): Promise<void> {
+    const database = db(this.env);
+
+    for (const message of batch.messages) {
+      try {
+        const body = message.body;
+        if (!body.event_id || !body.event_type || !body.payload) {
+          console.warn("[SSO] Skipping invalid queue message", body);
+          message.ack();
+          continue;
+        }
+
+        // Idempotency check
+        const existing = await database.queryOne(
+          `events?event_id=eq.${encodeURIComponent(body.event_id)}`,
+        );
+        if (existing) {
+          console.log(`[SSO] Event ${body.event_id} already processed`);
+          message.ack();
+          continue;
+        }
+
+        await database.mutate("events", {
+          event_id: body.event_id,
+          event_type: body.event_type,
+          status: "received",
+          payload: body.payload,
+          user_id: body.user_id || null,
+          subscription_id: body.subscription_id || null,
+          razorpay_payment_id: body.razorpay_payment_id || null,
+        });
+
+        message.ack();
+      } catch (err) {
+        console.error("[SSO] Failed to process queue message:", err);
+        message.retry();
+      }
+    }
+  }
 
   async createSubscription(data: {
     user_id: string;
@@ -553,6 +641,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     status: string;
     transaction_type?: string;
     payment_method?: string;
+    failure_reason?: string;
+    product_id?: string;
     organization_id?: string;
     organization_type?: string;
     seat_count?: number;
@@ -567,6 +657,22 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     const database = db(this.env);
+
+    let productId = data.product_id;
+    if (!productId && data.subscription_id) {
+      const sub = await database.queryOne(
+        `subscriptions?id=eq.${data.subscription_id}&select=product_id,plan_id`,
+      );
+      const subRow = sub as any;
+      productId = subRow?.product_id || null;
+      if (!productId && subRow?.plan_id) {
+        const plan = await database.queryOne(
+          `plans?id=eq.${subRow.plan_id}&select=product_id`,
+        );
+        productId = (plan as any)?.product_id || null;
+      }
+    }
+
     const transaction = await database.mutate("transactions", {
       subscription_id: data.subscription_id || null,
       user_id: data.user_id,
@@ -578,6 +684,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       status: data.status,
       transaction_type: data.transaction_type || "subscription",
       payment_method: data.payment_method || null,
+      failure_reason: data.failure_reason || null,
+      product_id: productId || null,
       organization_id: data.organization_id || null,
       organization_type: data.organization_type || null,
       seat_count: data.seat_count || 1,

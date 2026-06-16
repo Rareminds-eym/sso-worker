@@ -71,6 +71,25 @@ export async function sendEmail(env: Env, payload: EmailPayload): Promise<void> 
 
 
 /**
+ * Fetch with retry for transient Cloudflare subrequest failures.
+ */
+async function fetchWithRetry(uri: string, options: RequestInit, retries = 2, baseDelay = 1000): Promise<Response> {
+  let lastError: Error | undefined;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fetch(uri, options);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt < retries) {
+        const delay = Math.min(baseDelay * Math.pow(2, attempt), 5000);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastError!;
+}
+
+/**
  * Send email verification - fetches template via SkillPassport service binding
  */
 export async function sendVerificationEmail(
@@ -79,8 +98,9 @@ export async function sendVerificationEmail(
   verifyUrl: string,
 ): Promise<void> {
   try {
-    const templateResponse = await fetch(
-      new Request(`${env.SKILLPASSPORT_URL}/api/email/verification`, {
+    const templateResponse = await fetchWithRetry(
+      `${env.SKILLPASSPORT_URL}/api/email/verification`,
+      {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -88,7 +108,7 @@ export async function sendVerificationEmail(
           verifyUrl,
           templateOnly: true 
         }),
-      })
+      }
     );
 
     if (!templateResponse.ok) {
@@ -127,8 +147,9 @@ export async function sendPasswordResetEmail(
   resetUrl: string,
 ): Promise<void> {
   try {
-    const templateResponse = await fetch(
-      new Request(`${env.SKILLPASSPORT_URL}/api/email/password-reset`, {
+    const templateResponse = await fetchWithRetry(
+      `${env.SKILLPASSPORT_URL}/api/email/password-reset`,
+      {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -136,7 +157,7 @@ export async function sendPasswordResetEmail(
           resetUrl,
           templateOnly: true 
         }),
-      })
+      }
     );
 
     if (!templateResponse.ok) {

@@ -21,6 +21,9 @@ export interface Env {
   /** Base URL for the SkillPassport Pages app (e.g. https://skillpassport.rareminds.in) */
   SKILLPASSPORT_URL: string;
 
+  /** Secret used to securely authenticate internal webhook dispatches to frontend applications */
+  INTERNAL_WEBHOOK_SECRET: string;
+
   /** Queue for pushing auth DB sync events to SkillPassport. */
   SYNC_QUEUE: Queue<SyncEvent>;
 
