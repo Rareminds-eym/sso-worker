@@ -99,6 +99,7 @@ export async function signup(
         p_org_name: body.org_name,
         p_org_slug: slug,
         p_role: body.role,
+        p_user_metadata: body.user_metadata ?? {},
       },
     );
   } catch (err: any) {
@@ -141,6 +142,7 @@ export async function signup(
         products: claims?.products ?? [],
         membership_status: claims?.membership_status ?? "active",
         is_email_verified: false,
+        user_metadata: body.user_metadata ?? {},
       },
       env,
     );
@@ -183,6 +185,7 @@ export async function signup(
     publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.created', {
       id: result.user_id,
       email,
+      user_metadata: body.user_metadata ?? {},
     });
     publishSyncEvent(env.SYNC_QUEUE, ctx, 'organization.created', {
       id: result.org_id,

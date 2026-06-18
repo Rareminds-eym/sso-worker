@@ -124,6 +124,7 @@ export async function login(
       products: claims?.products ?? [],
       membership_status: claims?.membership_status ?? "active",
       is_email_verified: user.is_email_verified,
+      user_metadata: user.user_metadata ?? {},
     },
     env,
   );

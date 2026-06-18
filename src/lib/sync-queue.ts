@@ -1,5 +1,6 @@
 export type SyncEventType =
   | 'user.created'
+  | 'user.updated'
   | 'user.email_verified'
   | 'user.deleted'
   | 'organization.created'

@@ -299,6 +299,51 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           continue;
         }
 
+        // Intercept Reverse Sync Events
+        if (body.event_type === 'user_metadata.updated' && body.user_id) {
+          const { first_name, last_name } = body.payload;
+          
+          if (first_name !== undefined || last_name !== undefined) {
+            try {
+              // Note: using db(this.env) which wraps Postgres REST. 
+              const user = await database.queryOne(`users?id=eq.${body.user_id}&select=user_metadata`);
+              const currentMetadata = (user as any)?.user_metadata || {};
+              
+              const newMetadata = { ...currentMetadata };
+              if (first_name !== undefined) newMetadata.first_name = first_name;
+              if (last_name !== undefined) newMetadata.last_name = last_name;
+              
+              await database.update('users', { id: `eq.${body.user_id}` }, { user_metadata: newMetadata });
+              console.log(`[SSO] Bidirectional sync complete: updated user_metadata for user ${body.user_id}`);
+              
+              // Broadcast to all forward consumers (e.g. App 1, App 2) so they stay in sync
+              if (this.env.SYNC_QUEUE) {
+                const userObj = await database.queryOne<{ id: string, email: string }>(`users?id=eq.${body.user_id}&select=id,email`);
+                if (userObj) {
+                  await this.env.SYNC_QUEUE.send({
+                    type: 'user.updated',
+                    payload: { 
+                      id: userObj.id, 
+                      email: userObj.email, 
+                      user_metadata: newMetadata 
+                    },
+                    timestamp: new Date().toISOString()
+                  });
+                }
+              } else {
+                console.warn(`[SSO] SYNC_QUEUE not bound, cannot broadcast user.updated for ${body.user_id}`);
+              }
+            } catch (updateErr) {
+              console.error(`[SSO] Failed to update user_metadata for ${body.user_id}:`, updateErr);
+              message.retry();
+              continue;
+            }
+          }
+          
+          message.ack();
+          continue;
+        }
+
         // Idempotency check
         const existing = await database.queryOne(
           `events?event_id=eq.${encodeURIComponent(body.event_id)}`,

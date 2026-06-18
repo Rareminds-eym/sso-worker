@@ -63,6 +63,12 @@ queue = "payment-webhooks-queue-dev"
 max_batch_size = 10
 max_batch_timeout = 5
 
+# Consumer for reverse metadata sync from apps
+[[queues.consumers]]
+queue = "sso-reverse-sync-queue-dev"
+max_batch_size = 10
+max_batch_timeout = 5
+
 # ============================================================================
 # STAGING — wrangler deploy --env staging
 # Deploys as: sso-api-staging
@@ -93,6 +99,11 @@ queue = "auth-db-sync-queue-staging"
 
 [[env.staging.queues.consumers]]
 queue = "payment-webhooks-queue-staging"
+max_batch_size = 10
+max_batch_timeout = 5
+
+[[env.staging.queues.consumers]]
+queue = "sso-reverse-sync-queue-staging"
 max_batch_size = 10
 max_batch_timeout = 5
 
@@ -136,6 +147,11 @@ queue = "payment-webhooks-queue-demo"
 max_batch_size = 10
 max_batch_timeout = 5
 
+[[env.demo.queues.consumers]]
+queue = "sso-reverse-sync-queue-demo"
+max_batch_size = 10
+max_batch_timeout = 5
+
 # Secrets for demo (set via `wrangler secret put --env demo`):
 # SUPABASE_SERVICE_ROLE_KEY
 # JWT_PRIVATE_KEY
@@ -172,6 +188,11 @@ queue = "auth-db-sync-queue"
 
 [[env.production.queues.consumers]]
 queue = "payment-webhooks-queue"
+max_batch_size = 10
+max_batch_timeout = 5
+
+[[env.production.queues.consumers]]
+queue = "sso-reverse-sync-queue"
 max_batch_size = 10
 max_batch_timeout = 5
 

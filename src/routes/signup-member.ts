@@ -96,6 +96,7 @@ export async function signupMember(
       p_password_hash: password_hash,
       p_role: body.role,
       p_org_id: body.org_id ?? null,
+      p_user_metadata: body.user_metadata ?? {},
     });
   } catch (err: any) {
     if (err?.message?.includes("duplicate") || err?.message?.includes("23505")) {
@@ -147,6 +148,7 @@ export async function signupMember(
         products: claims?.products ?? [],
         membership_status: claims?.membership_status ?? "active",
         is_email_verified: false,
+        user_metadata: body.user_metadata ?? {},
       },
       env,
     );
@@ -193,6 +195,7 @@ export async function signupMember(
     publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.created', {
       id: result.user_id,
       email,
+      user_metadata: body.user_metadata ?? {},
     });
     if (result.org_id) {
       publishSyncEvent(env.SYNC_QUEUE, ctx, 'membership.created', {

@@ -91,6 +91,7 @@ export async function switchOrg(
       products: claims.products,
       membership_status: claims.membership_status,
       is_email_verified: currentPayload.is_email_verified,
+      user_metadata: currentPayload.user_metadata ?? {},
     },
     env,
   );

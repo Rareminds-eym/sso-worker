@@ -56,6 +56,7 @@ export interface AccessTokenPayload {
   products: string[];
   membership_status: MembershipStatus;
   is_email_verified: boolean;
+  user_metadata?: Record<string, unknown>;
 }
 
 // ─── JWT Claims from get_jwt_claims() RPC ──────────────────────
@@ -75,6 +76,7 @@ export interface User {
   last_login_at: string | null;
   created_at: string;
   updated_at: string;
+  user_metadata?: Record<string, unknown>;
 }
 
 export interface Organization {
@@ -169,6 +171,7 @@ export interface SignupBody {
   /** Role to assign in addition to 'owner' (e.g., 'college_admin', 'school_admin', 'university_admin'). */
   role: string;
   redirect_url?: string;
+  user_metadata?: Record<string, unknown>;
 }
 
 export interface LoginBody {
@@ -198,4 +201,5 @@ export interface SignupMemberBody {
   role: string;
   org_id?: string;
   redirect_url?: string;
+  user_metadata?: Record<string, unknown>;
 }

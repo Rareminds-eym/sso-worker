@@ -299,8 +299,8 @@ async function mintAccessToken(
     orgId: string | null,
 ): Promise<string> {
     const [user, claims] = await Promise.all([
-        database.queryOne<{ id: string; email: string; is_email_verified: boolean }>(
-            `users?id=eq.${userId}&select=id,email,is_email_verified`,
+        database.queryOne<{ id: string; email: string; is_email_verified: boolean; user_metadata?: Record<string, unknown> }>(
+            `users?id=eq.${userId}&select=id,email,is_email_verified,user_metadata`,
         ),
         database.rpc<JwtClaims>("get_jwt_claims", {
             p_user_id: userId,
@@ -317,6 +317,7 @@ async function mintAccessToken(
             products: claims?.products ?? [],
             membership_status: claims?.membership_status ?? "active",
             is_email_verified: user?.is_email_verified ?? false,
+            user_metadata: user?.user_metadata ?? {},
         },
         env,
     );

@@ -268,6 +268,7 @@ export async function acceptInvite(
       products: claims?.products ?? [],
       membership_status: claims?.membership_status ?? "active",
       is_email_verified: user.is_email_verified,
+      user_metadata: user.user_metadata ?? {},
     },
     env,
   );
@@ -285,6 +286,7 @@ export async function acceptInvite(
     publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.created', {
       id: user.id,
       email: user.email,
+      user_metadata: {},
     });
   }
   if (existingMembership && existingMembership.status !== 'active') {
