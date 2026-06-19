@@ -3,10 +3,11 @@ import { audit } from "./lib/audit";
 import { authenticate } from "./lib/auth";
 import { addMonths, parseDurationMonths } from "./lib/date";
 import { db } from "./lib/db";
-import { hashPassword, hashToken } from "./lib/hash";
-import { exportPemAsJwk, getPublicJWK, verifyAccessToken } from "./lib/jwt";
+import { generateRefreshToken, hashPassword, hashToken, verifyPassword } from "./lib/hash";
+import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "./lib/jwt";
 import { error, json } from "./lib/response";
 import { rotateRefreshToken } from "./lib/session-rotation";
+import { SESSION_TTL_MS } from "./lib/constants";
 import {
   getAddonByFeatureKey,
   listAddonCatalog,
@@ -907,6 +908,178 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
   // ── Auth RPC Methods ──────────────────────────────────────────
 
+  /**
+   * RPC method for login
+   * @param params - { email, password, ip?, ua? }
+   */
+  async login(params: {
+    email: string;
+    password: string;
+    ip?: string;
+    ua?: string;
+  }): Promise<{
+    access_token: string;
+    refresh_token: string;
+    user: { id: string; email: string };
+    active_org_id: string | null;
+    organizations: { org_id: string | null }[];
+    error?: string;
+    status?: number;
+  }> {
+    try {
+      const { email, password, ip, ua } = params;
+
+      if (!email || !password) {
+        return { error: "email and password are required", status: 400, access_token: "", refresh_token: "", user: { id: "", email: "" }, active_org_id: null, organizations: [] };
+      }
+
+      const database = db(this.env);
+      const emailLower = email.toLowerCase().trim();
+      const DUMMY_HASH = "$2a$12$x/RiZqGfMzMQqO7MZsMmu.FS0FMCoaRaKBLGkfaOFzuBkeBMQzMFu";
+
+      // Check account lockout
+      const lockoutKey = `account-locked:${emailLower}`;
+      const isLocked = await this.env.RATE_LIMIT_KV.get(lockoutKey);
+      if (isLocked) {
+        return { error: "Account is locked due to too many failed login attempts", status: 403, access_token: "", refresh_token: "", user: { id: "", email: "" }, active_org_id: null, organizations: [] };
+      }
+
+      // Get user
+      const user = await database.queryOne<any>(
+        `users?email=eq.${encodeURIComponent(emailLower)}&select=*`,
+      );
+
+      if (!user) {
+        await verifyPassword(password, DUMMY_HASH);
+        return { error: "Invalid credentials", status: 401, access_token: "", refresh_token: "", user: { id: "", email: "" }, active_org_id: null, organizations: [] };
+      }
+
+      if (user.is_blocked) {
+        return { error: "Account is blocked", status: 403, access_token: "", refresh_token: "", user: { id: "", email: "" }, active_org_id: null, organizations: [] };
+      }
+
+      // Verify password
+      const valid = await verifyPassword(password, user.password_hash);
+
+      if (!valid) {
+        const countKey = `failed-logins:${emailLower}`;
+        const failCount = parseInt(await this.env.RATE_LIMIT_KV.get(countKey) || "0") + 1;
+        await this.env.RATE_LIMIT_KV.put(countKey, String(failCount), { expirationTtl: 3600 });
+
+        if (failCount >= 5) {
+          await this.env.RATE_LIMIT_KV.put(lockoutKey, "true", { expirationTtl: 1800 });
+        }
+        return { error: "Invalid credentials", status: 401, access_token: "", refresh_token: "", user: { id: "", email: "" }, active_org_id: null, organizations: [] };
+      }
+
+      // Get active memberships
+      const memberships = await database.query<any>(
+        `memberships?user_id=eq.${user.id}&status=eq.active&select=*&order=created_at.asc`,
+      );
+
+      const activeMembership = memberships[0] ?? null;
+
+      // Get JWT claims
+      let claims: any = null;
+      if (activeMembership) {
+        claims = await database.rpc<any>("get_jwt_claims", {
+          p_user_id: user.id,
+          p_org_id: activeMembership.org_id,
+        });
+      }
+
+      // Generate tokens
+      const refreshToken = generateRefreshToken();
+      const refreshHash = await hashToken(refreshToken);
+      const sessionId = crypto.randomUUID();
+
+      // Store session
+      await database.mutate("sessions", {
+        id: sessionId,
+        user_id: user.id,
+        org_id: activeMembership?.org_id ?? null,
+        refresh_token_hash: refreshHash,
+        user_agent: ua,
+        ip_address: ip,
+        revoked: false,
+        expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+        family_id: sessionId,
+        family_created_at: new Date().toISOString(),
+      });
+
+      // Sign access token
+      const accessToken = await signAccessToken(
+        {
+          sub: user.id,
+          email: user.email,
+          org_id: activeMembership?.org_id ?? "",
+          roles: claims?.roles ?? [],
+          products: claims?.products ?? [],
+          membership_status: claims?.membership_status ?? "active",
+          is_email_verified: user.is_email_verified,
+        },
+        this.env,
+      );
+
+      // Clear failed login attempts
+      await this.env.RATE_LIMIT_KV.delete(`failed-logins:${emailLower}`);
+
+      return {
+        access_token: accessToken,
+        refresh_token: refreshToken,
+        user: { id: user.id, email: user.email },
+        active_org_id: activeMembership?.org_id ?? null,
+        organizations: memberships.map((m) => ({ org_id: m.org_id })),
+      };
+    } catch (err) {
+      console.error("[SSO] Login error:", err);
+      return { error: (err as Error).message || "Login failed", status: 500, access_token: "", refresh_token: "", user: { id: "", email: "" }, active_org_id: null, organizations: [] };
+    }
+  }
+
+  /**
+   * RPC method for refresh token rotation
+   * @param params - { refresh_token, ip?, ua? }
+   */
+  async refresh(params: {
+    refresh_token: string;
+    ip?: string;
+    ua?: string;
+  }): Promise<{ access_token: string; refresh_token: string }> {
+    return this.refreshSession(params.refresh_token, params.ip, params.ua);
+  }
+
+  /**
+   * RPC method for logout
+   * @param params - { refresh_token, ip?, ua? }
+   */
+  async logout(params: {
+    refresh_token: string;
+    ip?: string;
+    ua?: string;
+  }): Promise<{ success: boolean }> {
+    return this.logoutSession(params.refresh_token, params.ip, params.ua);
+  }
+
+  /**
+   * RPC method for token verification
+   * @param accessToken - JWT access token to verify
+   * @returns Decoded token payload or null if invalid
+   */
+  async verifyToken(accessToken: string): Promise<Record<string, unknown> | null> {
+    if (!accessToken) {
+      return null;
+    }
+
+    try {
+      const payload = await verifyAccessToken(accessToken, this.env);
+      return payload as Record<string, unknown>;
+    } catch (error) {
+      console.warn('[SSO] Token verification failed:', error);
+      return null;
+    }
+  }
+
   async getJWKS(): Promise<{ keys: any[] }> {
     const keys = [await getPublicJWK(this.env)];
     if (this.env.JWT_PUBLIC_KEY_PREVIOUS && this.env.JWT_KID_PREVIOUS) {
@@ -1034,3 +1207,4 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 }
 
 export default SsoWorker;
+export { SsoWorker as SSOEntrypoint };
