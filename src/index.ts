@@ -32,6 +32,7 @@ import {
 } from "./routes/subscriptions";
 import { switchOrg } from "./routes/switch-org";
 import { requestVerification, verifyEmail } from "./routes/verify-email";
+import { getSalesSubscriptions } from "./routes/sales-subscriptions";
 import type { AccessTokenPayload, Env, RouteConfig, Session } from "./types";
 
 /** Max request body size: 10 KB */
@@ -71,6 +72,7 @@ const routes: Record<string, Record<string, RouteConfig>> = {
     "/api/addon-catalog": { handler: listAddonCatalog },
     "/api/addon-catalog/:featureKey": { handler: getAddonByFeatureKey },
     "/api/bundles": { handler: listBundles },
+    "/api/sales/subscriptions": { handler: getSalesSubscriptions },
   },
 };
 
