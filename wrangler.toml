@@ -1,7 +1,8 @@
-name = "sso-api"
+name = "sso-api-dev"
 main = "src/index.ts"
 compatibility_date = "2026-05-25"
 compatibility_flags = ["nodejs_compat"]
+account_id = "d10c2b1a3d702c710a036bc5a6d0902e"
 
 [dev]
 port = 8787
@@ -18,7 +19,7 @@ head_sampling_rate = 0.01
 
 # ============================================================================
 # DEV — wrangler deploy (default, no --env flag)
-# Deploys as: sso-api
+# Deploys as: sso-api-dev
 # ============================================================================
 
 [vars]
@@ -49,7 +50,7 @@ id = "a01a250ae61941a6adb3b4c702b6ea2f"
 
 [[services]]
 binding = "EMAIL_SERVICE"
-service = "shared-email-api"
+service = "shared-email-api-dev"
 
 
 # Queue for pushing auth DB sync events to SkillPassport
@@ -184,15 +185,15 @@ service = "shared-email-api-production"
 
 [[env.production.queues.producers]]
 binding = "SYNC_QUEUE"
-queue = "auth-db-sync-queue"
+queue = "auth-db-sync-queue-production"
 
 [[env.production.queues.consumers]]
-queue = "payment-webhooks-queue"
+queue = "payment-webhooks-queue-production"
 max_batch_size = 10
 max_batch_timeout = 5
 
 [[env.production.queues.consumers]]
-queue = "sso-reverse-sync-queue"
+queue = "sso-reverse-sync-queue-production"
 max_batch_size = 10
 max_batch_timeout = 5
 

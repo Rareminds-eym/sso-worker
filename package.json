@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "deploy:dev": "wrangler deploy",
     "deploy:production": "wrangler deploy --env production",
     "deploy:staging": "wrangler deploy --env staging",
     "deploy:demo": "wrangler deploy --env demo",
