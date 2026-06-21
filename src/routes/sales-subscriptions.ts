@@ -1,10 +1,10 @@
-import type { Env } from "../types";
+import type { Env, SalesUser, SalesSubscription } from "../types";
 import { db } from "../lib/db";
 import { json, error } from "../lib/response";
 
 /**
  * GET /api/sales/subscriptions — fetch subscription data for sales dashboard
- * Query params: page, limit, planType, status, startDate, endDate, search
+ * Query params: page, limit, planType, status, startDate, endDate
  */
 export async function getSalesSubscriptions(
   req: Request,
@@ -27,7 +27,6 @@ export async function getSalesSubscriptions(
   const status = searchParams.get("status");
   const startDate = searchParams.get("startDate");
   const endDate = searchParams.get("endDate");
-  const search = searchParams.get("search");
 
   try {
     const database = db(env);
@@ -56,22 +55,6 @@ export async function getSalesSubscriptions(
     }
 
     const subscriptionUserIds = [...new Set(subscriptions.map(s => s.user_id))];
-    const userIdFilter = subscriptionUserIds.map(id => `id=eq.${encodeURIComponent(id)}`).join(",");
-
-    // Count total users
-    let countQuery = `users?select=id,email&${userIdFilter}`;
-    const excludedDomains = [
-      "rareminds.",
-    ];
-
-    // Add domain exclusions
-    excludedDomains.forEach(domain => {
-      countQuery += `&email=not.like.%${encodeURIComponent(domain)}%`;
-    });
-
-    if (search) {
-      countQuery += `&email=like.%${encodeURIComponent(search)}%`;
-    }
 
     // Paginate user IDs
     const paginatedUserIds = subscriptionUserIds.slice(offset, offset + limit);
@@ -86,7 +69,7 @@ export async function getSalesSubscriptions(
 
     // Fetch full users data using `in` operator
     const userIdList = paginatedUserIds.map(id => encodeURIComponent(id)).join(",");
-    const users = await database.query<any>(`users?select=*&id=in.(${userIdList})`);
+    const users = await database.query<SalesUser>(`users?select=*&id=in.(${userIdList})`);
 
     // Fetch subscriptions for these users using `in` operator
     const subsUserIdList = paginatedUserIds.map(id => encodeURIComponent(id)).join(",");
@@ -95,10 +78,10 @@ export async function getSalesSubscriptions(
     if (planType) subsDetailsQuery += `&plan_type=eq.${encodeURIComponent(planType)}`;
     if (status) subsDetailsQuery += `&status=eq.${encodeURIComponent(status)}`;
 
-    const subsDetails = await database.query<any>(subsDetailsQuery);
+    const subsDetails = await database.query<SalesSubscription>(subsDetailsQuery);
 
     // Create subscription map
-    const subscriptionsByUserId: Record<string, any[]> = {};
+    const subscriptionsByUserId: Record<string, SalesSubscription[]> = {};
     subsDetails.forEach(sub => {
       if (!subscriptionsByUserId[sub.user_id]) {
         subscriptionsByUserId[sub.user_id] = [];
@@ -107,7 +90,7 @@ export async function getSalesSubscriptions(
     });
 
     // Helper to select best subscription
-    const selectSubscription = (subs: any[]) => {
+    const selectSubscription = (subs: SalesSubscription[]): SalesSubscription | null => {
       if (!subs || subs.length === 0) return null;
       return subs.sort((a, b) => {
         if (a.status === "active" && b.status !== "active") return -1;
@@ -116,32 +99,39 @@ export async function getSalesSubscriptions(
       })[0];
     };
 
-    // Fetch user roles for each user through memberships
+    // Batch fetch user roles through memberships (avoid N+1 query problem)
     const userRoles: Record<string, string> = {};
-    for (const user of users) {
-      try {
-        // First get memberships for this user
-        const memberships = await database.query<{ id: string }>(
-          `memberships?select=id&user_id=eq.${encodeURIComponent(user.id)}&limit=1`
+
+    // Set default role for all users
+    users.forEach(user => {
+      userRoles[user.id] = "member";
+    });
+
+    try {
+      // Batch fetch all memberships for all users
+      const userIds = users.map(u => encodeURIComponent(u.id)).join(',');
+      const allMemberships = await database.query<{ user_id: string; id: string }>(
+        `memberships?select=user_id,id&user_id=in.(${userIds})`
+      );
+
+      if (allMemberships.length > 0) {
+        // Batch fetch all roles for all memberships
+        const membershipIds = allMemberships.map(m => encodeURIComponent(m.id)).join(',');
+        const allRoles = await database.query<{ membership_id: string; roles: { name: string } }>(
+          `membership_roles?select=membership_id,roles(name)&membership_id=in.(${membershipIds})`
         );
 
-        if (memberships.length > 0) {
-          // Then get roles for that membership
-          const roles = await database.query<{ name: string }>(
-            `membership_roles?select=roles(name)&membership_id=eq.${encodeURIComponent(memberships[0].id)}&limit=1`
-          );
-
-          if (roles.length > 0 && (roles[0] as any).roles?.name) {
-            userRoles[user.id] = (roles[0] as any).roles.name;
-          } else {
-            userRoles[user.id] = "member";
-          }
-        } else {
-          userRoles[user.id] = "member";
-        }
-      } catch (err) {
-        userRoles[user.id] = "member";
+        // Map roles back to users in memory
+        users.forEach(user => {
+          const membership = allMemberships.find(m => m.user_id === user.id);
+          const role = allRoles.find(r => r.membership_id === membership?.id);
+          userRoles[user.id] = role?.roles?.name || "member";
+        });
       }
+    } catch (err) {
+      // If role fetch fails, keep default "member" role for all users
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      console.error("Error fetching user roles:", errorMessage);
     }
 
     // Combine users with subscriptions - exclude rm_admin role
@@ -175,7 +165,8 @@ export async function getSalesSubscriptions(
       },
     });
   } catch (err) {
-    console.error("Sales subscriptions error:", err);
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error("Sales subscriptions error:", errorMessage);
     return error("Internal server error", 500);
   }
 }
