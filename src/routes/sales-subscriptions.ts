@@ -27,8 +27,15 @@ export async function getSalesSubscriptions(
   const startDate = searchParams.get("startDate")?.trim() || null;
   const endDate = searchParams.get("endDate")?.trim() || null;
 
-  // Validate date format (ISO 8601)
-  const isValidISODate = (dateStr: string): boolean => /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}.*)?Z?$/.test(dateStr);
+  // Validate date format (ISO 8601) - use Date constructor for proper validation
+  const isValidISODate = (dateStr: string): boolean => {
+    try {
+      const d = new Date(dateStr);
+      return !isNaN(d.getTime());
+    } catch {
+      return false;
+    }
+  };
   if (startDate && !isValidISODate(startDate)) return error("Invalid startDate format, use ISO 8601", 400);
   if (endDate && !isValidISODate(endDate)) return error("Invalid endDate format, use ISO 8601", 400);
 
@@ -64,27 +71,14 @@ export async function getSalesSubscriptions(
     const paginatedUserIds = subscriptionUserIds.slice(offset, offset + limit);
     const total = subscriptionUserIds.length;
 
-    if (total === 0) {
-      return json({
-        data: [],
-        pagination: { page, limit, total: 0, totalPages: 0 },
-      });
-    }
+    // Encode user IDs once for reuse in queries
+    const userIdList = paginatedUserIds.map(id => encodeURIComponent(id)).join(",");
 
     // Fetch full users data using `in` operator
-    if (paginatedUserIds.length === 0) {
-      return json({
-        data: [],
-        pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
-      });
-    }
-    const userIdList = paginatedUserIds.map(id => encodeURIComponent(id)).join(",");
     const users = await database.query<SalesUser>(`users?select=*&id=in.(${userIdList})`);
 
     // Fetch subscriptions for these users using `in` operator
-    const subsUserIdList = paginatedUserIds.map(id => encodeURIComponent(id)).join(",");
-    const subsDetailsQuery = `subscriptions?select=*&user_id=in.(${subsUserIdList})`;
-
+    const subsDetailsQuery = `subscriptions?select=*&user_id=in.(${userIdList})`;
     const subsDetails = await database.query<SalesSubscription>(subsDetailsQuery);
 
     // Create subscription map
