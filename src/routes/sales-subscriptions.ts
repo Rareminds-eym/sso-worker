@@ -27,6 +27,11 @@ export async function getSalesSubscriptions(
   const startDate = searchParams.get("startDate")?.trim() || null;
   const endDate = searchParams.get("endDate")?.trim() || null;
 
+  // Validate date format (ISO 8601)
+  const isValidISODate = (dateStr: string): boolean => /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}.*)?Z?$/.test(dateStr);
+  if (startDate && !isValidISODate(startDate)) return error("Invalid startDate format, use ISO 8601", 400);
+  if (endDate && !isValidISODate(endDate)) return error("Invalid endDate format, use ISO 8601", 400);
+
   try {
     const database = db(env);
 
@@ -67,15 +72,18 @@ export async function getSalesSubscriptions(
     }
 
     // Fetch full users data using `in` operator
+    if (paginatedUserIds.length === 0) {
+      return json({
+        data: [],
+        pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+      });
+    }
     const userIdList = paginatedUserIds.map(id => encodeURIComponent(id)).join(",");
     const users = await database.query<SalesUser>(`users?select=*&id=in.(${userIdList})`);
 
     // Fetch subscriptions for these users using `in` operator
     const subsUserIdList = paginatedUserIds.map(id => encodeURIComponent(id)).join(",");
-    let subsDetailsQuery = `subscriptions?select=*&user_id=in.(${subsUserIdList})`;
-
-    if (planType) subsDetailsQuery += `&plan_type=eq.${encodeURIComponent(planType)}`;
-    if (status) subsDetailsQuery += `&status=eq.${encodeURIComponent(status)}`;
+    const subsDetailsQuery = `subscriptions?select=*&user_id=in.(${subsUserIdList})`;
 
     const subsDetails = await database.query<SalesSubscription>(subsDetailsQuery);
 
@@ -109,26 +117,28 @@ export async function getSalesSubscriptions(
     try {
       // Batch fetch all memberships for all users
       const userIds = users.map(u => encodeURIComponent(u.id)).join(',');
-      const allMemberships = await database.query<{ user_id: string; id: string }>(
-        `memberships?select=user_id,id&user_id=in.(${userIds})`
-      );
-
-      if (allMemberships.length > 0) {
-        // Batch fetch all roles for all memberships
-        const membershipIds = allMemberships.map(m => encodeURIComponent(m.id)).join(',');
-        const allRoles = await database.query<{ membership_id: string; roles: { name: string } }>(
-          `membership_roles?select=membership_id,roles(name)&membership_id=in.(${membershipIds})`
+      if (userIds) {
+        const allMemberships = await database.query<{ user_id: string; id: string }>(
+          `memberships?select=user_id,id&user_id=in.(${userIds})`
         );
 
-        // Map roles back to users in memory using O(n) lookup with Map
-        const membershipsByUserId = new Map(allMemberships.map(m => [m.user_id, m]));
-        const rolesByMembershipId = new Map(allRoles.map(r => [r.membership_id, r]));
+        if (allMemberships.length > 0) {
+          // Batch fetch all roles for all memberships
+          const membershipIds = allMemberships.map(m => encodeURIComponent(m.id)).join(',');
+          const allRoles = await database.query<{ membership_id: string; roles: { name: string } }>(
+            `membership_roles?select=membership_id,roles(name)&membership_id=in.(${membershipIds})`
+          );
 
-        users.forEach(user => {
-          const membership = membershipsByUserId.get(user.id);
-          const role = membership ? rolesByMembershipId.get(membership.id) : null;
-          userRoles[user.id] = role?.roles?.name || "member";
-        });
+          // Map roles back to users in memory using O(n) lookup with Map
+          const membershipsByUserId = new Map(allMemberships.map(m => [m.user_id, m]));
+          const rolesByMembershipId = new Map(allRoles.map(r => [r.membership_id, r]));
+
+          users.forEach(user => {
+            const membership = membershipsByUserId.get(user.id);
+            const role = membership ? rolesByMembershipId.get(membership.id) : null;
+            userRoles[user.id] = role?.roles.name || "member";
+          });
+        }
       }
     } catch (err) {
       // If role fetch fails, keep default "member" role for all users

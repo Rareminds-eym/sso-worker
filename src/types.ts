@@ -222,6 +222,9 @@ export interface SalesSubscription {
   user_id: string;
   plan_type: string;
   status: string;
+  plan_amount?: number;
+  billing_cycle?: string;
+  phone?: string;
   subscription_start_date?: string;
   subscription_end_date?: string;
   created_at?: string;
