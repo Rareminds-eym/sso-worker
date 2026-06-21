@@ -203,3 +203,30 @@ export interface SignupMemberBody {
   redirect_url?: string;
   user_metadata?: Record<string, unknown>;
 }
+
+// ─── Sales Database Models ─────────────────────────────────────
+export interface SalesUser {
+  id: string;
+  email: string;
+  full_name?: string;
+  first_name?: string;
+  last_name?: string;
+  company?: string;
+  phone?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SalesSubscription {
+  id: string;
+  user_id: string;
+  plan_type: string;
+  status: string;
+  plan_amount?: number;
+  billing_cycle?: string;
+  phone?: string;
+  subscription_start_date?: string;
+  subscription_end_date?: string;
+  created_at?: string;
+  updated_at?: string;
+}
