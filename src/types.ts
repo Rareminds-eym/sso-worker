@@ -215,7 +215,6 @@ export interface SalesUser {
   phone?: string;
   created_at?: string;
   updated_at?: string;
-  [key: string]: unknown;
 }
 
 export interface SalesSubscription {
@@ -227,5 +226,4 @@ export interface SalesSubscription {
   subscription_end_date?: string;
   created_at?: string;
   updated_at?: string;
-  [key: string]: unknown;
 }

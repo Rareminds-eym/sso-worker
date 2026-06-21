@@ -9,7 +9,6 @@ import { json, error } from "../lib/response";
 export async function getSalesSubscriptions(
   req: Request,
   env: Env,
-  _ctx: ExecutionContext,
 ): Promise<Response> {
 
   const url = new URL(req.url);
@@ -22,11 +21,11 @@ export async function getSalesSubscriptions(
   const limit = Number.isInteger(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 20;
   const offset = (page - 1) * limit;
 
-  // Parse filter params
-  const planType = searchParams.get("planType");
-  const status = searchParams.get("status");
-  const startDate = searchParams.get("startDate");
-  const endDate = searchParams.get("endDate");
+  // Parse and validate filter params
+  const planType = searchParams.get("planType")?.trim() || null;
+  const status = searchParams.get("status")?.trim() || null;
+  const startDate = searchParams.get("startDate")?.trim() || null;
+  const endDate = searchParams.get("endDate")?.trim() || null;
 
   try {
     const database = db(env);
@@ -121,10 +120,13 @@ export async function getSalesSubscriptions(
           `membership_roles?select=membership_id,roles(name)&membership_id=in.(${membershipIds})`
         );
 
-        // Map roles back to users in memory
+        // Map roles back to users in memory using O(n) lookup with Map
+        const membershipsByUserId = new Map(allMemberships.map(m => [m.user_id, m]));
+        const rolesByMembershipId = new Map(allRoles.map(r => [r.membership_id, r]));
+
         users.forEach(user => {
-          const membership = allMemberships.find(m => m.user_id === user.id);
-          const role = allRoles.find(r => r.membership_id === membership?.id);
+          const membership = membershipsByUserId.get(user.id);
+          const role = membership ? rolesByMembershipId.get(membership.id) : null;
           userRoles[user.id] = role?.roles?.name || "member";
         });
       }
