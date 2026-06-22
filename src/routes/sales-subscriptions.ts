@@ -90,13 +90,10 @@ export async function getSalesSubscriptions(
     });
 
     const uniqueUserIds = Object.keys(subscriptionsByUserId);
-    const total = uniqueUserIds.length;
 
-    // Paginate user IDs to reduce data fetched
-    const paginatedUserIds = uniqueUserIds.slice(offset, offset + limit);
-
-    // Step 3: Fetch full subscription details only for paginated users
-    const userIdList = paginatedUserIds.map(id => encodeURIComponent(id)).join(',');
+    // Step 3: Fetch full subscription details for ALL users (not just paginated)
+    // This is necessary because filtering happens after, and we need the complete dataset
+    const userIdList = uniqueUserIds.map(id => encodeURIComponent(id)).join(',');
     let allSubscriptions: SalesSubscription[] = [];
 
     if (userIdList) {
@@ -111,9 +108,9 @@ export async function getSalesSubscriptions(
       }
     }
 
-    // Step 4: Build role map for paginated users
+    // Step 4: Build role map for ALL users
     const userRoles: Record<string, string> = {};
-    paginatedUserIds.forEach(userId => {
+    uniqueUserIds.forEach(userId => {
       userRoles[userId] = "member";
     });
 
@@ -147,7 +144,7 @@ export async function getSalesSubscriptions(
 
           // Assign highest-priority role to each user
           const ROLE_PRIORITY: Record<string, number> = { rm_admin: 3, admin: 2, member: 1 };
-          paginatedUserIds.forEach(userId => {
+          uniqueUserIds.forEach(userId => {
             const userMemberships = membershipsByUserId.get(userId) || [];
             const allUserRoles = userMemberships.flatMap(m => rolesByMembershipId.get(m.id) || []);
             const topRole = allUserRoles.sort((a, b) => (ROLE_PRIORITY[b] || 0) - (ROLE_PRIORITY[a] || 0))[0];
@@ -161,6 +158,7 @@ export async function getSalesSubscriptions(
     }
 
     // Step 5: Filter subscriptions by clientType and search (in memory)
+    // This must happen BEFORE pagination to get accurate total count
     const filteredSubscriptions = allSubscriptions.filter(subscription => {
       // Always exclude rm_admin
       if (userRoles[subscription.user_id] === "rm_admin") {
@@ -188,8 +186,13 @@ export async function getSalesSubscriptions(
       return true;
     });
 
-    // Step 6: Build response
-    const clients = filteredSubscriptions.map(subscription => ({
+    // Step 6: Apply pagination AFTER filtering to get correct page boundaries
+    const filteredTotal = filteredSubscriptions.length;
+    const filteredTotalPages = Math.ceil(filteredTotal / limit);
+    const paginatedSubscriptions = filteredSubscriptions.slice(offset, offset + limit);
+
+    // Step 7: Build response with filtered count
+    const clients = paginatedSubscriptions.map(subscription => ({
       id: subscription.user_id,
       email: subscription.email,
       fullName: subscription.full_name || subscription.email,
@@ -209,8 +212,8 @@ export async function getSalesSubscriptions(
       pagination: {
         page,
         limit,
-        total,
-        totalPages: Math.ceil(total / limit),
+        total: filteredTotal,
+        totalPages: filteredTotalPages,
       },
     });
   } catch (err) {
