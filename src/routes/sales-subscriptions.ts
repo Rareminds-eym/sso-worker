@@ -80,19 +80,12 @@ export async function getSalesSubscriptions(
       });
     }
 
-    // Step 2: Get unique user IDs and pagination boundaries
-    const subscriptionsByUserId: Record<string, Array<{ user_id: string; id: string; plan_type: string; status: string }>> = {};
-    subscriptions.forEach(sub => {
-      if (!subscriptionsByUserId[sub.user_id]) {
-        subscriptionsByUserId[sub.user_id] = [];
-      }
-      subscriptionsByUserId[sub.user_id].push(sub);
-    });
+    // Step 2: Get unique user IDs from subscription-level filtered results
+    // Do NOT paginate yet - pagination must happen AFTER clientType/search filtering
+    const uniqueUserIds = [...new Set(subscriptions.map(s => s.user_id))];
 
-    const uniqueUserIds = Object.keys(subscriptionsByUserId);
-
-    // Step 3: Fetch full subscription details for ALL users (not just paginated)
-    // This is necessary because filtering happens after, and we need the complete dataset
+    // Step 3: Fetch full subscription details for ALL users
+    // Necessary because clientType and search filtering happen next, requiring complete dataset
     const userIdList = uniqueUserIds.map(id => encodeURIComponent(id)).join(',');
     let allSubscriptions: SalesSubscription[] = [];
 
