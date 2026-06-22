@@ -220,8 +220,8 @@ export interface SalesUser {
 export interface SalesSubscription {
   id: string;
   user_id: string;
-  email: string;
-  full_name: string;
+  email?: string;
+  full_name?: string;
   plan_type: string;
   status: string;
   plan_amount?: number;

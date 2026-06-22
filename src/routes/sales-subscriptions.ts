@@ -26,8 +26,14 @@ export async function getSalesSubscriptions(
   const status = searchParams.get("status")?.trim() || null;
   const startDate = searchParams.get("startDate")?.trim() || null;
   const endDate = searchParams.get("endDate")?.trim() || null;
-  const clientType = searchParams.get("clientType")?.trim() || null;
+  const clientTypeParam = searchParams.get("clientType")?.trim() || null;
   const search = searchParams.get("search")?.trim() || null;
+
+  // Validate clientType early - reject rm_admin before processing
+  if (clientTypeParam === "rm_admin") {
+    return error("rm_admin is not a valid client type for filtering", 400);
+  }
+  const clientTypeList = clientTypeParam ? clientTypeParam.split(",").map(t => t.trim()).filter(Boolean) : [];
 
   // Validate date format (ISO 8601)
   const isValidISODate = (dateStr: string): boolean => {
@@ -44,8 +50,8 @@ export async function getSalesSubscriptions(
   try {
     const database = db(env);
 
-    // Step 1: Build subscription query with subscription-level filters
-    let subsQuery = "subscriptions?select=*&order=created_at.desc";
+    // Step 1: Build subscription query with subscription-level filters only
+    let subsQuery = "subscriptions?select=user_id,id,plan_type,status&order=created_at.desc";
 
     const subsFilters = [];
     if (planType) subsFilters.push(`plan_type=eq.${encodeURIComponent(planType)}`);
@@ -57,41 +63,64 @@ export async function getSalesSubscriptions(
       subsQuery += "&" + subsFilters.join("&");
     }
 
-    // Fetch all subscriptions matching subscription-level filters
-    let allSubscriptions: SalesSubscription[];
+    // Fetch subscription user IDs (lightweight query for pagination)
+    let subscriptions: Array<{ user_id: string; id: string; plan_type: string; status: string }>;
     try {
-      allSubscriptions = await database.query<SalesSubscription>(subsQuery);
+      subscriptions = await database.query<{ user_id: string; id: string; plan_type: string; status: string }>(subsQuery);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       console.error("Error fetching subscriptions:", errorMessage);
       return error("Failed to fetch subscription data", 500);
     }
 
-    if (!allSubscriptions || allSubscriptions.length === 0) {
+    if (!subscriptions || subscriptions.length === 0) {
       return json({
         data: [],
         pagination: { page, limit, total: 0, totalPages: 0 },
       });
     }
 
-    // Step 2: Parse clientType filter
-    const clientTypeList = clientType ? clientType.split(',').map(t => t.trim()) : [];
+    // Step 2: Get unique user IDs and pagination boundaries
+    const subscriptionsByUserId: Record<string, Array<{ user_id: string; id: string; plan_type: string; status: string }>> = {};
+    subscriptions.forEach(sub => {
+      if (!subscriptionsByUserId[sub.user_id]) {
+        subscriptionsByUserId[sub.user_id] = [];
+      }
+      subscriptionsByUserId[sub.user_id].push(sub);
+    });
 
-    // Step 3: Build role map for users (needed for clientType filtering)
-    const userIds = [...new Set(allSubscriptions.map(s => s.user_id))];
+    const uniqueUserIds = Object.keys(subscriptionsByUserId);
+    const total = uniqueUserIds.length;
+
+    // Paginate user IDs to reduce data fetched
+    const paginatedUserIds = uniqueUserIds.slice(offset, offset + limit);
+
+    // Step 3: Fetch full subscription details only for paginated users
+    const userIdList = paginatedUserIds.map(id => encodeURIComponent(id)).join(',');
+    let allSubscriptions: SalesSubscription[] = [];
+
+    if (userIdList) {
+      try {
+        allSubscriptions = await database.query<SalesSubscription>(
+          `subscriptions?select=*&user_id=in.(${userIdList})`
+        );
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        console.error("Error fetching subscription details:", errorMessage);
+        return error("Failed to fetch subscription data", 500);
+      }
+    }
+
+    // Step 4: Build role map for paginated users
     const userRoles: Record<string, string> = {};
-
-    // Set default role for all users
-    userIds.forEach(userId => {
+    paginatedUserIds.forEach(userId => {
       userRoles[userId] = "member";
     });
 
-    // Fetch and map user roles
     try {
-      const encodedUserIds = userIds.map(id => encodeURIComponent(id)).join(',');
-      if (encodedUserIds) {
+      if (userIdList) {
         const allMemberships = await database.query<{ user_id: string; id: string }>(
-          `memberships?select=user_id,id&user_id=in.(${encodedUserIds})`
+          `memberships?select=user_id,id&user_id=in.(${userIdList})`
         );
 
         if (allMemberships.length > 0) {
@@ -100,13 +129,29 @@ export async function getSalesSubscriptions(
             `membership_roles?select=membership_id,roles(name)&membership_id=in.(${membershipIds})`
           );
 
-          const membershipsByUserId = new Map(allMemberships.map(m => [m.user_id, m]));
-          const rolesByMembershipId = new Map(allRoles.map(r => [r.membership_id, r]));
+          // Aggregate all memberships per user
+          const membershipsByUserId = new Map<string, Array<{ user_id: string; id: string }>>();
+          allMemberships.forEach(m => {
+            const existing = membershipsByUserId.get(m.user_id) || [];
+            existing.push(m);
+            membershipsByUserId.set(m.user_id, existing);
+          });
 
-          userIds.forEach(userId => {
-            const membership = membershipsByUserId.get(userId);
-            const role = membership ? rolesByMembershipId.get(membership.id) : null;
-            userRoles[userId] = role?.roles.name || "member";
+          // Aggregate all roles per membership
+          const rolesByMembershipId = new Map<string, string[]>();
+          allRoles.forEach(r => {
+            const existing = rolesByMembershipId.get(r.membership_id) || [];
+            existing.push(r.roles.name);
+            rolesByMembershipId.set(r.membership_id, existing);
+          });
+
+          // Assign highest-priority role to each user
+          const ROLE_PRIORITY: Record<string, number> = { rm_admin: 3, admin: 2, member: 1 };
+          paginatedUserIds.forEach(userId => {
+            const userMemberships = membershipsByUserId.get(userId) || [];
+            const allUserRoles = userMemberships.flatMap(m => rolesByMembershipId.get(m.id) || []);
+            const topRole = allUserRoles.sort((a, b) => (ROLE_PRIORITY[b] || 0) - (ROLE_PRIORITY[a] || 0))[0];
+            userRoles[userId] = topRole || "member";
           });
         }
       }
@@ -115,9 +160,14 @@ export async function getSalesSubscriptions(
       console.error("Error fetching user roles:", errorMessage);
     }
 
-    // Step 4: Apply client-level filters (search + clientType) in memory
+    // Step 5: Filter subscriptions by clientType and search (in memory)
     const filteredSubscriptions = allSubscriptions.filter(subscription => {
-      // Filter by clientType if specified (requires role lookup)
+      // Always exclude rm_admin
+      if (userRoles[subscription.user_id] === "rm_admin") {
+        return false;
+      }
+
+      // Filter by clientType if specified
       if (clientTypeList.length > 0) {
         const userRole = userRoles[subscription.user_id] || "member";
         if (!clientTypeList.includes(userRole)) {
@@ -125,8 +175,7 @@ export async function getSalesSubscriptions(
         }
       }
 
-      // Filter by search (email or subscription full_name from SSO database)
-      // Note: Name search on actual SkillPassport names happens in sp-dash-2 API after enrichment
+      // Filter by search (email or full_name from SSO database)
       if (search) {
         const searchLower = search.toLowerCase();
         const matchesEmail = subscription.email?.toLowerCase().includes(searchLower) || false;
@@ -136,20 +185,11 @@ export async function getSalesSubscriptions(
         }
       }
 
-      // Exclude rm_admin users
-      if (userRoles[subscription.user_id] === "rm_admin") {
-        return false;
-      }
-
       return true;
     });
 
-    // Step 5: Paginate filtered subscriptions
-    const paginatedSubscriptions = filteredSubscriptions.slice(offset, offset + limit);
-    const total = filteredSubscriptions.length;
-
-    // Step 6: Build response with user roles
-    const clients = paginatedSubscriptions.map(subscription => ({
+    // Step 6: Build response
+    const clients = filteredSubscriptions.map(subscription => ({
       id: subscription.user_id,
       email: subscription.email,
       fullName: subscription.full_name || subscription.email,
