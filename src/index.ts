@@ -928,7 +928,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   // ── Membership Sync ─────────────────────────────────────────
 
   async getUserMemberships(userId: string): Promise<{
-    memberships: { org_id: string; role: string; status: string }[];
+    memberships: { id: string; org_id: string; role: string; status: string }[];
   }> {
     if (!userId) throw new Error("userId is required");
     const database = db(this.env);
@@ -944,12 +944,86 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       memberships: (rows || []).map((r) => {
         const mrole = r.membership_roles?.[0]?.roles;
         return {
+          id: r.id,
           org_id: r.org_id,
           status: r.status,
           role: mrole?.name || "member",
         };
       }),
     };
+  }
+
+  // ── User Lookup ──────────────────────────────────────────────
+
+  /**
+   * Look up a user by their email address.
+   * Queries the SSO database's `users` table.
+   * Returns user info or null if not found.
+   */
+  async getUserByEmail(email: string): Promise<{ id: string; email: string; is_email_verified: boolean } | null> {
+    if (!email) throw new Error("email is required");
+    const database = db(this.env);
+    const normalized = email.toLowerCase().trim();
+
+    const users = await database.query<{ id: string; email: string; is_email_verified: boolean }>(
+      `users?email=eq.${encodeURIComponent(normalized)}&select=id,email,is_email_verified`,
+    );
+
+    return users && users.length > 0 ? users[0] : null;
+  }
+
+  // ── Membership RPC Methods ────────────────────────────────────
+
+  async createMembership(data: {
+    user_id: string;
+    org_id: string;
+    status: string;
+  }): Promise<{ id: string; status: string }> {
+    if (!data.user_id || !data.org_id || !data.status) {
+      throw new Error("user_id, org_id, and status are required");
+    }
+    const database = db(this.env);
+    const membership = await database.mutate<{ id: string; status: string }>("memberships", {
+      user_id: data.user_id,
+      org_id: data.org_id,
+      status: data.status,
+    });
+    return { id: membership.id, status: membership.status };
+  }
+
+  async updateMembershipStatus(data: {
+    membership_id: string;
+    status: string;
+  }): Promise<{ success: boolean }> {
+    if (!data.membership_id || !data.status) {
+      throw new Error("membership_id and status are required");
+    }
+    const database = db(this.env);
+    await database.update(
+      "memberships",
+      { id: `eq.${data.membership_id}` },
+      { status: data.status },
+    );
+    return { success: true };
+  }
+
+  async assignMembershipRole(data: {
+    membership_id: string;
+    role_id: string;
+  }): Promise<{ success: boolean }> {
+    if (!data.membership_id || !data.role_id) {
+      throw new Error("membership_id and role_id are required");
+    }
+    const database = db(this.env);
+    const existing = await database.query<{ id: string }>(
+      `membership_roles?membership_id=eq.${encodeURIComponent(data.membership_id)}&role_id=eq.${encodeURIComponent(data.role_id)}&select=id`,
+    );
+    if (existing.length > 0) return { success: true };
+    await database.mutate("membership_roles", {
+      membership_id: data.membership_id,
+      role_id: data.role_id,
+    });
+    return { success: true };
   }
 
   // ── Auth RPC Methods ──────────────────────────────────────────
