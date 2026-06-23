@@ -21,6 +21,9 @@ head_sampling_rate = 0.01
 # Deploys as: sso-api
 # ============================================================================
 
+[triggers]
+crons = ["0 * * * *"]
+
 [vars]
 ENVIRONMENT = "dev"
 # ⚠️ Replace with dev SSO-auth Supabase project URL
@@ -77,6 +80,9 @@ max_batch_timeout = 5
 [env.staging]
 name = "sso-api-staging"
 
+[env.staging.triggers]
+crons = ["0 * * * *"]
+
 [env.staging.vars]
 ENVIRONMENT = "staging"
 # ⚠️ Replace with staging SSO-auth Supabase project URL
@@ -122,6 +128,9 @@ max_batch_timeout = 5
 [env.demo]
 name = "sso-api-demo"
 
+[env.demo.triggers]
+crons = ["0 * * * *"]
+
 [env.demo.vars]
 ENVIRONMENT = "demo"
 # ⚠️ Replace with demo SSO-auth Supabase project URL
@@ -166,6 +175,9 @@ max_batch_timeout = 5
 
 [env.production]
 name = "sso-api-production"
+
+[env.production.triggers]
+crons = ["0 * * * *"]
 
 [env.production.vars]
 ENVIRONMENT = "production"

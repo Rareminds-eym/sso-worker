@@ -50,6 +50,7 @@ export type RotationOutcome =
         familyId: string;
     }
     | { kind: "theft"; userId: string; familyId: string }
+    | { kind: "blocked"; userId: string; familyId: string }
     | { kind: "expired_lifetime"; userId: string; familyId: string }
     | { kind: "invalid" }
     | { kind: "session_expired" };
@@ -134,12 +135,17 @@ export async function rotateRefreshToken(
             expirationTtl: REUSE_GRACE_INTERVAL_SEC,
         });
 
-        const accessToken = await mintAccessToken(
+        const accessResult = await mintAccessToken(
             database,
             env,
             row.user_id!,
             row.org_id,
         );
+
+        if (accessResult === "blocked" || accessResult === "not_found") {
+            await database.rpc<number>("revoke_token_family", { p_family_id: row.family_id! });
+            return { kind: accessResult === "blocked" ? "blocked" : "invalid", userId: row.user_id!, familyId: row.family_id! };
+        }
 
         audit(ctx, env, "refresh", {
             user_id: row.user_id,
@@ -151,7 +157,7 @@ export async function rotateRefreshToken(
 
         return {
             kind: "rotated",
-            accessToken,
+            accessToken: accessResult.token,
             refreshToken: newRefreshToken,
             userId: row.user_id!,
             orgId: row.org_id,
@@ -220,7 +226,12 @@ async function resolveRevoked(
         // Benign overlap — return the winner's already-issued replacement token and
         // mint a fresh access token for the family. NEVER theft.
         const orgId = await resolveFamilyOrgId(database, familyId);
-        const accessToken = await mintAccessToken(database, env, userId, orgId);
+        const accessResult = await mintAccessToken(database, env, userId, orgId);
+
+        if (accessResult === "blocked" || accessResult === "not_found") {
+            await database.rpc<number>("revoke_token_family", { p_family_id: familyId });
+            return { kind: accessResult === "blocked" ? "blocked" : "invalid", userId, familyId };
+        }
 
         audit(ctx, env, "rotation_overlap", {
             user_id: userId,
@@ -232,7 +243,7 @@ async function resolveRevoked(
 
         return {
             kind: "overlap",
-            accessToken,
+            accessToken: accessResult.token,
             refreshToken: replacement,
             userId,
             orgId,
@@ -297,10 +308,10 @@ async function mintAccessToken(
     env: Env,
     userId: string,
     orgId: string | null,
-): Promise<string> {
+): Promise<{ token: string } | "blocked" | "not_found"> {
     const [user, claims] = await Promise.all([
-        database.queryOne<{ id: string; email: string; is_email_verified: boolean; user_metadata?: Record<string, unknown> }>(
-            `users?id=eq.${userId}&select=id,email,is_email_verified,user_metadata`,
+        database.queryOne<{ id: string; email: string; is_email_verified: boolean; is_blocked: boolean; user_metadata?: Record<string, unknown> }>(
+            `users?id=eq.${userId}&select=id,email,is_email_verified,is_blocked,user_metadata`,
         ),
         database.rpc<JwtClaims>("get_jwt_claims", {
             p_user_id: userId,
@@ -308,7 +319,15 @@ async function mintAccessToken(
         }),
     ]);
 
-    return signAccessToken(
+    if (!user) {
+        return "not_found";
+    }
+
+    if (user.is_blocked) {
+        return "blocked";
+    }
+
+    const token = await signAccessToken(
         {
             sub: userId,
             email: user?.email ?? "",
@@ -321,4 +340,6 @@ async function mintAccessToken(
         },
         env,
     );
+
+    return { token };
 }

@@ -62,6 +62,10 @@ export async function refresh(
       return response;
     }
 
+    case "blocked":
+      // User is blocked → 403 (sessions already revoked by module).
+      return error("Account is blocked", 403);
+
     case "theft":
       // Token reuse detected outside grace window → 401 (sessions already revoked by module).
       return error("Refresh token reuse detected. Sessions revoked.", 401);

@@ -137,8 +137,14 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   // ── Scheduled (cron) ──────────────────────────────────────────
   async scheduled(_event: ScheduledEvent): Promise<void> {
     const database = db(this.env);
-    const deleted = await database.rpc<number>("cleanup_expired_tokens");
-    console.log(`[SSO] Cleaned up ${deleted} expired token rows`);
+    
+    // Clean up expired or revoked tokens (verifications, password resets, etc.)
+    const deletedTokens = await database.rpc<number>("cleanup_expired_tokens");
+    console.log(`[SSO] Cleaned up ${deletedTokens} expired token rows`);
+
+    // Clean up expired sessions to prevent unbounded database growth
+    const deletedSessions = await database.rpc<number>("cleanup_expired_sessions");
+    console.log(`[SSO] Cleaned up ${deletedSessions} expired session rows`);
 
     try {
       const result = await database.rpc<{ count: number }[]>("expire_old_subscriptions");
@@ -1088,6 +1094,10 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         // Throw the same error message as the old inline logic so auth-core
         // consumers see consistent behavior.
         throw new Error("Refresh token reuse detected. All sessions revoked.");
+
+      case "blocked":
+        // Account blocked.
+        throw new Error("Account is blocked");
 
       case "expired_lifetime":
         // Absolute session lifetime exceeded (Requirement 5.2).

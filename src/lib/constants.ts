@@ -1,5 +1,5 @@
-/** Session / refresh token lifetime: 30 days in milliseconds */
-export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/** Session / refresh token rolling TTL: 7 days in milliseconds */
+export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * Reuse grace window (Decision A): how long after a refresh token is rotated
