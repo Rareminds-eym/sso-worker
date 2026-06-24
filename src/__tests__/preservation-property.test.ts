@@ -58,11 +58,17 @@ UQIDAQAB
   JWT_KID: 'test-key-1',
   ALLOWED_ORIGINS: 'http://localhost:3000',
   RATE_LIMIT_KV: {} as KVNamespace,
-  EMAIL_SERVICE: {} as Fetcher,
+  EMAIL_SERVICE: {
+    fetch: async () => new Response(),
+    sendEmail: async () => ({ success: true }),
+    sendOTP: async () => ({ success: true }),
+    verifyOTP: async () => ({ success: true })
+  } as any,
   EMAIL_API_KEY: "test_email_key",
   ALLOWED_APP_URLS: "https://skillpassport.rareminds.in",
   SYNC_QUEUE: { send: () => Promise.resolve() } as unknown as Queue<any>,
   SKILLPASSPORT_URL: "https://skillpassport.rareminds.in",
+  SKILLPASSPORT: {} as any,
   INTERNAL_WEBHOOK_SECRET: "test_webhook_secret"
 };
 

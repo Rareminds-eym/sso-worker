@@ -13,34 +13,34 @@ import type { Env, JwtClaims, LoginBody, Membership, User } from "../types";
 // when user doesn't exist. MUST match SALT_ROUNDS in hash.ts.
 const DUMMY_HASH = "$2a$12$x/RiZqGfMzMQqO7MZsMmu.FS0FMCoaRaKBLGkfaOFzuBkeBMQzMFu";
 
-export async function login(
-  req: Request,
+export async function performLogin(
   env: Env,
   ctx: ExecutionContext,
-): Promise<Response> {
-  let body: LoginBody;
-  try {
-    body = await req.json() as LoginBody;
-  } catch {
-    return error("Invalid JSON body");
-  }
-
+  body: LoginBody,
+  ip: string | null,
+  ua: string | null,
+) {
   if (!body.email || !body.password) {
-    return error("email and password are required");
+    return { error: "email and password are required", status: 400 };
   }
 
   const emailErr = validateEmail(body.email);
-  if (emailErr) return emailErr;
+  if (emailErr) {
+    // emailErr is a Response, we'll return a simple object
+    return { error: "Invalid email format", status: 400 };
+  }
 
   const email = body.email.toLowerCase().trim();
-  const ip = req.headers.get("CF-Connecting-IP");
-  const ua = req.headers.get("User-Agent");
 
   const rateLimited = await endpointRateLimit(env, `login:ip:${ip ?? "unknown"}`, 10, 60);
-  if (rateLimited) return rateLimited;
+  if (rateLimited) {
+    return { error: "Rate limit exceeded", status: 429 };
+  }
 
   const locked = await checkAccountLockout(env, email);
-  if (locked) return locked;
+  if (locked) {
+    return { error: "Account locked", status: 403 };
+  }
 
   const database = db(env);
 
@@ -56,11 +56,11 @@ export async function login(
       user_agent: ua,
       metadata: { email },
     });
-    return error("Invalid credentials", 401);
+    return { error: "Invalid credentials", status: 401 };
   }
 
   if (user.is_blocked) {
-    return error("Account is blocked", 403);
+    return { error: "Account is blocked", status: 403 };
   }
 
   const valid = await verifyPassword(body.password, user.password_hash);
@@ -71,25 +71,22 @@ export async function login(
       ip_address: ip,
       user_agent: ua,
     });
-    return error("Invalid credentials", 401);
+    return { error: "Invalid credentials", status: 401 };
   }
 
   ctx.waitUntil(clearFailedLogins(env, email));
 
-  // Update last_login_at
   ctx.waitUntil(
     database.update("users", { id: `eq.${user.id}` }, { last_login_at: new Date().toISOString() })
       .catch((err) => console.warn("[SSO] Failed to update last_login_at:", err)),
   );
 
-  // Fetch ACTIVE memberships only, ordered deterministically
   const memberships = await database.query<Membership>(
     `memberships?user_id=eq.${user.id}&status=eq.active&select=*&order=created_at.asc`,
   );
 
   const activeMembership = memberships[0] ?? null;
 
-  // Get RBAC claims if user has a membership
   let claims: JwtClaims | null = null;
   if (activeMembership) {
     claims = await database.rpc<JwtClaims>("get_jwt_claims", {
@@ -129,21 +126,53 @@ export async function login(
     env,
   );
 
-  const response = json({
-    access_token: accessToken,
-    user: { id: user.id, email: user.email },
-    active_org_id: activeMembership?.org_id ?? null,
-    organizations: memberships.map((m) => ({ org_id: m.org_id })),
-  });
-
-  setAuthCookies(response, accessToken, refreshToken, env);
-
   audit(ctx, env, "login", {
     user_id: user.id,
     org_id: activeMembership?.org_id ?? null,
     ip_address: ip,
     user_agent: ua,
   });
+
+  return {
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    user: { id: user.id, email: user.email },
+    active_org_id: activeMembership?.org_id ?? null,
+    organizations: memberships.map((m) => ({ org_id: m.org_id })),
+  };
+}
+
+export async function login(
+  req: Request,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<Response> {
+  let body: LoginBody;
+  try {
+    body = await req.json() as LoginBody;
+  } catch {
+    return error("Invalid JSON body");
+  }
+
+  const ip = req.headers.get("CF-Connecting-IP");
+  const ua = req.headers.get("User-Agent");
+
+  const result = await performLogin(env, ctx, body, ip, ua);
+
+  if (result.error) {
+    return error(result.error, result.status);
+  }
+
+  const response = json({
+    access_token: result.access_token,
+    user: result.user,
+    active_org_id: result.active_org_id,
+    organizations: result.organizations,
+  });
+
+  if (result.access_token && result.refresh_token) {
+    setAuthCookies(response, result.access_token, result.refresh_token, env);
+  }
 
   return response;
 }

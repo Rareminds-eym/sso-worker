@@ -44,24 +44,14 @@ function isValidEmailTemplate(data: JsonObject): data is EmailTemplate {
  */
 export async function sendEmail(env: Env, payload: EmailPayload): Promise<void> {
   try {
-    const res = await env.EMAIL_SERVICE.fetch(
-      new Request("https://internal/send", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Internal-Api-Key": env.EMAIL_API_KEY,
-        },
-        body: JSON.stringify({
-          to: payload.to,
-          subject: payload.subject,
-          html: payload.html,
-          text: payload.text,
-        }),
-      }),
-    );
-    if (!res.ok) {
-      const err = await res.text().catch(() => "Response body unreadable");
-      console.error(`[SSO] Email delivery failed: ${res.status} ${err}`);
+    const res = await env.EMAIL_SERVICE.sendEmail({
+      to: payload.to,
+      subject: payload.subject,
+      html: payload.html,
+      text: payload.text,
+    });
+    if (!res.success) {
+      console.error(`[SSO] Email delivery failed: ${res.errorCode} ${res.error}`);
     }
   } catch (err) {
     console.error("[SSO] Email delivery error:", err);
@@ -72,11 +62,15 @@ export async function sendEmail(env: Env, payload: EmailPayload): Promise<void> 
 
 /**
  * Fetch with retry for transient Cloudflare subrequest failures.
+ * Prefers the Service Binding if available, falls back to global fetch.
  */
-async function fetchWithRetry(uri: string, options: RequestInit, retries = 2, baseDelay = 1000): Promise<Response> {
+async function fetchWithRetry(env: Env, uri: string, options: RequestInit, retries = 2, baseDelay = 1000): Promise<Response> {
   let lastError: Error | undefined;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
+      if (env.SKILLPASSPORT) {
+        return await env.SKILLPASSPORT.fetch(uri, options as any);
+      }
       return await fetch(uri, options);
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
@@ -99,6 +93,7 @@ export async function sendVerificationEmail(
 ): Promise<void> {
   try {
     const templateResponse = await fetchWithRetry(
+      env,
       `${env.SKILLPASSPORT_URL}/api/email/verification`,
       {
         method: 'POST',
@@ -148,6 +143,7 @@ export async function sendPasswordResetEmail(
 ): Promise<void> {
   try {
     const templateResponse = await fetchWithRetry(
+      env,
       `${env.SKILLPASSPORT_URL}/api/email/password-reset`,
       {
         method: 'POST',

@@ -53,6 +53,11 @@ id = "a01a250ae61941a6adb3b4c702b6ea2f"
 [[services]]
 binding = "EMAIL_SERVICE"
 service = "shared-email-api"
+entrypoint = "EmailService"
+
+[[services]]
+binding = "SKILLPASSPORT"
+service = "skill-passport-portal"
 
 
 # Queue for pushing auth DB sync events to SkillPassport
@@ -98,6 +103,11 @@ id = "bd5c0a1fa7554a91b6acbff1b345997e"
 [[env.staging.services]]
 binding = "EMAIL_SERVICE"
 service = "shared-email-api-staging"
+entrypoint = "EmailService"
+
+[[env.staging.services]]
+binding = "SKILLPASSPORT"
+service = "skill-passport-portal"
 
 [[env.staging.queues.producers]]
 binding = "SYNC_QUEUE"
@@ -146,6 +156,11 @@ id = "ea3223cc72424e06a73f5916b024f906"
 [[env.demo.services]]
 binding = "EMAIL_SERVICE"
 service = "shared-email-api-demo"
+entrypoint = "EmailService"
+
+[[env.demo.services]]
+binding = "SKILLPASSPORT"
+service = "skill-passport-portal"
 
 [[env.demo.queues.producers]]
 binding = "SYNC_QUEUE"
@@ -193,6 +208,11 @@ id = "6f54bab45fd840678dde620cd1518705"
 [[env.production.services]]
 binding = "EMAIL_SERVICE"
 service = "shared-email-api-production"
+entrypoint = "EmailService"
+
+[[env.production.services]]
+binding = "SKILLPASSPORT"
+service = "skill-passport-portal"
 
 [[env.production.queues.producers]]
 binding = "SYNC_QUEUE"

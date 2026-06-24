@@ -163,12 +163,12 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           await database.update("events", { id: `eq.${event.id}` }, { status: "processing" });
           try {
             if (event.event_type === 'payment.captured' || event.event_type === 'order.paid') {
-              if (!this.env.SKILLPASSPORT_URL || !this.env.INTERNAL_WEBHOOK_SECRET) {
-                throw new Error("SKILLPASSPORT_URL or INTERNAL_WEBHOOK_SECRET not configured. Cannot dispatch webhook.");
+              if (!this.env.SKILLPASSPORT || !this.env.SKILLPASSPORT_URL || !this.env.INTERNAL_WEBHOOK_SECRET) {
+                throw new Error("SKILLPASSPORT binding, URL or INTERNAL_WEBHOOK_SECRET not configured. Cannot dispatch webhook.");
               }
 
               const targetUrl = `${this.env.SKILLPASSPORT_URL}/api/internal/webhooks/payment`;
-              const dispatchResponse = await fetch(targetUrl, {
+              const dispatchResponse = await this.env.SKILLPASSPORT.fetch(targetUrl, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
@@ -629,6 +629,19 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return updated as Record<string, unknown>;
   }
 
+  /**
+   * Fetch subscription data for sales dashboard
+   * @param searchParams Record of query parameters
+   */
+  async getSalesSubscriptions(searchParamsStr: string): Promise<any> {
+    const { performGetSalesSubscriptions } = await import("./routes/sales-subscriptions");
+    const result = await performGetSalesSubscriptions(this.env, new URLSearchParams(searchParamsStr));
+    if ('error' in result && result.error) {
+      throw new Error(result.error);
+    }
+    return result;
+  }
+
   async cancelSubscription(subscriptionId: string, data?: {
     reason?: string;
     feedback?: string;
@@ -1048,6 +1061,29 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   }
 
   /**
+   * Log in user via true RPC.
+   *
+   * @param params Object containing email, password, ip, ua
+   * @returns Successful login payload or throws error
+   */
+  async login(params: { email?: string; password?: string; ip?: string; ua?: string }): Promise<any> {
+    const { performLogin } = await import("./routes/login");
+    const result = await performLogin(
+      this.env,
+      this.ctx,
+      { email: params.email ?? "", password: params.password ?? "" },
+      params.ip ?? null,
+      params.ua ?? null
+    );
+
+    if (result.error) {
+      throw new Error(result.error);
+    }
+
+    return result;
+  }
+
+  /**
    * RPC entry point for refresh-token rotation, callable via service binding.
    *
    * Thin adapter over the shared rotation module
@@ -1114,6 +1150,40 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
   }
 
+  async validateSession(refreshToken: string): Promise<{ valid: boolean; roles: string[] }> {
+    if (!refreshToken) return { valid: false, roles: [] };
+
+    const database = db(this.env);
+    const tokenHash = await hashToken(refreshToken);
+
+    const session = await database.queryOne<{ user_id: string; org_id: string | null; expires_at: string }>(
+      `sessions?refresh_token_hash=eq.${tokenHash}&revoked=eq.false&select=user_id,org_id,expires_at`
+    );
+
+    if (!session) {
+      return { valid: false, roles: [] };
+    }
+
+    if (new Date(session.expires_at) < new Date()) {
+      return { valid: false, roles: [] };
+    }
+
+    const user = await database.queryOne<{ is_blocked: boolean }>(
+      `users?id=eq.${session.user_id}&select=is_blocked`
+    );
+
+    if (!user || user.is_blocked) {
+      return { valid: false, roles: [] };
+    }
+
+    const claims = await database.rpc<{ roles: string[] }>("get_jwt_claims", {
+      p_user_id: session.user_id,
+      p_org_id: session.org_id,
+    });
+
+    return { valid: true, roles: claims?.roles ?? [] };
+  }
+
   async getMe(accessToken: string): Promise<Record<string, unknown>> {
     if (!accessToken) throw new Error("No access token provided");
     let payload: AccessTokenPayload;
@@ -1131,6 +1201,63 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       membership_status: payload.membership_status,
       is_email_verified: payload.is_email_verified,
     };
+  }
+
+  async forgotPassword(params: { email?: string; redirect_url?: string }, ip?: string, ua?: string): Promise<{ message?: string }> {
+    const { performForgotPassword } = await import("./routes/password-reset");
+    const result = await performForgotPassword(
+      this.env,
+      this.ctx,
+      { email: params.email, redirect_url: params.redirect_url },
+      ip ?? "unknown",
+      ua ?? null
+    );
+
+    if (result.error) {
+      throw new Error(result.error);
+    }
+
+    return { message: result.message };
+  }
+
+  async resetPassword(params: { token?: string; password?: string }, ip?: string, ua?: string): Promise<{ reset?: boolean }> {
+    const { performResetPassword } = await import("./routes/password-reset");
+    const result = await performResetPassword(
+      this.env,
+      this.ctx,
+      { token: params.token, password: params.password },
+      ip ?? null,
+      ua ?? null
+    );
+
+    if (result.error) {
+      throw new Error(result.error);
+    }
+
+    return { reset: result.reset };
+  }
+
+  async listAddonCatalog(): Promise<any> {
+    const { listAddonCatalog } = await import("./routes/addon-catalog");
+    // The listAddonCatalog route is a standard HTTP handler. We need to extract its logic if we want pure RPC,
+    // but we can also just create a dummy request to pass to it for now, since it doesn't use the request.
+    const req = new Request("https://internal/api/addon-catalog");
+    const res = await listAddonCatalog(req, this.env);
+    return res.json();
+  }
+
+  async getAddonByFeatureKey(featureKey: string): Promise<any> {
+    const { getAddonByFeatureKey } = await import("./routes/addon-catalog");
+    const req = new Request(`https://internal/api/addon-catalog/${featureKey}`);
+    const res = await getAddonByFeatureKey(req, this.env);
+    return res.json();
+  }
+
+  async listBundles(): Promise<any> {
+    const { listBundles } = await import("./routes/addon-catalog");
+    const req = new Request("https://internal/api/bundles");
+    const res = await listBundles(req, this.env);
+    return res.json();
   }
 
   async logoutSession(refreshToken: string, ip?: string, ua?: string): Promise<{ success: boolean }> {

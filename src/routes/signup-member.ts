@@ -226,7 +226,7 @@ export async function signupMember(
       }),
     );
     try {
-      await database.query(`users?id=eq.${result.user_id}`, { method: "DELETE" });
+      await database.query(`users?id=eq.${encodeURIComponent(result.user_id)}`, { method: "DELETE" });
     } catch (rollbackErr) {
       console.error(
         JSON.stringify({

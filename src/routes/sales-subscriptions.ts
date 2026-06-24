@@ -6,14 +6,10 @@ import { json, error } from "../lib/response";
  * GET /api/sales/subscriptions — fetch subscription data for sales dashboard
  * Query params: page, limit, planType, status, startDate, endDate, clientType, search
  */
-export async function getSalesSubscriptions(
-  req: Request,
+export async function performGetSalesSubscriptions(
   env: Env,
-): Promise<Response> {
-
-  const url = new URL(req.url);
-  const searchParams = url.searchParams;
-
+  searchParams: URLSearchParams
+) {
   // Parse pagination params
   const rawPage = Number(searchParams.get("page") ?? "1");
   const rawLimit = Number(searchParams.get("limit") ?? "20");
@@ -31,7 +27,7 @@ export async function getSalesSubscriptions(
 
   // Validate clientType early - reject rm_admin before processing
   if (clientTypeParam === "rm_admin") {
-    return error("rm_admin is not a valid client type for filtering", 400);
+    return { error: "rm_admin is not a valid client type for filtering", status: 400 };
   }
   const clientTypeList = clientTypeParam ? clientTypeParam.split(",").map(t => t.trim()).filter(Boolean) : [];
 
@@ -44,8 +40,8 @@ export async function getSalesSubscriptions(
       return false;
     }
   };
-  if (startDate && !isValidISODate(startDate)) return error("Invalid startDate format, use ISO 8601", 400);
-  if (endDate && !isValidISODate(endDate)) return error("Invalid endDate format, use ISO 8601", 400);
+  if (startDate && !isValidISODate(startDate)) return { error: "Invalid startDate format, use ISO 8601", status: 400 };
+  if (endDate && !isValidISODate(endDate)) return { error: "Invalid endDate format, use ISO 8601", status: 400 };
 
   try {
     const database = db(env);
@@ -70,14 +66,14 @@ export async function getSalesSubscriptions(
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       console.error("Error fetching subscriptions:", errorMessage);
-      return error("Failed to fetch subscription data", 500);
+      return { error: "Failed to fetch subscription data", status: 500 };
     }
 
     if (!subscriptions || subscriptions.length === 0) {
-      return json({
+      return {
         data: [],
         pagination: { page, limit, total: 0, totalPages: 0 },
-      });
+      };
     }
 
     // Step 2: Get unique user IDs from subscription-level filtered results
@@ -97,7 +93,7 @@ export async function getSalesSubscriptions(
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         console.error("Error fetching subscription details:", errorMessage);
-        return error("Failed to fetch subscription data", 500);
+        return { error: "Failed to fetch subscription data", status: 500 };
       }
     }
 
@@ -200,7 +196,7 @@ export async function getSalesSubscriptions(
       endDate: subscription.subscription_end_date,
     }));
 
-    return json({
+    return {
       data: clients,
       pagination: {
         page,
@@ -208,10 +204,24 @@ export async function getSalesSubscriptions(
         total: filteredTotal,
         totalPages: filteredTotalPages,
       },
-    });
+    };
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     console.error("Sales subscriptions error:", errorMessage);
-    return error("Internal server error", 500);
+    return { error: "Internal server error", status: 500 };
   }
+}
+
+export async function getSalesSubscriptions(
+  req: Request,
+  env: Env,
+): Promise<Response> {
+  const url = new URL(req.url);
+  const result = await performGetSalesSubscriptions(env, url.searchParams);
+  
+  if ('error' in result && result.error) {
+    return error(result.error, result.status);
+  }
+  
+  return json(result);
 }
