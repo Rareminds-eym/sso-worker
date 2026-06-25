@@ -123,10 +123,18 @@ function validateOrigin(req: Request, env: Env): boolean {
 
   // For state-changing methods (POST, PUT, DELETE, PATCH), require Origin header
   const origin = req.headers.get("Origin");
+  const allowed = env.ALLOWED_ORIGINS.split(",").map((o) => o.trim());
+
+  console.log('[CORS DEBUG]', {
+    method: req.method,
+    origin: origin || '(missing)',
+    allowedOrigins: allowed,
+    isValid: origin ? allowed.some((pattern) => originMatchesPattern(origin, pattern)) : false
+  });
+
   if (!origin) return false; // Missing Origin on state-changing request → reject
 
   // Origin present: validate against allowlist
-  const allowed = env.ALLOWED_ORIGINS.split(",").map((o) => o.trim());
   return allowed.some((pattern) => originMatchesPattern(origin, pattern));
 }
 
@@ -491,6 +499,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     password: string;
     role: string;
     org_id: string;
+    learner_metadata?: Record<string, unknown>;
+    user_type?: string;
   }): Promise<{ user_id: string; org_id: string; membership_id: string }> {
     if (!data.email || !data.password || !data.role || !data.org_id) {
       throw new Error("email, password, role, and org_id are required");
@@ -500,8 +510,9 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const password_hash = await hashPassword(data.password);
     const database = db(this.env);
 
-    let result: { user_id: string; org_id: string; membership_id: string };
+    let result: any;
     try {
+      console.log('[SSO] Calling signup_member RPC with email:', email);
       result = await database.rpc<{ user_id: string; org_id: string; membership_id: string }>(
         "signup_member",
         {
@@ -511,7 +522,17 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           p_org_id: data.org_id,
         },
       );
+      console.log('[SSO] ✅ RPC succeeded. Result:', JSON.stringify(result));
+      if (!result || typeof result !== 'object') {
+        console.error('[SSO] ❌ RPC returned invalid result type:', typeof result, result);
+        throw new Error('RPC returned invalid result: ' + typeof result);
+      }
+      if (!result.user_id) {
+        console.error('[SSO] ❌ RPC result missing user_id:', Object.keys(result));
+        throw new Error('RPC did not return user_id. Keys: ' + Object.keys(result).join(','));
+      }
     } catch (err: any) {
+      console.error('[SSO] ❌ signup_member RPC failed:', err?.message);
       if (err?.message?.includes("duplicate") || err?.message?.includes("23505")) {
         throw new Error(`A user with email ${email} already exists`);
       }
@@ -520,15 +541,38 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     // Admin-created members are trusted — auto-verify their email so they can log
     // in immediately without an email-verification step.
-    await database.update("users", { id: `eq.${result.user_id}` }, { is_email_verified: true });
+    console.log('[SSO] ✅ RPC result valid. Verifying email for user:', result.user_id);
+    try {
+      await database.update("users", { id: `eq.${result.user_id}` }, { is_email_verified: true });
+      console.log('[SSO] ✅ Email verified for user:', result.user_id);
+    } catch (err) {
+      console.error('[SSO] ❌ Failed to verify email:', (err as any)?.message);
+      throw err;
+    }
 
     // Emit sync events — await directly (RPC method, no ctx.waitUntil)
     try {
+      console.log('[SSO] SYNC_QUEUE exists:', !!this.env.SYNC_QUEUE);
+      console.log('[SSO] SYNC_QUEUE type:', typeof this.env.SYNC_QUEUE);
+
+      if (!this.env.SYNC_QUEUE) {
+        throw new Error('SYNC_QUEUE binding is undefined - check wrangler.toml queue producer config');
+      }
+
+      console.log('[SSO] Publishing user.created...');
       await this.env.SYNC_QUEUE.send({
         type: 'user.created',
-        payload: { id: result.user_id, email },
+        payload: {
+          id: result.user_id,
+          email,
+          ...(data.user_type && { user_type: data.user_type }),
+        },
         timestamp: new Date().toISOString(),
       });
+      console.log('[SSO] ✅ user.created published');
+
+      console.log('[SSO] Publishing membership.created...');
+      console.log('[SSO] Payload includes learner_metadata:', !!data.learner_metadata);
       await this.env.SYNC_QUEUE.send({
         type: 'membership.created',
         payload: {
@@ -536,11 +580,16 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           organization_id: data.org_id,
           roles: [data.role],
           status: 'active',
+          ...(data.learner_metadata && { learner_metadata: data.learner_metadata }),
         },
         timestamp: new Date().toISOString(),
       });
+      console.log('[SSO] Queue send completed');
+      console.log('[SSO] ✅ membership.created published successfully');
     } catch (e) {
-      console.error('[SSO] Failed to emit sync events:', e);
+      console.error('[SSO] ❌ Failed to emit sync events');
+      console.error('[SSO] Error:', (e as any)?.message);
+      console.error('[SSO] Stack:', (e as any)?.stack);
     }
 
     return result;
