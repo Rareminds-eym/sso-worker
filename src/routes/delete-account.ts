@@ -1,7 +1,9 @@
-import type { Env, AccessTokenPayload } from "../types";
-import { clearCookies } from "../lib/cookies";
-import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
+import { clearCookies } from "../lib/cookies";
+import { endpointRateLimit } from "../lib/rate-limit";
+import { error, json } from "../lib/response";
+import { publishSyncEvent } from "../lib/sync-queue";
+import type { AccessTokenPayload, Env } from "../types";
 
 /**
  * POST /auth/delete-account
@@ -19,6 +21,9 @@ export async function deleteAccount(
   auth?: AccessTokenPayload,
 ): Promise<Response> {
   const payload = auth!;
+  const rateLimited = await endpointRateLimit(env, `delete-account:user:${payload.sub}`, 20, 60);
+  if (rateLimited) return rateLimited;
+
   const ip = req.headers.get("CF-Connecting-IP");
   const ua = req.headers.get("User-Agent");
 
@@ -43,7 +48,12 @@ export async function deleteAccount(
     }
 
     const response = json({ deleted: true });
-    clearCookies(response);
+    clearCookies(response, env);
+
+    // Response fully built — emit sync events
+    publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.deleted', {
+      user_id: payload.sub,
+    });
 
     audit(ctx, env, "account_deleted", {
       user_id: payload.sub,

@@ -10,6 +10,7 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { SignJWT, importPKCS8 } from 'jose';
+import { JWT_ISSUER, JWT_AUDIENCE } from '../lib/constants';
 import type { Env } from '../types';
 import type { ExecutionContext } from '@cloudflare/workers-types';
 
@@ -57,13 +58,22 @@ UQIDAQAB
   JWT_KID: 'test-key-1',
   ALLOWED_ORIGINS: 'http://localhost:3000',
   RATE_LIMIT_KV: {} as KVNamespace,
-  EMAIL_SERVICE: {} as Fetcher,
-  EMAIL_API_KEY: 'test-email-api-key',
-  ALLOWED_APP_URLS: 'http://localhost:3000',
+  EMAIL_SERVICE: {
+    fetch: async () => new Response(),
+    sendEmail: async () => ({ success: true }),
+    sendOTP: async () => ({ success: true }),
+    verifyOTP: async () => ({ success: true })
+  } as any,
+  EMAIL_API_KEY: "test_email_key",
+  ALLOWED_APP_URLS: "https://skillpassport.rareminds.in",
+  SYNC_QUEUE: { send: () => Promise.resolve() } as unknown as Queue<any>,
+  SKILLPASSPORT_URL: "https://skillpassport.rareminds.in",
+  SKILLPASSPORT: {} as any,
+  INTERNAL_WEBHOOK_SECRET: "test_webhook_secret"
 };
 
 async function createWorker() {
-  const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
+  const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as any;
   const { default: SsoWorker } = await import('../index');
   return new SsoWorker(ctx, mockEnv);
 }
@@ -87,8 +97,8 @@ describe('Property: Public Endpoints Work Correctly', () => {
       .setProtectedHeader({ alg: 'RS256', kid: mockEnv.JWT_KID, typ: 'JWT' })
       .setIssuedAt()
       .setExpirationTime('15m')
-      .setIssuer('sso-api')
-      .setAudience('sso-client')
+      .setIssuer(JWT_ISSUER)
+      .setAudience(JWT_AUDIENCE)
       .sign(privateKey);
 
     expiredUserJWT = await new SignJWT({
@@ -103,8 +113,8 @@ describe('Property: Public Endpoints Work Correctly', () => {
       .setProtectedHeader({ alg: 'RS256', kid: mockEnv.JWT_KID, typ: 'JWT' })
       .setIssuedAt(Math.floor(Date.now() / 1000) - 3600)
       .setExpirationTime('-30m')
-      .setIssuer('sso-api')
-      .setAudience('sso-client')
+      .setIssuer(JWT_ISSUER)
+      .setAudience(JWT_AUDIENCE)
       .sign(privateKey);
   });
 

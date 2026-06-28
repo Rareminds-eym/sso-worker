@@ -1,15 +1,21 @@
-import type { Env, Session } from "../types";
+import { audit } from "../lib/audit";
+import { clearCookies, getCookie } from "../lib/cookies";
 import { db } from "../lib/db";
 import { hashToken } from "../lib/hash";
-import { getCookie, clearCookies } from "../lib/cookies";
+import { endpointRateLimit } from "../lib/rate-limit";
 import { json } from "../lib/response";
-import { audit } from "../lib/audit";
+import type { Env, Session } from "../types";
 
 export async function logout(
   req: Request,
   env: Env,
   ctx: ExecutionContext,
 ): Promise<Response> {
+  // 0. Apply rate limiting BEFORE any session mutation (Requirement 6.4).
+  const ip = req.headers.get("CF-Connecting-IP") ?? "unknown";
+  const rateLimited = await endpointRateLimit(env, `logout:ip:${ip}`, 20, 60);
+  if (rateLimited) return rateLimited;
+
   // Accept refresh token from cookie (browser) OR body (server SDK)
   let refreshToken = getCookie(req, "refresh_token");
 
@@ -49,7 +55,7 @@ export async function logout(
   }
 
   const response = json({ success: true });
-  clearCookies(response);
+  clearCookies(response, env);
 
   audit(ctx, env, "logout", {
     user_id: userId,

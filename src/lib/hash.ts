@@ -21,7 +21,13 @@ export async function hashToken(token: string): Promise<string> {
     .join("");
 }
 
-/** Generate a cryptographically random refresh token */
+/** Generate a cryptographically random refresh token (256-bit, base64url) */
 export function generateRefreshToken(): string {
-  return crypto.randomUUID() + crypto.randomUUID();
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  // base64url encoding: URL-safe, no padding
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=/g, "");
 }

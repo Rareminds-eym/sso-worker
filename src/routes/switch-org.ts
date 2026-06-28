@@ -1,11 +1,12 @@
-import type { Env, SwitchOrgBody, Membership, AccessTokenPayload, JwtClaims } from "../types";
-import { db } from "../lib/db";
-import { signAccessToken } from "../lib/jwt";
-import { hashToken, generateRefreshToken } from "../lib/hash";
-import { getCookie, setAuthCookies } from "../lib/cookies";
-import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
 import { SESSION_TTL_MS } from "../lib/constants";
+import { getCookie, setAuthCookies } from "../lib/cookies";
+import { db } from "../lib/db";
+import { generateRefreshToken, hashToken } from "../lib/hash";
+import { signAccessToken } from "../lib/jwt";
+import { endpointRateLimit } from "../lib/rate-limit";
+import { error, json } from "../lib/response";
+import type { AccessTokenPayload, Env, JwtClaims, Membership, SwitchOrgBody } from "../types";
 
 export async function switchOrg(
   req: Request,
@@ -14,6 +15,9 @@ export async function switchOrg(
   auth?: AccessTokenPayload,
 ): Promise<Response> {
   const currentPayload = auth!;
+  const rateLimited = await endpointRateLimit(env, `switch-org:user:${currentPayload.sub}`, 30, 60);
+  if (rateLimited) return rateLimited;
+
   const ip = req.headers.get("CF-Connecting-IP");
   const ua = req.headers.get("User-Agent");
 
@@ -30,18 +34,37 @@ export async function switchOrg(
 
   const database = db(env);
 
-  // Verify ACTIVE membership in target org
-  const membership = await database.queryOne<Membership>(
-    `memberships?user_id=eq.${currentPayload.sub}&org_id=eq.${body.org_id}&status=eq.active&select=*`,
-  );
+  // Verify ACTIVE membership in target org and check if user is blocked
+  const [membership, user] = await Promise.all([
+    database.queryOne<Membership>(
+      `memberships?user_id=eq.${currentPayload.sub}&org_id=eq.${body.org_id}&status=eq.active&select=*`,
+    ),
+    database.queryOne<{ is_blocked: boolean }>(
+      `users?id=eq.${currentPayload.sub}&select=is_blocked`,
+    )
+  ]);
+
+  if (user?.is_blocked) {
+    return error("Account is blocked", 403);
+  }
 
   if (!membership) {
     return error("You are not an active member of this organization", 403);
   }
 
   const oldRefresh = getCookie(req, "refresh_token");
+  let familyId = crypto.randomUUID(); // Fallback if no old session (should not happen)
+  let familyCreatedAt = new Date().toISOString();
+
   if (oldRefresh) {
     const oldHash = await hashToken(oldRefresh);
+    const oldSession = await database.queryOne<{ family_id: string; family_created_at: string; created_at: string }>(
+      `sessions?refresh_token_hash=eq.${oldHash}&select=family_id,family_created_at,created_at`
+    );
+    if (oldSession) {
+      familyId = oldSession.family_id || familyId;
+      familyCreatedAt = oldSession.family_created_at || oldSession.created_at || familyCreatedAt;
+    }
     await database.update(
       "sessions",
       { refresh_token_hash: `eq.${oldHash}` },
@@ -63,8 +86,10 @@ export async function switchOrg(
 
   const refreshToken = generateRefreshToken();
   const refreshHash = await hashToken(refreshToken);
+  const sessionId = crypto.randomUUID();
 
   await database.mutate("sessions", {
+    id: sessionId,
     user_id: currentPayload.sub,
     org_id: body.org_id,
     refresh_token_hash: refreshHash,
@@ -72,6 +97,8 @@ export async function switchOrg(
     ip_address: ip,
     revoked: false,
     expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+    family_id: familyId,
+    family_created_at: familyCreatedAt,
   });
 
   const accessToken = await signAccessToken(
@@ -83,6 +110,7 @@ export async function switchOrg(
       products: claims.products,
       membership_status: claims.membership_status,
       is_email_verified: currentPayload.is_email_verified,
+      user_metadata: currentPayload.user_metadata ?? {},
     },
     env,
   );
@@ -92,7 +120,7 @@ export async function switchOrg(
     org_id: body.org_id,
     roles: claims.roles,
   });
-  setAuthCookies(response, accessToken, refreshToken);
+  setAuthCookies(response, accessToken, refreshToken, env);
 
   audit(ctx, env, "switch_org", {
     user_id: currentPayload.sub,

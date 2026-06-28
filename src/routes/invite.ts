@@ -1,14 +1,16 @@
-import type { Env, InviteBody, AcceptInviteBody, Invite, User, Membership, AccessTokenPayload, JwtClaims } from "../types";
-import { db } from "../lib/db";
-import { signAccessToken } from "../lib/jwt";
-import { hashPassword, hashToken, generateRefreshToken } from "../lib/hash";
-import { setAuthCookies } from "../lib/cookies";
-import { validateEmail, validatePassword, validateRedirectUrl, resolveAppUrl } from "../lib/validate";
-import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
-import { sendEmail, inviteEmail } from "../lib/email";
+import { INVITE_TTL_MS, SESSION_TTL_MS } from "../lib/constants";
+import { setAuthCookies } from "../lib/cookies";
+import { db } from "../lib/db";
+import { inviteEmail, sendEmail } from "../lib/email";
 import { checkEmailThrottle } from "../lib/email-throttle";
-import { SESSION_TTL_MS, INVITE_TTL_MS } from "../lib/constants";
+import { generateRefreshToken, hashPassword, hashToken } from "../lib/hash";
+import { signAccessToken } from "../lib/jwt";
+import { endpointRateLimit } from "../lib/rate-limit";
+import { error, json } from "../lib/response";
+import { publishSyncEvent } from "../lib/sync-queue";
+import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "../lib/validate";
+import type { AcceptInviteBody, AccessTokenPayload, Env, Invite, InviteBody, JwtClaims, Membership, User } from "../types";
 
 const ALLOWED_INVITE_ROLES = ["admin", "member"] as const;
 
@@ -55,6 +57,9 @@ export async function createInvite(
   if (body.org_id !== caller.org_id) {
     return error("You can only invite to your active organization", 403);
   }
+
+  const rateLimited = await endpointRateLimit(env, `invite:org:${caller.org_id}`, 5, 60);
+  if (rateLimited) return rateLimited;
 
   const database = db(env);
   const inviteEmailAddress = body.email.toLowerCase().trim();
@@ -132,6 +137,10 @@ export async function acceptInvite(
   env: Env,
   ctx: ExecutionContext,
 ): Promise<Response> {
+  const ip = req.headers.get("CF-Connecting-IP") ?? "unknown";
+  const rateLimited = await endpointRateLimit(env, `invite:ip:${ip}`, 10, 60);
+  if (rateLimited) return rateLimited;
+
   let body: AcceptInviteBody;
   try {
     body = await req.json() as AcceptInviteBody;
@@ -143,7 +152,6 @@ export async function acceptInvite(
     return error("token is required");
   }
 
-  const ip = req.headers.get("CF-Connecting-IP");
   const ua = req.headers.get("User-Agent");
   const database = db(env);
 
@@ -162,7 +170,9 @@ export async function acceptInvite(
     `users?email=eq.${encodeURIComponent(invite.email)}&select=*`,
   );
 
+  let isNewUser = false;
   if (!user) {
+    isNewUser = true;
     const passErr = validatePassword(body.password);
     if (passErr) return passErr;
 
@@ -234,8 +244,10 @@ export async function acceptInvite(
 
   const refreshToken = generateRefreshToken();
   const refreshHash = await hashToken(refreshToken);
+  const sessionId = crypto.randomUUID();
 
   await database.mutate("sessions", {
+    id: sessionId,
     user_id: user.id,
     org_id: invite.org_id,
     refresh_token_hash: refreshHash,
@@ -243,6 +255,8 @@ export async function acceptInvite(
     ip_address: ip,
     revoked: false,
     expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+    family_id: sessionId,
+    family_created_at: new Date().toISOString(),
   });
 
   const accessToken = await signAccessToken(
@@ -254,6 +268,7 @@ export async function acceptInvite(
       products: claims?.products ?? [],
       membership_status: claims?.membership_status ?? "active",
       is_email_verified: user.is_email_verified,
+      user_metadata: user.user_metadata ?? {},
     },
     env,
   );
@@ -264,7 +279,31 @@ export async function acceptInvite(
     org_id: invite.org_id,
   });
 
-  setAuthCookies(response, accessToken, refreshToken);
+  setAuthCookies(response, accessToken, refreshToken, env);
+
+  // Emit sync events (non-blocking, post-response)
+  if (isNewUser) {
+    publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.created', {
+      id: user.id,
+      email: user.email,
+      user_metadata: {},
+    });
+  }
+  if (existingMembership && existingMembership.status !== 'active') {
+    publishSyncEvent(env.SYNC_QUEUE, ctx, 'membership.role_changed', {
+      user_id: user.id,
+      organization_id: invite.org_id,
+      roles: inviteRoles,
+      status: 'active',
+    });
+  } else if (!existingMembership) {
+    publishSyncEvent(env.SYNC_QUEUE, ctx, 'membership.created', {
+      user_id: user.id,
+      organization_id: invite.org_id,
+      roles: inviteRoles,
+      status: 'active',
+    });
+  }
 
   audit(ctx, env, "invite_accepted", {
     user_id: user.id,

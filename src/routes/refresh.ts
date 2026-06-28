@@ -1,118 +1,90 @@
-import type { Env, Session, JwtClaims } from "../types";
-import { db } from "../lib/db";
-import { hashToken, generateRefreshToken } from "../lib/hash";
-import { signAccessToken } from "../lib/jwt";
 import { getCookie, setAuthCookies } from "../lib/cookies";
-import { json, error } from "../lib/response";
-import { audit } from "../lib/audit";
-import { SESSION_TTL_MS } from "../lib/constants";
+import { endpointRateLimit } from "../lib/rate-limit";
+import { error, json } from "../lib/response";
+import { rotateRefreshToken, type RotationContext } from "../lib/session-rotation";
+import type { Env } from "../types";
 
+/**
+ * POST /auth/refresh — thin adapter over the shared rotation module.
+ *
+ * Reads the presented refresh token (from cookie or request body), builds a
+ * RotationContext from request headers, delegates to rotateRefreshToken, and
+ * translates the outcome into an HTTP Response.
+ *
+ * All rotation logic, theft detection, grace-window resolution, absolute
+ * lifetime enforcement, and audit emission live in session-rotation.ts so the
+ * HTTP route and RPC entry point (index.ts::refreshSession) cannot diverge in
+ * security behavior (Requirement 4).
+ */
 export async function refresh(
   req: Request,
   env: Env,
   ctx: ExecutionContext,
 ): Promise<Response> {
-  // Accept refresh token from cookie (browser) OR body (server SDK)
-  let incomingToken = getCookie(req, "refresh_token");
+  // 0. Apply rate limiting BEFORE any session mutation.
+  const ip = req.headers.get("CF-Connecting-IP") ?? "unknown";
+  const rateLimited = await endpointRateLimit(env, `refresh:ip:${ip}`, 20, 60);
+  if (rateLimited) return rateLimited;
 
-  if (!incomingToken) {
+  // 1. Read the presented refresh token from cookie (browser) OR body (server SDK).
+  let presentedToken = getCookie(req, "refresh_token");
+
+  if (!presentedToken) {
     try {
       const body = await req.json() as { refresh_token?: string };
-      incomingToken = body?.refresh_token ?? null;
+      presentedToken = body?.refresh_token ?? null;
     } catch {
       // No body or invalid JSON — that's fine, token just stays null
     }
   }
 
-  if (!incomingToken) {
+  if (!presentedToken) {
     return error("No refresh token provided", 401);
   }
 
-  const database = db(env);
-  const tokenHash = await hashToken(incomingToken);
-  const ip = req.headers.get("CF-Connecting-IP");
-  const ua = req.headers.get("User-Agent");
+  // 2. Build RotationContext from CF-Connecting-IP and User-Agent headers.
+  const rotationCtx: RotationContext = {
+    ip: req.headers.get("CF-Connecting-IP"),
+    ua: req.headers.get("User-Agent"),
+  };
 
-  const session = await database.queryOne<Session>(
-    `sessions?refresh_token_hash=eq.${tokenHash}&select=*`,
-  );
+  // 3. Call the shared rotation module.
+  const outcome = await rotateRefreshToken(env, ctx, presentedToken, rotationCtx);
 
-  if (!session) {
-    return error("Invalid refresh token", 401);
+  // 4. Translate RotationOutcome into HTTP Response.
+  switch (outcome.kind) {
+    case "rotated":
+    case "overlap": {
+      // Success (winner or benign overlap): return 200 with access token in
+      // JSON body + X-Access-Token header, and set the refresh cookie.
+      const response = json({ access_token: outcome.accessToken });
+      setAuthCookies(response, outcome.accessToken, outcome.refreshToken, env);
+      return response;
+    }
+
+    case "blocked":
+      // User is blocked → 403 (sessions already revoked by module).
+      return error("Account is blocked", 403);
+
+    case "theft":
+      // Token reuse detected outside grace window → 401 (sessions already revoked by module).
+      return error("Refresh token reuse detected. Sessions revoked.", 401);
+
+    case "expired_lifetime":
+      // Absolute session lifetime exceeded → 401.
+      return error("Session lifetime exceeded", 401);
+
+    case "session_expired":
+      // Token expired (within normal TTL) → 401.
+      return error("Session expired", 401);
+
+    case "invalid":
+      // Unknown or invalid refresh token → 401.
+      return error("Invalid refresh token", 401);
+
+    default:
+      // TypeScript exhaustiveness check — should never reach here.
+      const _exhaustive: never = outcome;
+      return error("Unknown rotation outcome", 500);
   }
-
-  // Theft detection
-  if (session.revoked) {
-    await database.update(
-      "sessions",
-      { user_id: `eq.${session.user_id}` },
-      { revoked: true },
-    );
-    audit(ctx, env, "refresh_theft_detected", {
-      user_id: session.user_id,
-      ip_address: ip,
-      user_agent: ua,
-    });
-    return error("Refresh token reuse detected. All sessions revoked.", 401);
-  }
-
-  if (new Date(session.expires_at) < new Date()) {
-    await database.update("sessions", { id: `eq.${session.id}` }, { revoked: true });
-    return error("Session expired", 401);
-  }
-
-  // Revoke old session
-  await database.update("sessions", { id: `eq.${session.id}` }, { revoked: true });
-
-  // Create rotated session
-  const newRefreshToken = generateRefreshToken();
-  const newRefreshHash = await hashToken(newRefreshToken);
-
-  await database.mutate("sessions", {
-    user_id: session.user_id,
-    org_id: session.org_id,
-    refresh_token_hash: newRefreshHash,
-    user_agent: ua,
-    ip_address: ip,
-    revoked: false,
-    expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
-    rotated_from: session.id,
-    last_used_at: new Date().toISOString(),
-  });
-
-  // Fetch user email + verified status + RBAC claims in parallel
-  const [user, claims] = await Promise.all([
-    database.queryOne<{ id: string; email: string; is_email_verified: boolean }>(
-      `users?id=eq.${session.user_id}&select=id,email,is_email_verified`,
-    ),
-    database.rpc<JwtClaims>("get_jwt_claims", {
-      p_user_id: session.user_id,
-      p_org_id: session.org_id,
-    }),
-  ]);
-
-  const accessToken = await signAccessToken(
-    {
-      sub: session.user_id,
-      email: user?.email ?? "",
-      org_id: session.org_id ?? "",
-      roles: claims?.roles ?? [],
-      products: claims?.products ?? [],
-      membership_status: claims?.membership_status ?? "active",
-      is_email_verified: user?.is_email_verified ?? false,
-    },
-    env,
-  );
-
-  const response = json({ access_token: accessToken });
-  setAuthCookies(response, accessToken, newRefreshToken);
-
-  audit(ctx, env, "refresh", {
-    user_id: session.user_id,
-    org_id: session.org_id,
-    ip_address: ip,
-    user_agent: ua,
-  });
-
-  return response;
 }

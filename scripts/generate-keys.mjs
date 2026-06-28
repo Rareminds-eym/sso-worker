@@ -12,11 +12,11 @@
 import { generateKeyPair, exportPKCS8, exportSPKI } from "jose";
 import { writeFileSync } from "node:fs";
 
-const { privateKey, publicKey } = await generateKeyPair("RS256");
-
+const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });
+ 
 const privatePem = await exportPKCS8(privateKey);
 const publicPem = await exportSPKI(publicKey);
-
+ 
 writeFileSync("private.pem", privatePem);
 writeFileSync("public.pem", publicPem);
 

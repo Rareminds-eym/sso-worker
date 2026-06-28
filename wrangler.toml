@@ -3,21 +3,28 @@ main = "src/index.ts"
 compatibility_date = "2026-05-25"
 compatibility_flags = ["nodejs_compat"]
 
+[dev]
+port = 8787
+
 [observability]
 enabled = true
 
+[observability.logs]
+head_sampling_rate = 1
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.01
+
+[triggers]
+crons = ["0 * * * *"]
+
 [vars]
-# Production Supabase (remote) — used when deploying
+ENVIRONMENT = "production"
 SUPABASE_URL = "https://quvdgaydpctuspzeqknc.supabase.co"
 ALLOWED_ORIGINS = "http://localhost:3000,http://localhost:5173,http://localhost:8788,https://*.rareminds.in,https://*.pages.dev,http://127.0.0.1:8788"
 ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:5173,http://localhost:8788,http://127.0.0.1:8788,https://skillpassport.rareminds.in,https://*.rareminds.in,https://*.pages.dev"
-
-# Local development overrides — wrangler dev reads .dev.vars for secrets
-# and this section for vars. Override SUPABASE_URL for local dev by
-# adding it to .dev.vars (wrangler dev vars override wrangler.toml vars).
-# Local SSO DB:  postgresql://postgres:postgres@127.0.0.1:54332/postgres
-# Local API URL: http://127.0.0.1:54331
-# Local Studio:  http://127.0.0.1:54333
+SKILLPASSPORT_URL = "https://skillpassport.rareminds.in"
 
 # Secrets (set via `wrangler secret put`):
 # SUPABASE_SERVICE_ROLE_KEY
@@ -33,6 +40,22 @@ id = "6f54bab45fd840678dde620cd1518705"
 [[services]]
 binding = "EMAIL_SERVICE"
 service = "shared-email-api"
+entrypoint = "EmailService"
 
-[triggers]
-crons = ["0 3 * * *"]
+[[services]]
+binding = "SKILLPASSPORT"
+service = "skill-passport-portal"
+
+[[queues.producers]]
+binding = "SYNC_QUEUE"
+queue = "auth-db-sync-queue"
+
+[[queues.consumers]]
+queue = "payment-webhooks-queue"
+max_batch_size = 10
+max_batch_timeout = 5
+
+[[queues.consumers]]
+queue = "sso-reverse-sync-queue"
+max_batch_size = 10
+max_batch_timeout = 5

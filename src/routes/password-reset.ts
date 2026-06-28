@@ -4,8 +4,9 @@ import { hashPassword, hashToken } from "../lib/hash";
 import { validateEmail, validatePassword, validateRedirectUrl, resolveAppUrl } from "../lib/validate";
 import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
-import { sendEmail, passwordResetEmail } from "../lib/email";
+import { sendPasswordResetEmail } from "../lib/email";
 import { checkEmailThrottle } from "../lib/email-throttle";
+import { endpointRateLimit } from "../lib/rate-limit";
 
 const RESET_TTL_MS = 1 * 60 * 60 * 1000; // 1 hour
 
@@ -14,34 +15,31 @@ const RESET_TTL_MS = 1 * 60 * 60 * 1000; // 1 hour
  * Sends a password reset email if the account exists.
  * Always returns the same message to prevent email enumeration.
  */
-export async function forgotPassword(
-  req: Request,
+export async function performForgotPassword(
   env: Env,
   ctx: ExecutionContext,
-): Promise<Response> {
-  let body: { email?: string; redirect_url?: string };
-  try {
-    body = await req.json() as { email?: string; redirect_url?: string };
-  } catch {
-    return error("Invalid JSON body");
-  }
+  body: { email?: string; redirect_url?: string },
+  ip: string,
+  ua: string | null,
+): Promise<{ message?: string; error?: string; status?: number }> {
+  if (!body.email) return { error: "email is required", status: 400 };
 
-  if (!body.email) return error("email is required");
+  const emailErrResponse = validateEmail(body.email);
+  if (emailErrResponse) return { error: await emailErrResponse.text(), status: emailErrResponse.status };
 
-  const emailErr = validateEmail(body.email);
-  if (emailErr) return emailErr;
-
-  const redirectErr = validateRedirectUrl(body.redirect_url, env);
-  if (redirectErr) return redirectErr;
+  const redirectErrResponse = validateRedirectUrl(body.redirect_url, env);
+  if (redirectErrResponse) return { error: await redirectErrResponse.text(), status: redirectErrResponse.status };
 
   const email = body.email.toLowerCase().trim();
-  const ip = req.headers.get("CF-Connecting-IP");
-  const ua = req.headers.get("User-Agent");
+
+  const rateLimited = await endpointRateLimit(env, `forgot-password:ip:${ip}`, 3, 300);
+  if (rateLimited) return { error: "Rate limit exceeded", status: 429 };
+
   const database = db(env);
 
   // Throttle BEFORE user lookup to prevent enumeration via throttle behavior
   const throttled = await checkEmailThrottle(env, "password_reset", email);
-  if (throttled) return throttled;
+  if (throttled) return { error: "Too many requests", status: 429 };
 
   const user = await database.queryOne<User>(
     `users?email=eq.${encodeURIComponent(email)}&select=id,is_blocked`,
@@ -49,7 +47,7 @@ export async function forgotPassword(
 
   // Always return success to prevent email enumeration
   if (!user || user.is_blocked) {
-    return json({ message: "If an account exists, a reset email has been sent." });
+    return { message: "If an account exists, a reset email has been sent." };
   }
 
   const token = crypto.randomUUID();
@@ -71,11 +69,14 @@ export async function forgotPassword(
     expires_at: expiresAt,
   });
 
-  // Send password reset email
+  // Send password reset email via template router (platform-specific template)
   const appUrl = resolveAppUrl(body.redirect_url, env);
   const resetUrl = `${appUrl}/reset-password?token=${token}`;
-  const { subject, html, text } = passwordResetEmail(resetUrl);
-  ctx.waitUntil(sendEmail(env, { to: email, subject, html, text }));
+  
+  ctx.waitUntil(
+    sendPasswordResetEmail(env, email, resetUrl)
+      .catch(err => console.error("[SSO] Password reset email background task failed:", err))
+  );
 
   audit(ctx, env, "password_reset_requested", {
     user_id: user.id,
@@ -83,34 +84,59 @@ export async function forgotPassword(
     user_agent: ua,
   });
 
-  return json({ message: "If an account exists, a reset email has been sent." });
+  return { message: "If an account exists, a reset email has been sent." };
 }
 
 /**
- * POST /auth/reset-password
- * Resets the password using a valid reset token.
- * Revokes all existing sessions for the user (force re-login everywhere).
+ * POST /auth/forgot-password
+ * Sends a password reset email if the account exists.
+ * Always returns the same message to prevent email enumeration.
  */
-export async function resetPassword(
+export async function forgotPassword(
   req: Request,
   env: Env,
   ctx: ExecutionContext,
 ): Promise<Response> {
-  let body: { token?: string; password?: string };
+  let body: { email?: string; redirect_url?: string };
   try {
-    body = await req.json() as { token?: string; password?: string };
+    body = await req.json() as { email?: string; redirect_url?: string };
   } catch {
     return error("Invalid JSON body");
   }
 
-  if (!body.token) return error("token is required");
-  if (!body.password) return error("password is required");
-
-  const passErr = validatePassword(body.password);
-  if (passErr) return passErr;
-
-  const ip = req.headers.get("CF-Connecting-IP");
+  const ip = req.headers.get("CF-Connecting-IP") ?? "unknown";
   const ua = req.headers.get("User-Agent");
+
+  const result = await performForgotPassword(env, ctx, body, ip, ua);
+  
+  if (result.error) {
+    // We need to parse error if it's JSON format from earlier responses, but we return string errors now.
+    return error(result.error, result.status || 400);
+  }
+
+  return json({ message: result.message });
+}
+
+export async function performResetPassword(
+  env: Env,
+  ctx: ExecutionContext,
+  body: { token?: string; password?: string },
+  ip: string | null,
+  ua: string | null,
+): Promise<{ reset?: boolean; error?: string; status?: number }> {
+  if (!body.token) {
+    return { error: "token is required", status: 400 };
+  }
+  
+  if (!body.password) {
+    return { error: "password is required", status: 400 };
+  }
+
+  const passErrResponse = validatePassword(body.password);
+  if (passErrResponse) {
+    return { error: await passErrResponse.text(), status: passErrResponse.status };
+  }
+
   const database = db(env);
 
   const tokenHash = await hashToken(body.token);
@@ -123,9 +149,9 @@ export async function resetPassword(
     `password_resets?token_hash=eq.${encodeURIComponent(tokenHash)}&select=*`,
   );
 
-  if (!record) return error("Invalid reset token", 404);
-  if (record.used) return error("Token already used", 410);
-  if (new Date(record.expires_at) < new Date()) return error("Token expired", 410);
+  if (!record) return { error: "Invalid reset token", status: 404 };
+  if (record.used) return { error: "Token already used", status: 410 };
+  if (new Date(record.expires_at) < new Date()) return { error: "Token expired", status: 410 };
 
   const password_hash = await hashPassword(body.password);
 
@@ -156,5 +182,34 @@ export async function resetPassword(
     user_agent: ua,
   });
 
-  return json({ reset: true });
+  return { reset: true };
+}
+
+/**
+ * POST /auth/reset-password
+ * Resets the password using a valid reset token.
+ * Revokes all existing sessions for the user (force re-login everywhere).
+ */
+export async function resetPassword(
+  req: Request,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<Response> {
+  let body: { token?: string; password?: string };
+  try {
+    body = await req.json() as { token?: string; password?: string };
+  } catch {
+    return error("Invalid JSON body");
+  }
+
+  const ip = req.headers.get("CF-Connecting-IP");
+  const ua = req.headers.get("User-Agent");
+
+  const result = await performResetPassword(env, ctx, body, ip, ua);
+
+  if (result.error) {
+    return error(result.error, result.status || 400);
+  }
+
+  return json({ reset: result.reset });
 }

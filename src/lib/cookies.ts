@@ -1,28 +1,104 @@
-import { ACCESS_TOKEN_MAX_AGE, SESSION_TTL_MS } from "./constants";
+import { SESSION_TTL_MS } from "./constants";
 
-const COOKIE_OPTIONS = "HttpOnly; Secure; Path=/; SameSite=None";
-const REFRESH_MAX_AGE = Math.floor(SESSION_TTL_MS / 1000);
+// ─── Centralized Cookie Attributes ─────────────────────────────
+/** Base cookie attributes. SameSite and Secure are added conditionally per-environment. */
+export const COOKIE_BASE_ATTRS = "HttpOnly; Path=/";
 
-/** Set access + refresh token cookies on a Response */
+/** Refresh token max age in seconds. */
+export const REFRESH_MAX_AGE = Math.floor(SESSION_TTL_MS / 1000);
+
+// ─── Cookie Configuration ──────────────────────────────────────
+/** Configuration for refresh cookie attributes. */
+export interface CookieConfig {
+  /** Optional registrable parent domain (e.g., ".rareminds.in"). When omitted, cookie is host-only. */
+  domain?: string;
+  /** Environment name — when "dev", omit Secure flag (self-signed certs block Secure cookies locally). */
+  environment?: string;
+}
+
+// ─── Cookie Builders ───────────────────────────────────────────
+/**
+ * Build refresh_token cookie with configurable Domain attribute.
+ * @param token - The refresh token value
+ * @param maxAgeSec - Max-Age in seconds
+ * @param cfg - Cookie configuration (domain)
+ * @returns Set-Cookie header value for refresh_token
+ */
+export function refreshCookie(token: string, maxAgeSec: number, cfg: CookieConfig): string {
+  const isDev = cfg.environment === "dev";
+  const secure = isDev ? "" : "; Secure";
+  const samesite = isDev ? "Lax" : "None";
+  const domain = cfg.domain ? `; Domain=${cfg.domain}` : "";
+  return `refresh_token=${token}; ${COOKIE_BASE_ATTRS}${secure}; SameSite=${samesite}${domain}; Max-Age=${maxAgeSec}`;
+}
+
+/**
+ * Build refresh_token clear cookie (Max-Age=0) with matching attributes.
+ * @param cfg - Cookie configuration (domain) — must match the set cookie
+ * @returns Set-Cookie header value to clear refresh_token
+ */
+export function clearRefreshCookie(cfg: CookieConfig): string {
+  const isDev = cfg.environment === "dev";
+  const secure = isDev ? "" : "; Secure";
+  const samesite = isDev ? "Lax" : "None";
+  const domain = cfg.domain ? `; Domain=${cfg.domain}` : "";
+  return `refresh_token=; ${COOKIE_BASE_ATTRS}${secure}; SameSite=${samesite}${domain}; Max-Age=0`;
+}
+
+// ─── Legacy Helper (For Rollout Window) ────────────────────────
+/**
+ * Clear legacy access_token cookie (kept for one rollout window to evict already-set cookies).
+ * TODO: Remove after rollout window (task 13.3 — approval-gated Contract phase).
+ */
+function clearLegacyAccessTokenCookie(): string {
+  return `access_token=; ${COOKIE_BASE_ATTRS}; SameSite=None; Secure; Max-Age=0`;
+}
+
+// ─── High-Level Response Helpers ───────────────────────────────
+/**
+ * Set authentication tokens on response.
+ * - Sets ONLY the refresh_token cookie (no access_token cookie per Req 9.1, 9.2).
+ * - Sets the X-Access-Token header for in-memory client storage.
+ * - Access token is also in JSON body (handled by caller).
+ * - Wires REFRESH_COOKIE_DOMAIN from env when set.
+ * @param res - Response object to mutate
+ * @param accessToken - Access token (sent via header, not cookie)
+ * @param refreshToken - Refresh token (sent via HttpOnly cookie)
+ * @param env - Environment (reads REFRESH_COOKIE_DOMAIN)
+ */
 export function setAuthCookies(
   res: Response,
   accessToken: string,
   refreshToken: string,
+  env: { REFRESH_COOKIE_DOMAIN?: string; ENVIRONMENT?: string },
 ): void {
-  res.headers.append(
-    "Set-Cookie",
-    `access_token=${accessToken}; ${COOKIE_OPTIONS}; Max-Age=${ACCESS_TOKEN_MAX_AGE}`,
-  );
-  res.headers.append(
-    "Set-Cookie",
-    `refresh_token=${refreshToken}; ${COOKIE_OPTIONS}; Max-Age=${REFRESH_MAX_AGE}`,
-  );
+  // Access token delivered via header only (in-memory on client)
+  res.headers.set("X-Access-Token", accessToken);
+
+  // Build cookie config from env
+  const cfg: CookieConfig = { domain: env.REFRESH_COOKIE_DOMAIN, environment: env.ENVIRONMENT };
+
+  // Refresh token delivered via HttpOnly cookie with configured Domain
+  res.headers.append("Set-Cookie", refreshCookie(refreshToken, REFRESH_MAX_AGE, cfg));
 }
 
-/** Clear auth cookies — attributes must match the ones that set them */
-export function clearCookies(res: Response): void {
-  res.headers.append("Set-Cookie", `access_token=; Max-Age=0; ${COOKIE_OPTIONS}`);
-  res.headers.append("Set-Cookie", `refresh_token=; Max-Age=0; ${COOKIE_OPTIONS}`);
+/**
+ * Clear auth cookies.
+ * - Clears refresh_token cookie with matching attributes (including Domain).
+ * - LEGACY: Also clears access_token cookie for rollout window (task 13.3 will remove this).
+ * @param res - Response object to mutate
+ * @param env - Environment (reads REFRESH_COOKIE_DOMAIN) — must match the set cookies
+ */
+export function clearCookies(res: Response, env: { REFRESH_COOKIE_DOMAIN?: string; ENVIRONMENT?: string }): void {
+  // Build cookie config from env
+  const cfg: CookieConfig = { domain: env.REFRESH_COOKIE_DOMAIN, environment: env.ENVIRONMENT };
+
+  // Clear refresh_token with matching attributes (including Domain)
+  res.headers.append("Set-Cookie", clearRefreshCookie(cfg));
+
+  // LEGACY: Clear access_token cookie (kept for rollout window to evict already-set cookies)
+  // TODO: Remove after rollout window (task 13.3 — approval-gated Contract phase)
+  res.headers.append("Set-Cookie", clearLegacyAccessTokenCookie());
 }
 
 /** Parse a specific cookie value from the Cookie header */

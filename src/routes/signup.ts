@@ -1,13 +1,15 @@
-import type { Env, SignupBody, JwtClaims } from "../types";
-import { db } from "../lib/db";
-import { hashPassword, hashToken, generateRefreshToken } from "../lib/hash";
-import { signAccessToken } from "../lib/jwt";
-import { setAuthCookies } from "../lib/cookies";
-import { validateEmail, validatePassword, validateRedirectUrl, resolveAppUrl } from "../lib/validate";
-import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
-import { sendEmail, verificationEmail } from "../lib/email";
 import { SESSION_TTL_MS } from "../lib/constants";
+import { setAuthCookies } from "../lib/cookies";
+import { db } from "../lib/db";
+import { sendVerificationEmail } from "../lib/email";
+import { generateRefreshToken, hashPassword, hashToken } from "../lib/hash";
+import { signAccessToken } from "../lib/jwt";
+import { endpointRateLimit } from "../lib/rate-limit";
+import { error, json } from "../lib/response";
+import { publishSyncEvent } from "../lib/sync-queue";
+import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "../lib/validate";
+import type { Env, JwtClaims, SignupBody } from "../types";
 
 /**
  * POST /auth/signup
@@ -33,8 +35,8 @@ export async function signup(
     return error("Invalid JSON body");
   }
 
-  if (!body.email || !body.password || !body.org_name) {
-    return error("email, password, and org_name are required");
+  if (!body.email || !body.password || !body.org_name || !body.role) {
+    return error("email, password, org_name, and role are required");
   }
 
   const emailErr = validateEmail(body.email);
@@ -47,8 +49,12 @@ export async function signup(
   if (redirectErr) return redirectErr;
 
   const email = body.email.toLowerCase().trim();
-  const ip = req.headers.get("CF-Connecting-IP");
+  const ip = req.headers.get("CF-Connecting-IP") ?? "unknown";
   const ua = req.headers.get("User-Agent");
+
+  const rateLimited = await endpointRateLimit(env, `signup:ip:${ip}`, 5, 60);
+  if (rateLimited) return rateLimited;
+
   const database = db(env);
 
   // ─── Idempotency Check: Allow re-signup for unverified users ───
@@ -92,6 +98,8 @@ export async function signup(
         p_password_hash: password_hash,
         p_org_name: body.org_name,
         p_org_slug: slug,
+        p_role: body.role,
+        p_user_metadata: body.user_metadata ?? {},
       },
     );
   } catch (err: any) {
@@ -110,8 +118,10 @@ export async function signup(
 
     const refreshToken = generateRefreshToken();
     const refreshHash = await hashToken(refreshToken);
+    const sessionId = crypto.randomUUID();
 
     await database.mutate("sessions", {
+      id: sessionId,
       user_id: result.user_id,
       org_id: result.org_id,
       refresh_token_hash: refreshHash,
@@ -119,6 +129,8 @@ export async function signup(
       ip_address: ip,
       revoked: false,
       expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+      family_id: sessionId,
+      family_created_at: new Date().toISOString(),
     });
 
     const accessToken = await signAccessToken(
@@ -130,6 +142,7 @@ export async function signup(
         products: claims?.products ?? [],
         membership_status: claims?.membership_status ?? "active",
         is_email_verified: false,
+        user_metadata: body.user_metadata ?? {},
       },
       env,
     );
@@ -146,8 +159,10 @@ export async function signup(
       });
       const appUrl = resolveAppUrl(body.redirect_url, env);
       const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
-      const { subject, html, text } = verificationEmail(verifyUrl);
-      ctx.waitUntil(sendEmail(env, { to: email, subject, html, text }));
+      ctx.waitUntil(
+        sendVerificationEmail(env, email, verifyUrl)
+          .catch(err => console.error("[SSO] Verification email background task failed:", err))
+      );
     } catch (emailErr) {
       emailSent = false;
       console.error("[SSO] Verification email setup failed:", emailErr);
@@ -164,7 +179,26 @@ export async function signup(
       201,
     );
 
-    setAuthCookies(response, accessToken, refreshToken);
+    setAuthCookies(response, accessToken, refreshToken, env);
+
+    // Response fully built — emit sync events (safe, no rollback after this point)
+    publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.created', {
+      id: result.user_id,
+      email,
+      user_metadata: body.user_metadata ?? {},
+    });
+    publishSyncEvent(env.SYNC_QUEUE, ctx, 'organization.created', {
+      id: result.org_id,
+      name: body.org_name,
+      slug: result.slug,
+      created_by: result.user_id,
+    });
+    publishSyncEvent(env.SYNC_QUEUE, ctx, 'membership.created', {
+      user_id: result.user_id,
+      organization_id: result.org_id,
+      roles: claims?.roles ?? [],
+      status: 'active',
+    });
 
     audit(ctx, env, "signup", {
       user_id: result.user_id,
@@ -177,11 +211,27 @@ export async function signup(
     return response;
   } catch (err) {
     // ─── Rollback: delete user (cascades to membership, org if created_by) ──
-    console.error("[SSO] Signup post-creation failed, rolling back:", err);
+    console.error(
+      JSON.stringify({
+        msg: "[SSO] Signup post-creation failed, rolling back",
+        user_id: result.user_id,
+        org_id: result.org_id,
+        slug: result.slug,
+        error: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
+      }),
+    );
     try {
-      await database.query(`users?id=eq.${result.user_id}`, { method: "DELETE" });
+      await database.query(`users?id=eq.${encodeURIComponent(result.user_id)}`, { method: "DELETE" });
     } catch (rollbackErr) {
-      console.error("[SSO] Rollback failed:", rollbackErr);
+      console.error(
+        JSON.stringify({
+          msg: "[SSO] Rollback failed — orphan records may exist",
+          user_id: result.user_id,
+          org_id: result.org_id,
+          slug: result.slug,
+          error: rollbackErr instanceof Error ? { message: rollbackErr.message, stack: rollbackErr.stack } : String(rollbackErr),
+        }),
+      );
     }
     return error("Signup failed. Please try again.", 500);
   }

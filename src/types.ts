@@ -1,3 +1,5 @@
+import type { SyncEvent } from './lib/sync-queue';
+
 // ─── Environment ───────────────────────────────────────────────
 export interface Env {
   SUPABASE_URL: string;
@@ -11,12 +13,32 @@ export interface Env {
   JWT_KID_PREVIOUS?: string;
   ALLOWED_ORIGINS: string;
   RATE_LIMIT_KV: KVNamespace;
-  /** Service binding to the email-worker for sending emails. */
-  EMAIL_SERVICE: Fetcher;
+  /** Service binding to the email-worker for sending emails via RPC. */
+  EMAIL_SERVICE: Fetcher & { 
+    sendEmail(params: any): Promise<any>; 
+    sendOTP(params: any): Promise<any>; 
+    verifyOTP(params: any): Promise<any>; 
+  };
   /** API key for authenticating with the email-worker. */
   EMAIL_API_KEY: string;
+
+  /** Base URL for the SkillPassport Pages app (e.g. https://skillpassport.rareminds.in) */
+  SKILLPASSPORT_URL: string;
+
+  /** Service Binding for the SkillPassport backend API */
+  SKILLPASSPORT: Fetcher;
+
+  /** Secret used to securely authenticate internal webhook dispatches to frontend applications */
+  INTERNAL_WEBHOOK_SECRET: string;
+
+  /** Queue for pushing auth DB sync events to SkillPassport. */
+  SYNC_QUEUE: Queue<SyncEvent>;
+
   /** Comma-separated allowlist of base URLs for email links, e.g. "https://skillpassport.rareminds.in,https://courses.rareminds.in". */
   ALLOWED_APP_URLS: string;
+
+  /** Optional registrable parent domain for refresh_token cookie (e.g., ".rareminds.in"). When unset, cookie is host-only. */
+  REFRESH_COOKIE_DOMAIN?: string;
 }
 
 // ─── Route Configuration ───────────────────────────────────────
@@ -41,6 +63,7 @@ export interface AccessTokenPayload {
   products: string[];
   membership_status: MembershipStatus;
   is_email_verified: boolean;
+  user_metadata?: Record<string, unknown>;
 }
 
 // ─── JWT Claims from get_jwt_claims() RPC ──────────────────────
@@ -60,6 +83,7 @@ export interface User {
   last_login_at: string | null;
   created_at: string;
   updated_at: string;
+  user_metadata?: Record<string, unknown>;
 }
 
 export interface Organization {
@@ -151,7 +175,10 @@ export interface SignupBody {
   email: string;
   password: string;
   org_name: string;
+  /** Role to assign in addition to 'owner' (e.g., 'college_admin', 'school_admin', 'university_admin'). */
+  role: string;
   redirect_url?: string;
+  user_metadata?: Record<string, unknown>;
 }
 
 export interface LoginBody {
@@ -181,4 +208,34 @@ export interface SignupMemberBody {
   role: string;
   org_id?: string;
   redirect_url?: string;
+  user_metadata?: Record<string, unknown>;
+}
+
+// ─── Sales Database Models ─────────────────────────────────────
+export interface SalesUser {
+  id: string;
+  email: string;
+  full_name?: string;
+  first_name?: string;
+  last_name?: string;
+  company?: string;
+  phone?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SalesSubscription {
+  id: string;
+  user_id: string;
+  email?: string;
+  full_name?: string;
+  plan_type: string;
+  status: string;
+  plan_amount?: number;
+  billing_cycle?: string;
+  phone?: string;
+  subscription_start_date?: string;
+  subscription_end_date?: string;
+  created_at?: string;
+  updated_at?: string;
 }

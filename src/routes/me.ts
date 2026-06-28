@@ -21,5 +21,6 @@ export async function me(
     products: payload.products,
     membership_status: payload.membership_status,
     is_email_verified: payload.is_email_verified,
+    user_metadata: payload.user_metadata,
   });
 }

@@ -1,13 +1,15 @@
-import type { Env, JwtClaims, SignupMemberBody } from "../types";
-import { db } from "../lib/db";
-import { hashPassword, hashToken, generateRefreshToken } from "../lib/hash";
-import { signAccessToken } from "../lib/jwt";
-import { setAuthCookies } from "../lib/cookies";
-import { validateEmail, validatePassword, validateRedirectUrl, resolveAppUrl } from "../lib/validate";
-import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
-import { sendEmail, verificationEmail } from "../lib/email";
 import { SESSION_TTL_MS } from "../lib/constants";
+import { setAuthCookies } from "../lib/cookies";
+import { db } from "../lib/db";
+import { sendVerificationEmail } from "../lib/email";
+import { generateRefreshToken, hashPassword, hashToken } from "../lib/hash";
+import { signAccessToken } from "../lib/jwt";
+import { endpointRateLimit } from "../lib/rate-limit";
+import { error, json } from "../lib/response";
+import { publishSyncEvent } from "../lib/sync-queue";
+import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "../lib/validate";
+import type { Env, JwtClaims, SignupMemberBody } from "../types";
 
 /**
  * POST /auth/signup-member
@@ -48,8 +50,12 @@ export async function signupMember(
   if (redirectErr) return redirectErr;
 
   const email = body.email.toLowerCase().trim();
-  const ip = req.headers.get("CF-Connecting-IP");
+  const ip = req.headers.get("CF-Connecting-IP") ?? "unknown";
   const ua = req.headers.get("User-Agent");
+
+  const rateLimited = await endpointRateLimit(env, `signup:ip:${ip}`, 5, 60);
+  if (rateLimited) return rateLimited;
+
   const database = db(env);
 
   // ─── Idempotency Check: Allow re-signup for unverified users ───
@@ -90,6 +96,7 @@ export async function signupMember(
       p_password_hash: password_hash,
       p_role: body.role,
       p_org_id: body.org_id ?? null,
+      p_user_metadata: body.user_metadata ?? {},
     });
   } catch (err: any) {
     if (err?.message?.includes("duplicate") || err?.message?.includes("23505")) {
@@ -117,8 +124,10 @@ export async function signupMember(
 
     const refreshToken = generateRefreshToken();
     const refreshHash = await hashToken(refreshToken);
+    const sessionId = crypto.randomUUID();
 
     await database.mutate("sessions", {
+      id: sessionId,
       user_id: result.user_id,
       org_id: result.org_id,
       refresh_token_hash: refreshHash,
@@ -126,6 +135,8 @@ export async function signupMember(
       ip_address: ip,
       revoked: false,
       expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+      family_id: sessionId,
+      family_created_at: new Date().toISOString(),
     });
 
     const accessToken = await signAccessToken(
@@ -137,6 +148,7 @@ export async function signupMember(
         products: claims?.products ?? [],
         membership_status: claims?.membership_status ?? "active",
         is_email_verified: false,
+        user_metadata: body.user_metadata ?? {},
       },
       env,
     );
@@ -153,9 +165,12 @@ export async function signupMember(
       });
       const appUrl = resolveAppUrl(body.redirect_url, env);
       const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
-      const { subject, html, text } = verificationEmail(verifyUrl);
-      // Fire-and-forget — don't await, don't block the response
-      ctx.waitUntil(sendEmail(env, { to: email, subject, html, text }));
+
+      // Send beautiful verification email via SkillPassport
+      ctx.waitUntil(
+        sendVerificationEmail(env, email, verifyUrl)
+          .catch(err => console.error("[SSO] Verification email background task failed:", err))
+      );
     } catch (emailErr) {
       // Email failure is non-critical — user is created, session is valid
       emailSent = false;
@@ -174,7 +189,22 @@ export async function signupMember(
     }
 
     const response = json(responseBody, 201);
-    setAuthCookies(response, accessToken, refreshToken);
+    setAuthCookies(response, accessToken, refreshToken, env);
+
+    // Response fully built — emit sync events
+    publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.created', {
+      id: result.user_id,
+      email,
+      user_metadata: body.user_metadata ?? {},
+    });
+    if (result.org_id) {
+      publishSyncEvent(env.SYNC_QUEUE, ctx, 'membership.created', {
+        user_id: result.user_id,
+        organization_id: result.org_id,
+        roles: [body.role],
+        status: 'active',
+      });
+    }
 
     audit(ctx, env, "signup_member", {
       user_id: result.user_id,
@@ -187,11 +217,25 @@ export async function signupMember(
     return response;
   } catch (err) {
     // ─── Rollback: delete the user if session/JWT creation failed ──
-    console.error("[SSO] Signup post-creation failed, rolling back user:", err);
+    console.error(
+      JSON.stringify({
+        msg: "[SSO] Signup post-creation failed, rolling back",
+        user_id: result.user_id,
+        org_id: result.org_id,
+        error: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
+      }),
+    );
     try {
-      await database.query(`users?id=eq.${result.user_id}`, { method: "DELETE" });
+      await database.query(`users?id=eq.${encodeURIComponent(result.user_id)}`, { method: "DELETE" });
     } catch (rollbackErr) {
-      console.error("[SSO] Rollback failed:", rollbackErr);
+      console.error(
+        JSON.stringify({
+          msg: "[SSO] Rollback failed — orphan records may exist",
+          user_id: result.user_id,
+          org_id: result.org_id,
+          error: rollbackErr instanceof Error ? { message: rollbackErr.message, stack: rollbackErr.stack } : String(rollbackErr),
+        }),
+      );
     }
     return error("Signup failed. Please try again.", 500);
   }

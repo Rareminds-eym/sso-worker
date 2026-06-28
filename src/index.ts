@@ -1,33 +1,39 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import type { Env, RouteConfig, AccessTokenPayload } from "./types";
-import { signup } from "./routes/signup";
-import { signupMember } from "./routes/signup-member";
-import { login } from "./routes/login";
-import { refresh } from "./routes/refresh";
-import { logout } from "./routes/logout";
-import { me } from "./routes/me";
-import { switchOrg } from "./routes/switch-org";
-import { createInvite, acceptInvite } from "./routes/invite";
-import { listOrgs } from "./routes/orgs";
-import { jwks } from "./routes/jwks";
-import { requestVerification, verifyEmail } from "./routes/verify-email";
-import { forgotPassword, resetPassword } from "./routes/password-reset";
-import { cancelInvite, resendInvite } from "./routes/invite-manage";
-import { oauthRedirect, oauthCallback } from "./routes/oauth";
-import { changePassword, adminResetPassword } from "./routes/change-password";
-import { deleteAccount } from "./routes/delete-account";
+import { audit } from "./lib/audit";
+import { authenticate } from "./lib/auth";
+import { addMonths, parseDurationMonths } from "./lib/date";
+import { db } from "./lib/db";
+import { hashPassword, hashToken } from "./lib/hash";
+import { exportPemAsJwk, getPublicJWK, verifyAccessToken } from "./lib/jwt";
+import { error, json } from "./lib/response";
+import { rotateRefreshToken } from "./lib/session-rotation";
 import {
-  listPlans, getPlanByCode,
-  processWebhookEvent,
-} from "./routes/subscriptions";
-import {
-  listAddonCatalog, getAddonByFeatureKey,
+  getAddonByFeatureKey,
+  listAddonCatalog,
   listBundles,
 } from "./routes/addon-catalog";
-import { rateLimit, rateLimits } from "./middleware/rateLimit";
-import { authenticate } from "./lib/auth";
-import { json, error } from "./lib/response";
-import { db } from "./lib/db";
+import { adminResetPassword, changePassword } from "./routes/change-password";
+import { deleteAccount } from "./routes/delete-account";
+import { acceptInvite, createInvite } from "./routes/invite";
+import { cancelInvite, resendInvite } from "./routes/invite-manage";
+import { jwks } from "./routes/jwks";
+import { login } from "./routes/login";
+import { logout } from "./routes/logout";
+import { me } from "./routes/me";
+import { oauthCallback, oauthRedirect } from "./routes/oauth";
+import { listOrgs } from "./routes/orgs";
+import { forgotPassword, resetPassword } from "./routes/password-reset";
+import { refresh } from "./routes/refresh";
+import { signup } from "./routes/signup";
+import { signupMember } from "./routes/signup-member";
+import {
+  getPlanByCode,
+  listPlans,
+} from "./routes/subscriptions";
+import { switchOrg } from "./routes/switch-org";
+import { requestVerification, verifyEmail } from "./routes/verify-email";
+import { getSalesSubscriptions } from "./routes/sales-subscriptions";
+import type { AccessTokenPayload, Env, RouteConfig, Session } from "./types";
 
 /** Max request body size: 10 KB */
 const MAX_BODY_SIZE = 10_240;
@@ -35,38 +41,38 @@ const MAX_BODY_SIZE = 10_240;
 // ─── Public Route Table ───────────────────────────────────────
 const routes: Record<string, Record<string, RouteConfig>> = {
   POST: {
-    "/auth/signup":              { handler: signup },
-    "/auth/signup-member":       { handler: signupMember },
-    "/auth/login":               { handler: login },
-    "/auth/refresh":             { handler: refresh },
-    "/auth/logout":              { handler: logout },
-    "/auth/switch-org":          { handler: switchOrg,           auth: true },
-    "/auth/invite":              { handler: createInvite,        auth: true },
-    "/auth/invite/accept":       { handler: acceptInvite },
-    "/auth/invite/cancel":       { handler: cancelInvite,        auth: true },
-    "/auth/invite/resend":       { handler: resendInvite,        auth: true },
+    "/auth/signup": { handler: signup },
+    "/auth/signup-member": { handler: signupMember },
+    "/auth/login": { handler: login },
+    "/auth/refresh": { handler: refresh },
+    "/auth/logout": { handler: logout },
+    "/auth/switch-org": { handler: switchOrg, auth: true },
+    "/auth/invite": { handler: createInvite, auth: true },
+    "/auth/invite/accept": { handler: acceptInvite },
+    "/auth/invite/cancel": { handler: cancelInvite, auth: true },
+    "/auth/invite/resend": { handler: resendInvite, auth: true },
     "/auth/request-verification": { handler: requestVerification, auth: true },
-    "/auth/verify-email":        { handler: verifyEmail },
-    "/auth/forgot-password":     { handler: forgotPassword },
-    "/auth/reset-password":      { handler: resetPassword },
-    "/auth/change-password":     { handler: changePassword,      auth: true },
+    "/auth/verify-email": { handler: verifyEmail },
+    "/auth/forgot-password": { handler: forgotPassword },
+    "/auth/reset-password": { handler: resetPassword },
+    "/auth/change-password": { handler: changePassword, auth: true },
     "/auth/admin-reset-password": { handler: adminResetPassword, auth: true },
-    "/auth/delete-account":      { handler: deleteAccount,       auth: true },
-    "/api/events/webhook":       { handler: processWebhookEvent },
+    "/auth/delete-account": { handler: deleteAccount, auth: true },
   },
   GET: {
-    "/auth/me":               { handler: me, auth: true },
-    "/auth/orgs":             { handler: listOrgs, auth: true },
-    "/auth/oauth/google":     { handler: oauthRedirect },
-    "/auth/oauth/github":     { handler: oauthRedirect },
+    "/auth/me": { handler: me, auth: true },
+    "/auth/orgs": { handler: listOrgs, auth: true },
+    "/auth/oauth/google": { handler: oauthRedirect },
+    "/auth/oauth/github": { handler: oauthRedirect },
     "/auth/oauth/google/callback": { handler: oauthCallback },
     "/auth/oauth/github/callback": { handler: oauthCallback },
     "/.well-known/jwks.json": { handler: (_req, env) => jwks(env) },
-    "/health":                { handler: () => Promise.resolve(json({ status: "ok" })) },
-    "/api/plans":             { handler: listPlans },
-    "/api/addon-catalog":     { handler: listAddonCatalog },
+    "/health": { handler: () => Promise.resolve(json({ status: "ok" })) },
+    "/api/plans": { handler: listPlans },
+    "/api/addon-catalog": { handler: listAddonCatalog },
     "/api/addon-catalog/:featureKey": { handler: getAddonByFeatureKey },
-    "/api/bundles":           { handler: listBundles },
+    "/api/bundles": { handler: listBundles },
+    "/api/sales/subscriptions": { handler: getSalesSubscriptions },
   },
 };
 
@@ -114,22 +120,31 @@ function withCors(response: Response, cors: Record<string, string>): Response {
 }
 
 function validateOrigin(req: Request, env: Env): boolean {
+  // For read-only methods (GET, OPTIONS), allow missing Origin (simple CORS requests)
   if (req.method === "GET" || req.method === "OPTIONS") return true;
 
+  // For state-changing methods (POST, PUT, DELETE, PATCH), require Origin header
   const origin = req.headers.get("Origin");
-  if (!origin) return true;
+  if (!origin) return false; // Missing Origin on state-changing request → reject
 
+  // Origin present: validate against allowlist
   const allowed = env.ALLOWED_ORIGINS.split(",").map((o) => o.trim());
   return allowed.some((pattern) => originMatchesPattern(origin, pattern));
 }
 
 // ─── WorkerEntrypoint ─────────────────────────────────────────
-export default class SsoWorker extends WorkerEntrypoint<Env> {
+export class SsoWorker extends WorkerEntrypoint<Env> {
   // ── Scheduled (cron) ──────────────────────────────────────────
   async scheduled(_event: ScheduledEvent): Promise<void> {
     const database = db(this.env);
-    const deleted = await database.rpc<number>("cleanup_expired_tokens");
-    console.log(`[SSO] Cleaned up ${deleted} expired token rows`);
+    
+    // Clean up expired or revoked tokens (verifications, password resets, etc.)
+    const deletedTokens = await database.rpc<number>("cleanup_expired_tokens");
+    console.log(`[SSO] Cleaned up ${deletedTokens} expired token rows`);
+
+    // Clean up expired sessions to prevent unbounded database growth
+    const deletedSessions = await database.rpc<number>("cleanup_expired_sessions");
+    console.log(`[SSO] Cleaned up ${deletedSessions} expired session rows`);
 
     try {
       const result = await database.rpc<{ count: number }[]>("expire_old_subscriptions");
@@ -137,6 +152,55 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
       if (expired > 0) console.log(`[SSO] Expired ${expired} subscription(s)`);
     } catch (err: any) {
       console.error(`[SSO] Failed to expire subscriptions: ${err?.message}`);
+    }
+
+    try {
+      const pendingEvents = await database.query<Record<string, any>>(
+        "events?status=eq.received&order=created_at.asc&limit=10"
+      );
+      if (pendingEvents && pendingEvents.length > 0) {
+        for (const event of pendingEvents) {
+          await database.update("events", { id: `eq.${event.id}` }, { status: "processing" });
+          try {
+            if (event.event_type === 'payment.captured' || event.event_type === 'order.paid') {
+              if (!this.env.SKILLPASSPORT || !this.env.SKILLPASSPORT_URL || !this.env.INTERNAL_WEBHOOK_SECRET) {
+                throw new Error("SKILLPASSPORT binding, URL or INTERNAL_WEBHOOK_SECRET not configured. Cannot dispatch webhook.");
+              }
+
+              const targetUrl = `${this.env.SKILLPASSPORT_URL}/api/internal/webhooks/payment`;
+              const dispatchResponse = await this.env.SKILLPASSPORT.fetch(targetUrl, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${this.env.INTERNAL_WEBHOOK_SECRET}`,
+                  'X-Webhook-Event': event.event_type
+                },
+                body: JSON.stringify(event.payload)
+              });
+
+              if (!dispatchResponse.ok) {
+                const resBody = await dispatchResponse.text();
+                throw new Error(`Fulfillment failed with status ${dispatchResponse.status}: ${resBody}`);
+              }
+            }
+
+            // Mark as completed since fulfillment succeeded (or event type was ignored)
+            await database.update("events", { id: `eq.${event.id}` }, { 
+              status: "completed",
+              processed_at: new Date().toISOString()
+            });
+            console.log(`[SSO] Processed webhook event ${event.event_id} of type ${event.event_type}`);
+          } catch (processErr: any) {
+            await database.update("events", { id: `eq.${event.id}` }, { 
+              status: "failed",
+              error_message: processErr?.message || "Unknown error",
+              retry_count: (event.retry_count || 0) + 1
+            });
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error(`[SSO] Failed to process webhook events: ${err?.message}`);
     }
   }
 
@@ -163,47 +227,6 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
     const contentLength = parseInt(req.headers.get("Content-Length") ?? "0", 10);
     if (contentLength > MAX_BODY_SIZE) {
       return withCors(error("Request body too large", 413), cors);
-    }
-
-    // Rate limiting (skip health check and JWKS endpoint)
-    if (pathname !== "/health" && pathname !== "/.well-known/jwks.json") {
-      let rateLimitConfig: ReturnType<typeof rateLimit> | null = null;
-
-      switch (pathname) {
-        case "/auth/login":
-          rateLimitConfig = rateLimit(rateLimits.login);
-          break;
-        case "/auth/signup":
-        case "/auth/signup-member":
-          rateLimitConfig = rateLimit(rateLimits.signup);
-          break;
-        case "/auth/forgot-password":
-          rateLimitConfig = rateLimit(rateLimits.forgotPassword);
-          break;
-        case "/auth/reset-password":
-          rateLimitConfig = rateLimit(rateLimits.resetPassword);
-          break;
-        case "/auth/verify-email":
-          rateLimitConfig = rateLimit(rateLimits.verifyEmail);
-          break;
-        case "/auth/request-verification":
-          rateLimitConfig = rateLimit(rateLimits.resendVerification);
-          break;
-        case "/auth/refresh":
-          rateLimitConfig = rateLimit(rateLimits.refresh);
-          break;
-        case "/auth/me":
-          rateLimitConfig = rateLimit(rateLimits.me);
-          break;
-        case "/auth/logout":
-          rateLimitConfig = rateLimit(rateLimits.logout);
-          break;
-      }
-
-      if (rateLimitConfig) {
-        const rateLimited = await rateLimitConfig(req);
-        if (rateLimited) return withCors(rateLimited, cors);
-      }
     }
 
     // Route matching
@@ -259,7 +282,9 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
           ms: Date.now() - start,
         }),
       );
-      return withCors(error("Internal server error", 500), cors);
+      const errResponse = withCors(error(err?.message ?? "Internal server error", 500), cors);
+      errResponse.headers.set("X-Request-ID", requestId);
+      return errResponse;
     }
   }
 
@@ -268,6 +293,92 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
   // ══════════════════════════════════════════════════════════════
 
   // ── Subscription Management ─────────────────────────────────
+
+  // ── Queue Handler (Asynchronous Events) ─────────────────────
+  async queue(batch: any): Promise<void> {
+    const database = db(this.env);
+
+    for (const message of batch.messages) {
+      try {
+        const body = message.body;
+        if (!body.event_id || !body.event_type || !body.payload) {
+          console.warn("[SSO] Skipping invalid queue message", body);
+          message.ack();
+          continue;
+        }
+
+        // Intercept Reverse Sync Events
+        if (body.event_type === 'user_metadata.updated' && body.user_id) {
+          const { first_name, last_name } = body.payload;
+          
+          if (first_name !== undefined || last_name !== undefined) {
+            try {
+              // Note: using db(this.env) which wraps Postgres REST. 
+              const user = await database.queryOne(`users?id=eq.${body.user_id}&select=user_metadata`);
+              const currentMetadata = (user as any)?.user_metadata || {};
+              
+              const newMetadata = { ...currentMetadata };
+              if (first_name !== undefined) newMetadata.first_name = first_name;
+              if (last_name !== undefined) newMetadata.last_name = last_name;
+              
+              await database.update('users', { id: `eq.${body.user_id}` }, { user_metadata: newMetadata });
+              console.log(`[SSO] Bidirectional sync complete: updated user_metadata for user ${body.user_id}`);
+              
+              // Broadcast to all forward consumers (e.g. App 1, App 2) so they stay in sync
+              if (this.env.SYNC_QUEUE) {
+                const userObj = await database.queryOne<{ id: string, email: string }>(`users?id=eq.${body.user_id}&select=id,email`);
+                if (userObj) {
+                  await this.env.SYNC_QUEUE.send({
+                    type: 'user.updated',
+                    payload: { 
+                      id: userObj.id, 
+                      email: userObj.email, 
+                      user_metadata: newMetadata 
+                    },
+                    timestamp: new Date().toISOString()
+                  });
+                }
+              } else {
+                console.warn(`[SSO] SYNC_QUEUE not bound, cannot broadcast user.updated for ${body.user_id}`);
+              }
+            } catch (updateErr) {
+              console.error(`[SSO] Failed to update user_metadata for ${body.user_id}:`, updateErr);
+              message.retry();
+              continue;
+            }
+          }
+          
+          message.ack();
+          continue;
+        }
+
+        // Idempotency check
+        const existing = await database.queryOne(
+          `events?event_id=eq.${encodeURIComponent(body.event_id)}`,
+        );
+        if (existing) {
+          console.log(`[SSO] Event ${body.event_id} already processed`);
+          message.ack();
+          continue;
+        }
+
+        await database.mutate("events", {
+          event_id: body.event_id,
+          event_type: body.event_type,
+          status: "received",
+          payload: body.payload,
+          user_id: body.user_id || null,
+          subscription_id: body.subscription_id || null,
+          razorpay_payment_id: body.razorpay_payment_id || null,
+        });
+
+        message.ack();
+      } catch (err) {
+        console.error("[SSO] Failed to process queue message:", err);
+        message.retry();
+      }
+    }
+  }
 
   async createSubscription(data: {
     user_id: string;
@@ -293,12 +404,9 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
       throw new Error("user_id, plan_id, plan_code, and email are required");
     }
 
+    const billingCycle = data.billing_cycle || "lifetime";
     const now = new Date();
-    const endDate = new Date(now);
-    const months = parseDurationMonths(data.billing_cycle || "lifetime");
-    if (months > 0) {
-      endDate.setMonth(endDate.getMonth() + months);
-    }
+    const endDate = addMonths(now, parseDurationMonths(billingCycle));
 
     const database = db(this.env);
     const subscription = await database.mutate("subscriptions", {
@@ -307,15 +415,15 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
       plan_code: data.plan_code,
       plan_type: data.plan_type || data.plan_code,
       plan_amount: data.plan_amount || 0,
-      billing_cycle: data.billing_cycle || "lifetime",
+      billing_cycle: billingCycle,
       features: data.features || [],
       full_name: data.full_name || "",
       email: data.email,
       phone: data.phone || null,
       status: "active",
-      auto_renew: data.billing_cycle !== "lifetime",
+      auto_renew: billingCycle !== "lifetime",
       subscription_start_date: now.toISOString(),
-      subscription_end_date: data.billing_cycle === "lifetime" ? null : endDate.toISOString(),
+      subscription_end_date: billingCycle === "lifetime" ? null : endDate.toISOString(),
       razorpay_order_id: data.razorpay_order_id || null,
       razorpay_payment_id: data.razorpay_payment_id || null,
       organization_id: data.organization_id || null,
@@ -371,6 +479,79 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
     });
 
     return subscription as Record<string, unknown>;
+  }
+
+  /**
+   * Admin-create a member user (e.g. a school admin adding a teacher).
+   *
+   * Creates an SSO user with a temporary password, joins them to the given org
+   * with an ACTIVE membership, and assigns the supplied role. No subscription is
+   * created — members get access through their organization's subscription/seats.
+   *
+   * Callable only via the SSO_SERVICE binding (the binding is the trust boundary).
+   *
+   * @returns { user_id, org_id, membership_id } from the signup_member RPC.
+   * @throws if email/password/role/org_id are missing, the role is invalid, or
+   *   the email already exists (duplicate).
+   */
+  async createMember(data: {
+    email: string;
+    password: string;
+    role: string;
+    org_id: string;
+  }): Promise<{ user_id: string; org_id: string; membership_id: string }> {
+    if (!data.email || !data.password || !data.role || !data.org_id) {
+      throw new Error("email, password, role, and org_id are required");
+    }
+
+    const email = data.email.toLowerCase().trim();
+    const password_hash = await hashPassword(data.password);
+    const database = db(this.env);
+
+    let result: { user_id: string; org_id: string; membership_id: string };
+    try {
+      result = await database.rpc<{ user_id: string; org_id: string; membership_id: string }>(
+        "signup_member",
+        {
+          p_email: email,
+          p_password_hash: password_hash,
+          p_role: data.role,
+          p_org_id: data.org_id,
+        },
+      );
+    } catch (err: any) {
+      if (err?.message?.includes("duplicate") || err?.message?.includes("23505")) {
+        throw new Error(`A user with email ${email} already exists`);
+      }
+      throw err;
+    }
+
+    // Admin-created members are trusted — auto-verify their email so they can log
+    // in immediately without an email-verification step.
+    await database.update("users", { id: `eq.${result.user_id}` }, { is_email_verified: true });
+
+    // Emit sync events — await directly (RPC method, no ctx.waitUntil)
+    try {
+      await this.env.SYNC_QUEUE.send({
+        type: 'user.created',
+        payload: { id: result.user_id, email },
+        timestamp: new Date().toISOString(),
+      });
+      await this.env.SYNC_QUEUE.send({
+        type: 'membership.created',
+        payload: {
+          user_id: result.user_id,
+          organization_id: data.org_id,
+          roles: [data.role],
+          status: 'active',
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.error('[SSO] Failed to emit sync events:', e);
+    }
+
+    return result;
   }
 
   async getUserSubscription(userId: string): Promise<{
@@ -448,6 +629,19 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
     return updated as Record<string, unknown>;
   }
 
+  /**
+   * Fetch subscription data for sales dashboard
+   * @param searchParams Record of query parameters
+   */
+  async getSalesSubscriptions(searchParamsStr: string): Promise<any> {
+    const { performGetSalesSubscriptions } = await import("./routes/sales-subscriptions");
+    const result = await performGetSalesSubscriptions(this.env, new URLSearchParams(searchParamsStr));
+    if ('error' in result && result.error) {
+      throw new Error(result.error);
+    }
+    return result;
+  }
+
   async cancelSubscription(subscriptionId: string, data?: {
     reason?: string;
     feedback?: string;
@@ -513,6 +707,8 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
     status: string;
     transaction_type?: string;
     payment_method?: string;
+    failure_reason?: string;
+    product_id?: string;
     organization_id?: string;
     organization_type?: string;
     seat_count?: number;
@@ -527,6 +723,22 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     const database = db(this.env);
+
+    let productId = data.product_id;
+    if (!productId && data.subscription_id) {
+      const sub = await database.queryOne(
+        `subscriptions?id=eq.${data.subscription_id}&select=product_id,plan_id`,
+      );
+      const subRow = sub as any;
+      productId = subRow?.product_id || null;
+      if (!productId && subRow?.plan_id) {
+        const plan = await database.queryOne(
+          `plans?id=eq.${subRow.plan_id}&select=product_id`,
+        );
+        productId = (plan as any)?.product_id || null;
+      }
+    }
+
     const transaction = await database.mutate("transactions", {
       subscription_id: data.subscription_id || null,
       user_id: data.user_id,
@@ -538,6 +750,8 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
       status: data.status,
       transaction_type: data.transaction_type || "subscription",
       payment_method: data.payment_method || null,
+      failure_reason: data.failure_reason || null,
+      product_id: productId || null,
       organization_id: data.organization_id || null,
       organization_type: data.organization_type || null,
       seat_count: data.seat_count || 1,
@@ -596,6 +810,30 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
     return { plans: (plans || []) as Record<string, unknown>[] };
   }
 
+  /**
+   * List the canonical authorization roles (single source of truth).
+   *
+   * Mirrors {@link syncPlans}: read-only pull of `public.roles` used by the
+   * skillpassport app DB to keep its read-only `roles` shadow in sync
+   * (`functions/lib/sync-shadow.ts` → `syncRolesShadow`). Called by the
+   * skillpassport scheduled reconcile and on-demand cache-miss refresh.
+   *
+   * The shadow is NOT an authorization source — Cloudflare Functions enforce
+   * authz from the verified JWT; this list only mirrors role metadata for the
+   * app-side type generator (task 18) and reference data (task 17).
+   *
+   * @returns `{ roles }` — each role's `id`, `name`, and `description`.
+   */
+  async listRoles(): Promise<{
+    roles: { id: string; name: string; description: string | null }[];
+  }> {
+    const database = db(this.env);
+    const roles = await database.query<{ id: string; name: string; description: string | null }>(
+      "roles?select=id,name,description&order=name.asc",
+    );
+    return { roles: (roles || []) as { id: string; name: string; description: string | null }[] };
+  }
+
   async syncReconcile(userIds: string[]): Promise<{ subscriptions: Record<string, unknown>[] }> {
     if (!userIds || !Array.isArray(userIds)) {
       throw new Error("user_ids array is required");
@@ -632,13 +870,14 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
       `addon_catalog?feature_key=eq.${encodeURIComponent(data.feature_key)}`,
     );
 
-    const now = new Date();
-    const endDate = new Date(now);
-    if (data.billing_period === "annual") {
-      endDate.setFullYear(endDate.getFullYear() + 1);
-    } else {
-      endDate.setMonth(endDate.getMonth() + 1);
+    if (!addon) {
+      throw new Error(`Addon not found for feature_key: ${data.feature_key}`);
     }
+
+    const now = new Date();
+    const endDate = data.billing_period === "annual"
+      ? addMonths(now, 12)
+      : addMonths(now, 1);
 
     const purchase = await database.mutate("addon_purchases", {
       user_id: data.user_id,
@@ -683,12 +922,9 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     const now = new Date();
-    const endDate = new Date(now);
-    if (data.billing_period === "annual") {
-      endDate.setFullYear(endDate.getFullYear() + 1);
-    } else {
-      endDate.setMonth(endDate.getMonth() + 1);
-    }
+    const endDate = data.billing_period === "annual"
+      ? addMonths(now, 12)
+      : addMonths(now, 1);
 
     const purchase = await database.mutate("bundle_purchases", {
       user_id: data.user_id,
@@ -707,14 +943,352 @@ export default class SsoWorker extends WorkerEntrypoint<Env> {
 
     return purchase as Record<string, unknown>;
   }
+
+  // ── Membership Sync ─────────────────────────────────────────
+
+  async getUserMemberships(userId: string): Promise<{
+    memberships: { id: string; org_id: string; role: string; status: string }[];
+  }> {
+    if (!userId) throw new Error("userId is required");
+    const database = db(this.env);
+
+    const rows = await database.query<{
+      id: string;
+      org_id: string;
+      status: string;
+      membership_roles?: { roles?: { name: string } }[];
+    }>(`memberships?user_id=eq.${encodeURIComponent(userId)}&select=id,org_id,status,membership_roles(roles(name))`);
+
+    return {
+      memberships: (rows || []).map((r) => {
+        const mrole = r.membership_roles?.[0]?.roles;
+        return {
+          id: r.id,
+          org_id: r.org_id,
+          status: r.status,
+          role: mrole?.name || "member",
+        };
+      }),
+    };
+  }
+
+  // ── User Lookup ──────────────────────────────────────────────
+
+  /**
+   * Look up a user by their email address.
+   * Queries the SSO database's `users` table.
+   * Returns user info or null if not found.
+   */
+  async getUserByEmail(email: string): Promise<{ id: string; email: string; is_email_verified: boolean } | null> {
+    if (!email) throw new Error("email is required");
+    const database = db(this.env);
+    const normalized = email.toLowerCase().trim();
+
+    const users = await database.query<{ id: string; email: string; is_email_verified: boolean }>(
+      `users?email=eq.${encodeURIComponent(normalized)}&select=id,email,is_email_verified`,
+    );
+
+    return users && users.length > 0 ? users[0] : null;
+  }
+
+  // ── Membership RPC Methods ────────────────────────────────────
+
+  async createMembership(data: {
+    user_id: string;
+    org_id: string;
+    status: string;
+  }): Promise<{ id: string; status: string }> {
+    if (!data.user_id || !data.org_id || !data.status) {
+      throw new Error("user_id, org_id, and status are required");
+    }
+    const database = db(this.env);
+    const membership = await database.mutate<{ id: string; status: string }>("memberships", {
+      user_id: data.user_id,
+      org_id: data.org_id,
+      status: data.status,
+    });
+    return { id: membership.id, status: membership.status };
+  }
+
+  async updateMembershipStatus(data: {
+    membership_id: string;
+    status: string;
+  }): Promise<{ success: boolean }> {
+    if (!data.membership_id || !data.status) {
+      throw new Error("membership_id and status are required");
+    }
+    const database = db(this.env);
+    await database.update(
+      "memberships",
+      { id: `eq.${data.membership_id}` },
+      { status: data.status },
+    );
+    return { success: true };
+  }
+
+  async assignMembershipRole(data: {
+    membership_id: string;
+    role_id: string;
+  }): Promise<{ success: boolean }> {
+    if (!data.membership_id || !data.role_id) {
+      throw new Error("membership_id and role_id are required");
+    }
+    const database = db(this.env);
+    const existing = await database.query<{ id: string }>(
+      `membership_roles?membership_id=eq.${encodeURIComponent(data.membership_id)}&role_id=eq.${encodeURIComponent(data.role_id)}&select=id`,
+    );
+    if (existing.length > 0) return { success: true };
+    await database.mutate("membership_roles", {
+      membership_id: data.membership_id,
+      role_id: data.role_id,
+    });
+    return { success: true };
+  }
+
+  // ── Auth RPC Methods ──────────────────────────────────────────
+
+  async getJWKS(): Promise<{ keys: any[] }> {
+    const keys = [await getPublicJWK(this.env)];
+    if (this.env.JWT_PUBLIC_KEY_PREVIOUS && this.env.JWT_KID_PREVIOUS) {
+      try {
+        const prevJwk = await exportPemAsJwk(this.env.JWT_PUBLIC_KEY_PREVIOUS, this.env.JWT_KID_PREVIOUS);
+        keys.push(prevJwk);
+      } catch (err) {
+        console.warn("[SSO] Failed to export previous JWKS key:", err);
+      }
+    }
+    return { keys };
+  }
+
+  /**
+   * Log in user via true RPC.
+   *
+   * @param params Object containing email, password, ip, ua
+   * @returns Successful login payload or throws error
+   */
+  async login(params: { email?: string; password?: string; ip?: string; ua?: string }): Promise<any> {
+    const { performLogin } = await import("./routes/login");
+    const result = await performLogin(
+      this.env,
+      this.ctx,
+      { email: params.email ?? "", password: params.password ?? "" },
+      params.ip ?? null,
+      params.ua ?? null
+    );
+
+    if (result.error) {
+      throw new Error(result.error);
+    }
+
+    return result;
+  }
+
+  /**
+   * RPC entry point for refresh-token rotation, callable via service binding.
+   *
+   * Thin adapter over the shared rotation module
+   * (`lib/session-rotation.ts::rotateRefreshToken`). Accepts the presented
+   * refresh token plus optional IP/UA context, delegates rotation logic to the
+   * shared module, then translates the `RotationOutcome` into the RPC return
+   * shape `{ access_token, refresh_token }` or throws errors.
+   *
+   * The behavioral contract (what succeeds, what fails) is now identical to the
+   * `POST /auth/refresh` HTTP route because both call the same shared module
+   * (Requirement 4.2, Property 7).
+   *
+   * @param refreshToken The opaque refresh token presented by the caller.
+   * @param ip Optional client IP address forwarded from auth-core.
+   * @param ua Optional User-Agent forwarded from auth-core.
+   * @returns `{ access_token, refresh_token }` on successful rotation or
+   *   benign overlap.
+   * @throws Error on invalid, revoked (theft), lifetime-exceeded, or
+   *   session-expired outcomes, preserving the existing failure contract so
+   *   auth-core's consumers continue to work.
+   */
+  async refreshSession(refreshToken: string, ip?: string, ua?: string): Promise<{ access_token: string, refresh_token: string }> {
+    if (!refreshToken) throw new Error("No refresh token provided");
+
+    // Build rotation context from ip/ua arguments (Requirement 4.3, task 4.3).
+    const rotationCtx = { ip: ip ?? null, ua: ua ?? null };
+
+    // Delegate to the shared rotation module (Requirement 4.1).
+    const outcome = await rotateRefreshToken(this.env, this.ctx, refreshToken, rotationCtx);
+
+    // Translate RotationOutcome into RPC return shape or throw (Requirement 4.3).
+    switch (outcome.kind) {
+      case "rotated":
+      case "overlap":
+        // Success outcomes: return the pair. Both "rotated" and "overlap" produce
+        // a valid access+refresh token pair; the RPC caller does not distinguish.
+        return {
+          access_token: outcome.accessToken,
+          refresh_token: outcome.refreshToken,
+        };
+
+      case "theft":
+        // Family-scoped revocation already performed by rotateRefreshToken.
+        // Throw the same error message as the old inline logic so auth-core
+        // consumers see consistent behavior.
+        throw new Error("Refresh token reuse detected. All sessions revoked.");
+
+      case "blocked":
+        // Account blocked.
+        throw new Error("Account is blocked");
+
+      case "expired_lifetime":
+        // Absolute session lifetime exceeded (Requirement 5.2).
+        throw new Error("Session expired");
+
+      case "session_expired":
+        // Per-token TTL expiry.
+        throw new Error("Session expired");
+
+      case "invalid":
+      default:
+        // Unknown or missing refresh token.
+        throw new Error("Invalid refresh token");
+    }
+  }
+
+  async validateSession(refreshToken: string): Promise<{ valid: boolean; roles: string[] }> {
+    if (!refreshToken) return { valid: false, roles: [] };
+
+    const database = db(this.env);
+    const tokenHash = await hashToken(refreshToken);
+
+    const session = await database.queryOne<{ user_id: string; org_id: string | null; expires_at: string }>(
+      `sessions?refresh_token_hash=eq.${tokenHash}&revoked=eq.false&select=user_id,org_id,expires_at`
+    );
+
+    if (!session) {
+      return { valid: false, roles: [] };
+    }
+
+    if (new Date(session.expires_at) < new Date()) {
+      return { valid: false, roles: [] };
+    }
+
+    const user = await database.queryOne<{ is_blocked: boolean }>(
+      `users?id=eq.${session.user_id}&select=is_blocked`
+    );
+
+    if (!user || user.is_blocked) {
+      return { valid: false, roles: [] };
+    }
+
+    const claims = await database.rpc<{ roles: string[] }>("get_jwt_claims", {
+      p_user_id: session.user_id,
+      p_org_id: session.org_id,
+    });
+
+    return { valid: true, roles: claims?.roles ?? [] };
+  }
+
+  async getMe(accessToken: string): Promise<Record<string, unknown>> {
+    if (!accessToken) throw new Error("No access token provided");
+    let payload: AccessTokenPayload;
+    try {
+      payload = await verifyAccessToken(accessToken, this.env);
+    } catch {
+      throw new Error("Invalid or expired access token");
+    }
+    return {
+      sub: payload.sub,
+      email: payload.email,
+      org_id: payload.org_id,
+      roles: payload.roles,
+      products: payload.products,
+      membership_status: payload.membership_status,
+      is_email_verified: payload.is_email_verified,
+    };
+  }
+
+  async forgotPassword(params: { email?: string; redirect_url?: string }, ip?: string, ua?: string): Promise<{ message?: string }> {
+    const { performForgotPassword } = await import("./routes/password-reset");
+    const result = await performForgotPassword(
+      this.env,
+      this.ctx,
+      { email: params.email, redirect_url: params.redirect_url },
+      ip ?? "unknown",
+      ua ?? null
+    );
+
+    if (result.error) {
+      throw new Error(result.error);
+    }
+
+    return { message: result.message };
+  }
+
+  async resetPassword(params: { token?: string; password?: string }, ip?: string, ua?: string): Promise<{ reset?: boolean }> {
+    const { performResetPassword } = await import("./routes/password-reset");
+    const result = await performResetPassword(
+      this.env,
+      this.ctx,
+      { token: params.token, password: params.password },
+      ip ?? null,
+      ua ?? null
+    );
+
+    if (result.error) {
+      throw new Error(result.error);
+    }
+
+    return { reset: result.reset };
+  }
+
+  async listAddonCatalog(): Promise<any> {
+    const { listAddonCatalog } = await import("./routes/addon-catalog");
+    // The listAddonCatalog route is a standard HTTP handler. We need to extract its logic if we want pure RPC,
+    // but we can also just create a dummy request to pass to it for now, since it doesn't use the request.
+    const req = new Request("https://internal/api/addon-catalog");
+    const res = await listAddonCatalog(req, this.env);
+    return res.json();
+  }
+
+  async getAddonByFeatureKey(featureKey: string): Promise<any> {
+    const { getAddonByFeatureKey } = await import("./routes/addon-catalog");
+    const req = new Request(`https://internal/api/addon-catalog/${featureKey}`);
+    const res = await getAddonByFeatureKey(req, this.env);
+    return res.json();
+  }
+
+  async listBundles(): Promise<any> {
+    const { listBundles } = await import("./routes/addon-catalog");
+    const req = new Request("https://internal/api/bundles");
+    const res = await listBundles(req, this.env);
+    return res.json();
+  }
+
+  async logoutSession(refreshToken: string, ip?: string, ua?: string): Promise<{ success: boolean }> {
+    if (!refreshToken) return { success: true };
+
+    const database = db(this.env);
+    const tokenHash = await hashToken(refreshToken);
+
+    const session = await database.queryOne<Session>(
+      `sessions?refresh_token_hash=eq.${tokenHash}&select=user_id,org_id`,
+    );
+
+    if (session) {
+      await database.update(
+        "sessions",
+        { refresh_token_hash: `eq.${tokenHash}` },
+        { revoked: true },
+      ).catch((err) => {
+        console.warn("[SSO] Session revocation failed on logout:", err);
+      });
+
+      audit(this.ctx, this.env, "logout", {
+        user_id: session.user_id,
+        org_id: session.org_id,
+        ip_address: ip || null,
+        user_agent: ua || null,
+      });
+    }
+
+    return { success: true };
+  }
 }
 
-// ─── Helper ────────────────────────────────────────────────────
-function parseDurationMonths(duration: string): number {
-  const lower = duration.toLowerCase();
-  if (lower === "lifetime") return 0;
-  if (lower.includes("annual") || lower.includes("year")) return 12;
-  if (lower.includes("quarter")) return 3;
-  if (lower.includes("month")) return 1;
-  return 1;
-}
+export default SsoWorker;
