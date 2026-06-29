@@ -162,14 +162,16 @@ export async function performGetSalesSubscriptions(
       if (status && subscription.status !== status) {
         return false;
       }
-      if (startDate && subscription.subscription_start_date) {
+      if (startDate) {
+        if (!subscription.subscription_start_date) return false;
         const subStart = new Date(subscription.subscription_start_date).getTime();
         const filterStart = new Date(startDate).getTime();
         if (!isNaN(subStart) && !isNaN(filterStart) && subStart < filterStart) {
           return false;
         }
       }
-      if (endDate && subscription.subscription_end_date) {
+      if (endDate) {
+        if (!subscription.subscription_end_date) return false;
         const subEnd = new Date(subscription.subscription_end_date).getTime();
         const filterEnd = new Date(endDate).getTime();
         if (!isNaN(subEnd) && !isNaN(filterEnd) && subEnd > filterEnd) {
