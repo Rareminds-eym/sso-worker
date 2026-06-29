@@ -153,7 +153,7 @@ export async function signupMember(
       env,
     );
 
-    // ─── Step 3: Send verification email (non-blocking, no rollback) ──
+    // ─── Step 3: Send verification email (synchronous, reflects actual delivery) ──
     let emailSent = true;
     try {
       const verifyToken = crypto.randomUUID();
@@ -166,15 +166,11 @@ export async function signupMember(
       const appUrl = resolveAppUrl(body.redirect_url, env);
       const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
 
-      // Send beautiful verification email via SkillPassport
-      ctx.waitUntil(
-        sendVerificationEmail(env, email, verifyUrl)
-          .catch(err => console.error("[SSO] Verification email background task failed:", err))
-      );
+      await sendVerificationEmail(env, email, verifyUrl);
     } catch (emailErr) {
       // Email failure is non-critical — user is created, session is valid
       emailSent = false;
-      console.error("[SSO] Verification email setup failed:", emailErr);
+      console.error("[SSO] Verification email failed:", emailErr);
     }
 
     // ─── Step 4: Build response ──────────────────────────────────
