@@ -292,30 +292,6 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   // RPC METHODS — callable via service binding only
   // ══════════════════════════════════════════════════════════════
 
-  // ── Email Sending ─────────────────────────────────────────────
-  /**
-   * Send email via EMAIL_SERVICE binding
-   * Called by skillpassport via RPC to send pre-generated email templates
-   */
-  async sendEmail(params: {
-    to: string;
-    subject: string;
-    html: string;
-    text: string;
-  }): Promise<{ success: boolean; messageId?: string; error?: string }> {
-    try {
-      if (!this.env.EMAIL_SERVICE) {
-        throw new Error('EMAIL_SERVICE binding not configured');
-      }
-
-      const result = await this.env.EMAIL_SERVICE.sendEmail(params);
-      return { success: true, messageId: result?.messageId };
-    } catch (err: any) {
-      console.error('[SSO] Failed to send email via RPC:', err);
-      return { success: false, error: err?.message || 'Unknown error' };
-    }
-  }
-
   // ── Subscription Management ─────────────────────────────────
 
   // ── Queue Handler (Asynchronous Events) ─────────────────────
@@ -664,6 +640,27 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       throw new Error(result.error);
     }
     return result;
+  }
+
+  /**
+   * Get filter metadata for sales dashboard (distinct values from DB)
+   */
+  async getSalesFilterMeta(): Promise<{
+    planTypes: string[];
+    statuses: string[];
+    clientTypes: string[];
+  }> {
+    const database = db(this.env);
+    const [planTypeRows, statusRows, roleRows] = await Promise.all([
+      database.query<{ plan_type: string }>("subscriptions?select=plan_type"),
+      database.query<{ status: string }>("subscriptions?select=status"),
+      database.query<{ name: string }>("roles?select=name"),
+    ]);
+    return {
+      planTypes: [...new Set(planTypeRows.map(r => r.plan_type))].sort(),
+      statuses: [...new Set(statusRows.map(r => r.status))].sort(),
+      clientTypes: roleRows.map(r => r.name).sort(),
+    };
   }
 
   async cancelSubscription(subscriptionId: string, data?: {

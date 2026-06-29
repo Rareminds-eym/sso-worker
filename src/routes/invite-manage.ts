@@ -143,7 +143,7 @@ export async function resendInvite(
     org?.name ?? "an organization",
     acceptUrl,
   );
-  ctx.waitUntil(sendEmail(env, { to: invite.email, subject, html, text }));
+  ctx.waitUntil(sendEmail(env, { to: invite.email, subject, html, text }, ctx));
 
   audit(ctx, env, "invite_resent", {
     user_id: caller.sub,
