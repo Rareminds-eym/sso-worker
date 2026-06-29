@@ -1,12 +1,12 @@
-import type { Env, AccessTokenPayload } from "../types";
-import { db } from "../lib/db";
-import { hashToken } from "../lib/hash";
-import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
-import { sendVerificationEmail } from "../lib/email";
-import { validateRedirectUrl, resolveAppUrl } from "../lib/validate";
+import { db } from "../lib/db";
+import { generateVerificationEmailTemplate } from "../lib/email-templates";
 import { checkEmailThrottle } from "../lib/email-throttle";
+import { hashToken } from "../lib/hash";
+import { error, json } from "../lib/response";
 import { publishSyncEvent } from "../lib/sync-queue";
+import { resolveAppUrl, validateRedirectUrl } from "../lib/validate";
+import type { AccessTokenPayload, Env } from "../types";
 
 /**
  * POST /auth/request-verification — sends a verification email.
@@ -55,9 +55,18 @@ export async function requestVerification(
   // Send verification email
   const appUrl = resolveAppUrl(body.redirect_url, env);
   const verifyUrl = `${appUrl}/verify-email?token=${token}`;
+
+  // Generate email template locally
+  const template = generateVerificationEmailTemplate(verifyUrl);
+
   ctx.waitUntil(
-    sendVerificationEmail(env, user.email, verifyUrl)
-      .catch(err => console.error("[SSO] Verification email background task failed:", err))
+    env.EMAIL_SERVICE.sendEmail({
+      to: user.email,
+      subject: template.subject,
+      html: template.html,
+      text: template.text
+    })
+      .catch((err: Error) => console.error("[SSO] Verification email background task failed:", err))
   );
 
   audit(ctx, env, "verification_requested", {

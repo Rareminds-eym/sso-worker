@@ -10,9 +10,8 @@
  * - SERVICE_AUTH_SECRET is no longer needed — RPC binding is the trust boundary
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { Env } from '../types';
-import type { ExecutionContext } from '@cloudflare/workers-types';
 
 const mockStore = new Map<string, string>();
 const mockEnv: Env = {
@@ -39,12 +38,11 @@ const mockEnv: Env = {
   ALLOWED_APP_URLS: "https://skillpassport.rareminds.in",
   SYNC_QUEUE: { send: () => Promise.resolve() } as unknown as Queue<any>,
   SKILLPASSPORT_URL: "https://skillpassport.rareminds.in",
-  SKILLPASSPORT: {} as any,
   INTERNAL_WEBHOOK_SECRET: "test_webhook_secret"
 };
 
 async function createWorker() {
-  const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as any;
+  const ctx = { waitUntil: () => { }, passThroughOnException: () => { } } as any;
   const { default: SsoWorker } = await import('../index');
   return new SsoWorker(ctx, mockEnv);
 }

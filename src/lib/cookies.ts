@@ -29,7 +29,13 @@ export function refreshCookie(token: string, maxAgeSec: number, cfg: CookieConfi
   const secure = isDev ? "" : "; Secure";
   const samesite = isDev ? "Lax" : "None";
   const domain = cfg.domain ? `; Domain=${cfg.domain}` : "";
-  return `refresh_token=${token}; ${COOKIE_BASE_ATTRS}${secure}; SameSite=${samesite}${domain}; Max-Age=${maxAgeSec}`;
+  // Use __Secure- prefix (allows Domain) for cross-subdomain cookies.
+  // __Secure- requires Secure + Path=/, __Host- additionally requires no Domain attribute.
+  // When Domain is set (cross-subdomain), use __Secure- which allows Domain.
+  // When Domain is unset (host-only), use __Host- for strongest protection.
+  // Dev mode omits the prefix (no Secure flag).
+  const prefix = isDev ? "" : (cfg.domain ? "__Secure-" : "__Host-");
+  return `${prefix}refresh_token=${token}; ${COOKIE_BASE_ATTRS}${secure}; SameSite=${samesite}${domain}; Max-Age=${maxAgeSec}`;
 }
 
 /**
@@ -42,7 +48,8 @@ export function clearRefreshCookie(cfg: CookieConfig): string {
   const secure = isDev ? "" : "; Secure";
   const samesite = isDev ? "Lax" : "None";
   const domain = cfg.domain ? `; Domain=${cfg.domain}` : "";
-  return `refresh_token=; ${COOKIE_BASE_ATTRS}${secure}; SameSite=${samesite}${domain}; Max-Age=0`;
+  const prefix = isDev ? "" : (cfg.domain ? "__Secure-" : "__Host-");
+  return `${prefix}refresh_token=; ${COOKIE_BASE_ATTRS}${secure}; SameSite=${samesite}${domain}; Max-Age=0`;
 }
 
 // ─── Legacy Helper (For Rollout Window) ────────────────────────
@@ -101,17 +108,21 @@ export function clearCookies(res: Response, env: { REFRESH_COOKIE_DOMAIN?: strin
   res.headers.append("Set-Cookie", clearLegacyAccessTokenCookie());
 }
 
-/** Parse a specific cookie value from the Cookie header */
+/** Parse a specific cookie value from the Cookie header.
+ *  Also checks for __Secure- and __Host- prefixed variants. */
 export function getCookie(req: Request, name: string): string | null {
   const header = req.headers.get("Cookie");
   if (!header) return null;
 
-  for (const part of header.split(";")) {
-    const trimmed = part.trim();
-    // Exact name match: "name=" not "name_other="
-    if (trimmed.startsWith(`${name}=`)) {
-      const idx = trimmed.indexOf("=");
-      return idx === -1 ? null : trimmed.slice(idx + 1).trim();
+  // Prefer __Host- > __Secure- > bare name (most secure first)
+  const candidates = [`__Host-${name}`, `__Secure-${name}`, name];
+  for (const candidate of candidates) {
+    for (const part of header.split(";")) {
+      const trimmed = part.trim();
+      if (trimmed.startsWith(`${candidate}=`)) {
+        const idx = trimmed.indexOf("=");
+        return idx === -1 ? null : trimmed.slice(idx + 1).trim();
+      }
     }
   }
   return null;

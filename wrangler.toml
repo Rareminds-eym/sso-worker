@@ -42,10 +42,6 @@ binding = "EMAIL_SERVICE"
 service = "shared-email-api"
 entrypoint = "EmailService"
 
-[[services]]
-binding = "SKILLPASSPORT"
-service = "skill-passport-portal"
-
 [[queues.producers]]
 binding = "SYNC_QUEUE"
 queue = "auth-db-sync-queue"

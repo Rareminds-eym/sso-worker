@@ -24,6 +24,7 @@ import { oauthCallback, oauthRedirect } from "./routes/oauth";
 import { listOrgs } from "./routes/orgs";
 import { forgotPassword, resetPassword } from "./routes/password-reset";
 import { refresh } from "./routes/refresh";
+import { getSalesSubscriptions } from "./routes/sales-subscriptions";
 import { signup } from "./routes/signup";
 import { signupMember } from "./routes/signup-member";
 import {
@@ -32,7 +33,6 @@ import {
 } from "./routes/subscriptions";
 import { switchOrg } from "./routes/switch-org";
 import { requestVerification, verifyEmail } from "./routes/verify-email";
-import { getSalesSubscriptions } from "./routes/sales-subscriptions";
 import type { AccessTokenPayload, Env, RouteConfig, Session } from "./types";
 
 /** Max request body size: 10 KB */
@@ -137,7 +137,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   // ── Scheduled (cron) ──────────────────────────────────────────
   async scheduled(_event: ScheduledEvent): Promise<void> {
     const database = db(this.env);
-    
+
     // Clean up expired or revoked tokens (verifications, password resets, etc.)
     const deletedTokens = await database.rpc<number>("cleanup_expired_tokens");
     console.log(`[SSO] Cleaned up ${deletedTokens} expired token rows`);
@@ -163,12 +163,12 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           await database.update("events", { id: `eq.${event.id}` }, { status: "processing" });
           try {
             if (event.event_type === 'payment.captured' || event.event_type === 'order.paid') {
-              if (!this.env.SKILLPASSPORT || !this.env.SKILLPASSPORT_URL || !this.env.INTERNAL_WEBHOOK_SECRET) {
-                throw new Error("SKILLPASSPORT binding, URL or INTERNAL_WEBHOOK_SECRET not configured. Cannot dispatch webhook.");
+              if (!this.env.SKILLPASSPORT_URL || !this.env.INTERNAL_WEBHOOK_SECRET) {
+                throw new Error("SKILLPASSPORT URL or INTERNAL_WEBHOOK_SECRET not configured. Cannot dispatch webhook.");
               }
 
               const targetUrl = `${this.env.SKILLPASSPORT_URL}/api/internal/webhooks/payment`;
-              const dispatchResponse = await this.env.SKILLPASSPORT.fetch(targetUrl, {
+              const dispatchResponse = await fetch(targetUrl, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
@@ -185,13 +185,13 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
             }
 
             // Mark as completed since fulfillment succeeded (or event type was ignored)
-            await database.update("events", { id: `eq.${event.id}` }, { 
+            await database.update("events", { id: `eq.${event.id}` }, {
               status: "completed",
               processed_at: new Date().toISOString()
             });
             console.log(`[SSO] Processed webhook event ${event.event_id} of type ${event.event_type}`);
           } catch (processErr: any) {
-            await database.update("events", { id: `eq.${event.id}` }, { 
+            await database.update("events", { id: `eq.${event.id}` }, {
               status: "failed",
               error_message: processErr?.message || "Unknown error",
               retry_count: (event.retry_count || 0) + 1
@@ -292,6 +292,30 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   // RPC METHODS — callable via service binding only
   // ══════════════════════════════════════════════════════════════
 
+  // ── Email Sending ─────────────────────────────────────────────
+  /**
+   * Send email via EMAIL_SERVICE binding
+   * Called by skillpassport via RPC to send pre-generated email templates
+   */
+  async sendEmail(params: {
+    to: string;
+    subject: string;
+    html: string;
+    text: string;
+  }): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    try {
+      if (!this.env.EMAIL_SERVICE) {
+        throw new Error('EMAIL_SERVICE binding not configured');
+      }
+
+      const result = await this.env.EMAIL_SERVICE.sendEmail(params);
+      return { success: true, messageId: result?.messageId };
+    } catch (err: any) {
+      console.error('[SSO] Failed to send email via RPC:', err);
+      return { success: false, error: err?.message || 'Unknown error' };
+    }
+  }
+
   // ── Subscription Management ─────────────────────────────────
 
   // ── Queue Handler (Asynchronous Events) ─────────────────────
@@ -310,30 +334,30 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         // Intercept Reverse Sync Events
         if (body.event_type === 'user_metadata.updated' && body.user_id) {
           const { first_name, last_name } = body.payload;
-          
+
           if (first_name !== undefined || last_name !== undefined) {
             try {
               // Note: using db(this.env) which wraps Postgres REST. 
               const user = await database.queryOne(`users?id=eq.${body.user_id}&select=user_metadata`);
               const currentMetadata = (user as any)?.user_metadata || {};
-              
+
               const newMetadata = { ...currentMetadata };
               if (first_name !== undefined) newMetadata.first_name = first_name;
               if (last_name !== undefined) newMetadata.last_name = last_name;
-              
+
               await database.update('users', { id: `eq.${body.user_id}` }, { user_metadata: newMetadata });
               console.log(`[SSO] Bidirectional sync complete: updated user_metadata for user ${body.user_id}`);
-              
+
               // Broadcast to all forward consumers (e.g. App 1, App 2) so they stay in sync
               if (this.env.SYNC_QUEUE) {
                 const userObj = await database.queryOne<{ id: string, email: string }>(`users?id=eq.${body.user_id}&select=id,email`);
                 if (userObj) {
                   await this.env.SYNC_QUEUE.send({
                     type: 'user.updated',
-                    payload: { 
-                      id: userObj.id, 
-                      email: userObj.email, 
-                      user_metadata: newMetadata 
+                    payload: {
+                      id: userObj.id,
+                      email: userObj.email,
+                      user_metadata: newMetadata
                     },
                     timestamp: new Date().toISOString()
                   });
@@ -347,7 +371,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
               continue;
             }
           }
-          
+
           message.ack();
           continue;
         }
@@ -1061,6 +1085,74 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   }
 
   /**
+   * Signup RPC - creates user, org, membership
+   * Called by skillpassport via RPC
+   */
+  async signup(params: {
+    email: string;
+    password: string;
+    org_name: string;
+    role: string;
+    redirect_url?: string;
+  }): Promise<any> {
+    const { signup } = await import("./routes/signup");
+    const req = new Request('http://internal/rpc/signup', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+    const response = await signup(req, this.env, this.ctx);
+    const data = await response.json() as any;
+    if (!response.ok) {
+      return { success: false, error: data.error || 'Signup failed' };
+    }
+    return { success: true, ...data };
+  }
+
+  /**
+   * Request verification email RPC
+   * Called by skillpassport via RPC
+   */
+  async requestVerification(params: {
+    user_id: string;
+    email: string;
+    redirect_url?: string;
+  }): Promise<any> {
+    const { requestVerification } = await import('./routes/verify-email');
+    const req = new Request('http://internal/rpc/request-verification', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+    // Create a mock auth payload for the RPC call
+    const auth = { sub: params.user_id, email: params.email, org_id: '', roles: [], products: [], membership_status: 'inactive' as const, is_email_verified: false };
+    const response = await requestVerification(req, this.env, this.ctx, auth);
+    const data = await response.json() as any;
+    if (!response.ok) {
+      throw new Error(data.error || 'Request verification failed');
+    }
+    return data;
+  }
+
+  /**
+   * Verify email RPC
+   * Called by skillpassport via RPC
+   */
+  async verifyEmail(params: {
+    token: string;
+  }): Promise<any> {
+    const { verifyEmail } = await import('./routes/verify-email');
+    const req = new Request('http://internal/rpc/verify-email', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+    const response = await verifyEmail(req, this.env, this.ctx);
+    const data = await response.json() as any;
+    if (!response.ok) {
+      return { success: false, error: data.error || 'Verify email failed' };
+    }
+    return { success: true, ...data };
+  }
+
+  /**
    * Log in user via true RPC.
    *
    * @param params Object containing email, password, ip, ua
@@ -1077,10 +1169,10 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     );
 
     if (result.error) {
-      throw new Error(result.error);
+      return { success: false, error: result.error };
     }
 
-    return result;
+    return { success: true, ...result };
   }
 
   /**
@@ -1203,7 +1295,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     };
   }
 
-  async forgotPassword(params: { email?: string; redirect_url?: string }, ip?: string, ua?: string): Promise<{ message?: string }> {
+  async forgotPassword(params: { email?: string; redirect_url?: string }, ip?: string, ua?: string): Promise<any> {
     const { performForgotPassword } = await import("./routes/password-reset");
     const result = await performForgotPassword(
       this.env,
@@ -1214,13 +1306,13 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     );
 
     if (result.error) {
-      throw new Error(result.error);
+      return { success: false, error: result.error };
     }
 
-    return { message: result.message };
+    return { success: true, message: result.message };
   }
 
-  async resetPassword(params: { token?: string; password?: string }, ip?: string, ua?: string): Promise<{ reset?: boolean }> {
+  async resetPassword(params: { token?: string; password?: string }, ip?: string, ua?: string): Promise<any> {
     const { performResetPassword } = await import("./routes/password-reset");
     const result = await performResetPassword(
       this.env,
@@ -1231,10 +1323,10 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     );
 
     if (result.error) {
-      throw new Error(result.error);
+      return { success: false, error: result.error };
     }
 
-    return { reset: result.reset };
+    return { success: true, reset: result.reset };
   }
 
   async listAddonCatalog(): Promise<any> {

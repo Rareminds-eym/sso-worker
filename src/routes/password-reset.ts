@@ -1,12 +1,12 @@
-import type { Env, User } from "../types";
-import { db } from "../lib/db";
-import { hashPassword, hashToken } from "../lib/hash";
-import { validateEmail, validatePassword, validateRedirectUrl, resolveAppUrl } from "../lib/validate";
-import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
-import { sendPasswordResetEmail } from "../lib/email";
+import { db } from "../lib/db";
+import { generatePasswordResetEmailTemplate } from "../lib/email-templates";
 import { checkEmailThrottle } from "../lib/email-throttle";
+import { hashPassword, hashToken } from "../lib/hash";
 import { endpointRateLimit } from "../lib/rate-limit";
+import { error, json } from "../lib/response";
+import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "../lib/validate";
+import type { Env, User } from "../types";
 
 const RESET_TTL_MS = 1 * 60 * 60 * 1000; // 1 hour
 
@@ -69,13 +69,21 @@ export async function performForgotPassword(
     expires_at: expiresAt,
   });
 
-  // Send password reset email via template router (platform-specific template)
+  // Send password reset email via EMAIL_SERVICE RPC
   const appUrl = resolveAppUrl(body.redirect_url, env);
   const resetUrl = `${appUrl}/reset-password?token=${token}`;
-  
+
+  // Generate email template locally
+  const template = generatePasswordResetEmailTemplate(resetUrl);
+
   ctx.waitUntil(
-    sendPasswordResetEmail(env, email, resetUrl)
-      .catch(err => console.error("[SSO] Password reset email background task failed:", err))
+    env.EMAIL_SERVICE.sendEmail({
+      to: email,
+      subject: template.subject,
+      html: template.html,
+      text: template.text
+    })
+      .catch((err: Error) => console.error("[SSO] Password reset email background task failed:", err))
   );
 
   audit(ctx, env, "password_reset_requested", {
@@ -108,7 +116,7 @@ export async function forgotPassword(
   const ua = req.headers.get("User-Agent");
 
   const result = await performForgotPassword(env, ctx, body, ip, ua);
-  
+
   if (result.error) {
     // We need to parse error if it's JSON format from earlier responses, but we return string errors now.
     return error(result.error, result.status || 400);
@@ -127,7 +135,7 @@ export async function performResetPassword(
   if (!body.token) {
     return { error: "token is required", status: 400 };
   }
-  
+
   if (!body.password) {
     return { error: "password is required", status: 400 };
   }

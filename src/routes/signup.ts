@@ -2,14 +2,16 @@ import { audit } from "../lib/audit";
 import { SESSION_TTL_MS } from "../lib/constants";
 import { setAuthCookies } from "../lib/cookies";
 import { db } from "../lib/db";
-import { sendVerificationEmail } from "../lib/email";
 import { generateRefreshToken, hashPassword, hashToken } from "../lib/hash";
 import { signAccessToken } from "../lib/jwt";
 import { endpointRateLimit } from "../lib/rate-limit";
 import { error, json } from "../lib/response";
 import { publishSyncEvent } from "../lib/sync-queue";
 import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "../lib/validate";
+import { generateVerificationEmailTemplate } from "../lib/email-templates";
 import type { Env, JwtClaims, SignupBody } from "../types";
+
+const EMAIL_SEND_TIMEOUT_MS = 5_000;
 
 /**
  * POST /auth/signup
@@ -147,7 +149,7 @@ export async function signup(
       env,
     );
 
-    // ─── Step 3: Send verification email (synchronous, reflects actual delivery) ──
+    // ─── Step 3: Send verification email ──
     let emailSent = true;
     try {
       const verifyToken = crypto.randomUUID();
@@ -159,10 +161,46 @@ export async function signup(
       });
       const appUrl = resolveAppUrl(body.redirect_url, env);
       const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
-      await sendVerificationEmail(env, email, verifyUrl);
+
+      const template = generateVerificationEmailTemplate(verifyUrl);
+      const emailPromise = env.EMAIL_SERVICE.sendEmail({
+        to: email,
+        subject: template.subject,
+        html: template.html,
+        text: template.text,
+      });
+
+      // Keep the promise alive in background even after we respond — the email
+      // may still succeed after the user-facing timeout.
+      ctx.waitUntil(emailPromise.then(() => {
+        console.log(JSON.stringify({
+          msg: "[SSO] Verification email delivered (after timeout window)",
+          email,
+          user_id: result.user_id,
+        }));
+      }).catch((err) => {
+        console.error(JSON.stringify({
+          msg: "[SSO] Verification email permanently failed",
+          email,
+          user_id: result.user_id,
+          error: err instanceof Error ? err.message : String(err),
+        }));
+      }));
+
+      await Promise.race([
+        emailPromise,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Email send timed out")), EMAIL_SEND_TIMEOUT_MS)
+        ),
+      ]);
     } catch (emailErr) {
       emailSent = false;
-      console.error("[SSO] Verification email failed:", emailErr);
+      console.error(JSON.stringify({
+        msg: "[SSO] Verification email send timeout or immediate failure",
+        email,
+        user_id: result.user_id,
+        error: emailErr instanceof Error ? emailErr.message : String(emailErr),
+      }));
     }
 
     // ─── Step 4: Build response ──────────────────────────────────
@@ -233,3 +271,5 @@ export async function signup(
     return error("Signup failed. Please try again.", 500);
   }
 }
+
+
