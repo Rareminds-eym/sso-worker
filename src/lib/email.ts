@@ -1,5 +1,5 @@
 import type { Env } from "../types";
-import { escapeHtmlAttr, escapeHrefAttr } from "./escape";
+import { escapeHrefAttr, escapeHtmlAttr } from "./escape";
 
 export interface EmailPayload {
   to: string;
@@ -60,128 +60,6 @@ export async function sendEmail(env: Env, payload: EmailPayload): Promise<void> 
 
 
 
-/**
- * Fetch with retry for transient Cloudflare subrequest failures.
- * Prefers the Service Binding if available, falls back to global fetch.
- */
-async function fetchWithRetry(env: Env, uri: string, options: RequestInit, retries = 2, baseDelay = 1000): Promise<Response> {
-  let lastError: Error | undefined;
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      if (env.SKILLPASSPORT) {
-        return await env.SKILLPASSPORT.fetch(uri, options as any);
-      }
-      return await fetch(uri, options);
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-      if (attempt < retries) {
-        const delay = Math.min(baseDelay * Math.pow(2, attempt), 5000);
-        await new Promise(r => setTimeout(r, delay));
-      }
-    }
-  }
-  throw lastError!;
-}
-
-/**
- * Send email verification - fetches template via SkillPassport service binding
- */
-export async function sendVerificationEmail(
-  env: Env,
-  to: string,
-  verifyUrl: string,
-): Promise<void> {
-  try {
-    const templateResponse = await fetchWithRetry(
-      env,
-      `${env.SKILLPASSPORT_URL}/api/email/verification`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          to, 
-          verifyUrl,
-          templateOnly: true 
-        }),
-      }
-    );
-
-    if (!templateResponse.ok) {
-      const errorText = await templateResponse.text().catch(() => "Response body unreadable");
-      throw new Error(`Failed to fetch verification email template from SkillPassport service: ${templateResponse.status} ${templateResponse.statusText} - ${errorText}`);
-    }
-
-    const rawData = await templateResponse.json();
-
-    const validated = rawData as JsonObject;
-    if (!isValidEmailTemplate(validated)) {
-      throw new Error('Invalid template response structure from SkillPassport service');
-    }
-
-    const templateData: EmailTemplate = validated;
-    
-    // Send email via service binding to email-worker
-    await sendEmail(env, { 
-      to, 
-      subject: templateData.subject, 
-      html: templateData.html, 
-      text: templateData.text 
-    });
-  } catch (error) {
-    console.error(`[SSO] Failed to send verification email:`, error);
-    throw new Error(`Email verification failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
-/**
- * Send password reset - fetches template via SkillPassport service binding
- */
-export async function sendPasswordResetEmail(
-  env: Env,
-  to: string,
-  resetUrl: string,
-): Promise<void> {
-  try {
-    const templateResponse = await fetchWithRetry(
-      env,
-      `${env.SKILLPASSPORT_URL}/api/email/password-reset`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          to, 
-          resetUrl,
-          templateOnly: true 
-        }),
-      }
-    );
-
-    if (!templateResponse.ok) {
-      const errorText = await templateResponse.text().catch(() => "Response body unreadable");
-      throw new Error(`Failed to fetch password reset email template from SkillPassport service: ${templateResponse.status} ${templateResponse.statusText} - ${errorText}`);
-    }
-
-    const rawData = await templateResponse.json();
-
-    const validated = rawData as JsonObject;
-    if (!isValidEmailTemplate(validated)) {
-      throw new Error('Invalid template response structure from SkillPassport service');
-    }
-
-    const templateData: EmailTemplate = validated;
-    
-    // Send email via service binding to email-worker
-    await sendEmail(env, { 
-      to, 
-      subject: templateData.subject, 
-      html: templateData.html, 
-      text: templateData.text 
-    });
-  } catch (error) {
-    console.error(`[SSO] Failed to send password reset email:`, error);
-    throw new Error(`Password reset email failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
 
 /**
  * Send welcome email using simple template
@@ -200,7 +78,7 @@ export async function sendWelcomeEmail(
       <p><a href="${escapeHrefAttr(baseUrl)}/login">Login now</a></p>
     `.trim();
     const text = `Hello ${name},\n\nWelcome to SkillPassport! Your account has been created successfully.\n\nLogin: ${baseUrl}/login`;
-    
+
     await sendEmail(env, { to, subject, html, text });
   } catch (error) {
     console.error(`[SSO] Failed to send welcome email:`, error);

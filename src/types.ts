@@ -14,19 +14,16 @@ export interface Env {
   ALLOWED_ORIGINS: string;
   RATE_LIMIT_KV: KVNamespace;
   /** Service binding to the email-worker for sending emails via RPC. */
-  EMAIL_SERVICE: Fetcher & { 
-    sendEmail(params: any): Promise<any>; 
-    sendOTP(params: any): Promise<any>; 
-    verifyOTP(params: any): Promise<any>; 
+  EMAIL_SERVICE: Fetcher & {
+    sendEmail(params: any): Promise<any>;
+    sendOTP(params: any): Promise<any>;
+    verifyOTP(params: any): Promise<any>;
   };
   /** API key for authenticating with the email-worker. */
   EMAIL_API_KEY: string;
 
   /** Base URL for the SkillPassport Pages app (e.g. https://skillpassport.rareminds.in) */
   SKILLPASSPORT_URL: string;
-
-  /** Service Binding for the SkillPassport backend API */
-  SKILLPASSPORT: Fetcher;
 
   /** Secret used to securely authenticate internal webhook dispatches to frontend applications */
   INTERNAL_WEBHOOK_SECRET: string;
