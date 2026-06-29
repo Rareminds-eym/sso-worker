@@ -499,6 +499,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     password: string;
     role: string;
     org_id: string;
+    user_metadata?: Record<string, unknown>;
   }): Promise<{ user_id: string; org_id: string; membership_id: string }> {
     if (!data.email || !data.password || !data.role || !data.org_id) {
       throw new Error("email, password, role, and org_id are required");
@@ -517,6 +518,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           p_password_hash: password_hash,
           p_role: data.role,
           p_org_id: data.org_id,
+          p_user_metadata: data.user_metadata || {},
         },
       );
     } catch (err: any) {
@@ -534,7 +536,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     try {
       await this.env.SYNC_QUEUE.send({
         type: 'user.created',
-        payload: { id: result.user_id, email },
+        payload: { id: result.user_id, email, user_metadata: data.user_metadata || {} },
         timestamp: new Date().toISOString(),
       });
       await this.env.SYNC_QUEUE.send({
