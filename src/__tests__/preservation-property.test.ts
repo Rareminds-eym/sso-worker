@@ -8,11 +8,10 @@
  * - The SsoWorker export is a proper WorkerEntrypoint class
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
 import { SignJWT, importPKCS8 } from 'jose';
-import { JWT_ISSUER, JWT_AUDIENCE } from '../lib/constants';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { JWT_AUDIENCE, JWT_ISSUER } from '../lib/constants';
 import type { Env } from '../types';
-import type { ExecutionContext } from '@cloudflare/workers-types';
 
 // Mock environment for testing
 const mockEnv: Env = {
@@ -68,12 +67,11 @@ UQIDAQAB
   ALLOWED_APP_URLS: "https://skillpassport.rareminds.in",
   SYNC_QUEUE: { send: () => Promise.resolve() } as unknown as Queue<any>,
   SKILLPASSPORT_URL: "https://skillpassport.rareminds.in",
-  SKILLPASSPORT: {} as any,
   INTERNAL_WEBHOOK_SECRET: "test_webhook_secret"
 };
 
 async function createWorker() {
-  const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as any;
+  const ctx = { waitUntil: () => { }, passThroughOnException: () => { } } as any;
   const { default: SsoWorker } = await import('../index');
   return new SsoWorker(ctx, mockEnv);
 }
