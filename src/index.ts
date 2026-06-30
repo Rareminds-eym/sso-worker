@@ -1166,7 +1166,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     );
 
     if (result.error) {
-      return { success: false, error: result.error };
+      return { success: false, error: result.error, status: result.status ?? 401 };
     }
 
     return { success: true, ...result };
