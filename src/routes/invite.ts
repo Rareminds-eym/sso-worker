@@ -112,7 +112,7 @@ export async function createInvite(
     org?.name ?? "an organization",
     acceptUrl,
   );
-  ctx.waitUntil(sendEmail(env, { to: inviteEmailAddress, subject, html, text }));
+  ctx.waitUntil(sendEmail(env, { to: inviteEmailAddress, subject, html, text }, ctx));
 
   audit(ctx, env, "invite_created", {
     user_id: caller.sub,

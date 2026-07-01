@@ -198,15 +198,11 @@ export async function signupMember(
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("Email send timed out")), EMAIL_SEND_TIMEOUT_MS)
         ),
-      ]);
+      ]).catch(() => {
+        emailSent = false; // timeout or immediate failure — ctx.waitUntil handler logs the actual outcome
+      });
     } catch (emailErr) {
       emailSent = false;
-      console.error(JSON.stringify({
-        msg: "[SSO] Verification email send timeout or immediate failure",
-        email,
-        user_id: result.user_id,
-        error: emailErr instanceof Error ? emailErr.message : String(emailErr),
-      }));
     }
 
     // ─── Step 4: Build response ──────────────────────────────────

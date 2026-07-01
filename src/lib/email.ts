@@ -8,81 +8,45 @@ export interface EmailPayload {
   text: string;
 }
 
-interface EmailTemplate {
-  html: string;
-  subject: string;
-  text: string;
-  [key: string]: JsonPrimitive | JsonObject | JsonArray;
-}
-
-type JsonPrimitive = string | number | boolean | null;
-type JsonObject = { [key: string]: JsonPrimitive | JsonObject | JsonArray };
-type JsonArray = (JsonPrimitive | JsonObject | JsonArray)[];
-
-/**
- * Type guard to validate email template structure
- */
-function isValidEmailTemplate(data: JsonObject): data is EmailTemplate {
-  return (
-    typeof data === 'object' &&
-    data !== null &&
-    !Array.isArray(data) &&
-    'html' in data &&
-    'subject' in data &&
-    'text' in data &&
-    typeof data.html === 'string' &&
-    typeof data.subject === 'string' &&
-    typeof data.text === 'string'
-  );
-}
+const EMAIL_SEND_TIMEOUT_MS = 5_000;
 
 /**
  * Send an email via the email-worker service binding.
  *
- * Non-blocking — designed to be called inside ctx.waitUntil().
+ * Uses Promise.race for a user-facing timeout (5s) so the caller never hangs.
+ * The underlying RPC completes in the background even if the timeout fires
+ * (tracked via ctx.waitUntil to keep the Worker alive).
  * Errors are logged but never thrown to avoid blocking the HTTP response.
  */
-export async function sendEmail(env: Env, payload: EmailPayload): Promise<void> {
+export async function sendEmail(env: Env, payload: EmailPayload, ctx?: ExecutionContext): Promise<void> {
   try {
-    const res = await env.EMAIL_SERVICE.sendEmail({
+    const emailPromise = env.EMAIL_SERVICE.sendEmail({
       to: payload.to,
       subject: payload.subject,
       html: payload.html,
       text: payload.text,
     });
-    if (!res.success) {
+
+    if (ctx) {
+      ctx.waitUntil(emailPromise.then(() => {
+        console.log(JSON.stringify({ msg: "[SSO] Email delivered", to: payload.to }));
+      }).catch((err: Error) => {
+        console.error(JSON.stringify({ msg: "[SSO] Email delivery failed", error: err.message }));
+      }));
+    }
+
+    const res = await Promise.race([
+      emailPromise,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Email send timed out")), EMAIL_SEND_TIMEOUT_MS)
+      ),
+    ]).catch(() => undefined);
+
+    if (res && !res.success) {
       console.error(`[SSO] Email delivery failed: ${res.errorCode} ${res.error}`);
     }
   } catch (err) {
-    console.error("[SSO] Email delivery error:", err);
-  }
-}
-
-
-
-
-/**
- * Send welcome email using simple template
- */
-export async function sendWelcomeEmail(
-  env: Env,
-  to: string,
-  name: string,
-  baseUrl: string,
-): Promise<void> {
-  try {
-    const subject = "Welcome to SkillPassport!";
-    const html = `
-      <p>Hello ${escapeHtmlAttr(name)},</p>
-      <p>Welcome to SkillPassport! Your account has been created successfully.</p>
-      <p><a href="${escapeHrefAttr(baseUrl)}/login">Login now</a></p>
-    `.trim();
-    const text = `Hello ${name},\n\nWelcome to SkillPassport! Your account has been created successfully.\n\nLogin: ${baseUrl}/login`;
-
-    await sendEmail(env, { to, subject, html, text });
-  } catch (error) {
-    console.error(`[SSO] Failed to send welcome email:`, error);
-    throw new Error(`Welcome email failed: ${error instanceof Error ? error.message : String(error)}`);
+    console.error("[SSO] Email delivery setup failed:", err);
   }
 }
 
