@@ -76,15 +76,26 @@ export async function performForgotPassword(
   // Generate email template locally
   const template = generatePasswordResetEmailTemplate(resetUrl);
 
-  ctx.waitUntil(
-    env.EMAIL_SERVICE.sendEmail({
-      to: email,
-      subject: template.subject,
-      html: template.html,
-      text: template.text
-    })
-      .catch((err: Error) => console.error("[SSO] Password reset email background task failed:", err))
-  );
+  const emailTimeoutMs = 5_000;
+  const emailPromise = env.EMAIL_SERVICE.sendEmail({
+    to: email,
+    subject: template.subject,
+    html: template.html,
+    text: template.text,
+  });
+
+  ctx.waitUntil(emailPromise.then(() => {
+    console.log(JSON.stringify({ msg: "[SSO] Password reset email delivered", email }));
+  }).catch((err: Error) => {
+    console.error(JSON.stringify({ msg: "[SSO] Password reset email failed", error: err.message }));
+  }));
+
+  await Promise.race([
+    emailPromise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("Email send timed out")), emailTimeoutMs)
+    ),
+  ]).catch(() => {}); // timeout is non-fatal — response already says "If an account exists..."
 
   audit(ctx, env, "password_reset_requested", {
     user_id: user.id,
