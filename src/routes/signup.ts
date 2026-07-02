@@ -35,9 +35,15 @@ export async function signup(
     return error("Invalid JSON body");
   }
 
-  if (!body.email || !body.password || !body.org_name || !body.role) {
-    return error("email, password, org_name, and role are required");
+  if (!body.email || !body.password) {
+    return error("email and password are required");
   }
+
+  // org_name is optional for recruiter onboarding flow
+  // If not provided, it will be set during onboarding Step 1
+
+  // role is optional, defaults to 'owner'
+  const role = body.role || 'owner';
 
   const emailErr = validateEmail(body.email);
   if (emailErr) return emailErr;
@@ -83,10 +89,13 @@ export async function signup(
 
   const password_hash = await hashPassword(body.password);
 
+  // Generate slug from org_name if provided, otherwise use a temporary slug
   const slug = body.org_name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
+    ? body.org_name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+    : `org-${crypto.randomUUID().split('-')[0]}`;
 
   // ─── Step 1: Create user + org in database ───────────────────
   let result: { user_id: string; org_id: string; slug: string };
@@ -96,9 +105,9 @@ export async function signup(
       {
         p_email: email,
         p_password_hash: password_hash,
-        p_org_name: body.org_name,
+        p_org_name: body.org_name || null, // Allow null for recruiter onboarding
         p_org_slug: slug,
-        p_role: body.role,
+        p_role: role, // Use the role variable we set earlier
         p_user_metadata: body.user_metadata ?? {},
       },
     );
@@ -173,7 +182,7 @@ export async function signup(
       {
         access_token: accessToken,
         user: { id: result.user_id, email },
-        org: { id: result.org_id, name: body.org_name, slug: result.slug },
+        org: { id: result.org_id, name: body.org_name || null, slug: result.slug },
         email_sent: emailSent,
       },
       201,
