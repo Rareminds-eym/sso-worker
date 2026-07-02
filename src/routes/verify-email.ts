@@ -1,114 +1,93 @@
 import { audit } from "../lib/audit";
 import { db } from "../lib/db";
+import { sendEmail } from "../lib/email";
 import { generateVerificationEmailTemplate } from "../lib/email-templates";
 import { checkEmailThrottle } from "../lib/email-throttle";
 import { hashToken } from "../lib/hash";
-import { error, json } from "../lib/response";
+
 import { publishSyncEvent } from "../lib/sync-queue";
 import { resolveAppUrl, validateRedirectUrl } from "../lib/validate";
-import type { AccessTokenPayload, Env } from "../types";
+import type { Env } from "../types";
 
 /**
- * POST /auth/request-verification — sends a verification email.
- * Requires authentication. The server sends the email directly.
- * Returns a confirmation message, or { already_verified: true } if already verified.
+ * Pure business logic for requesting verification email (extracted for RPC)
  */
-export async function requestVerification(
-  req: Request,
+export async function performRequestVerification(
   env: Env,
   ctx: ExecutionContext,
-  auth?: AccessTokenPayload,
-): Promise<Response> {
-  const payload = auth!;
+  params: {
+    user_id: string;
+    email: string;
+    redirect_url?: string;
+    org_id?: string;
+  }
+): Promise<{ message?: string; already_verified?: boolean; error?: string; status?: number }> {
   const database = db(env);
 
-  let body: { redirect_url?: string };
-  try {
-    body = await req.json() as { redirect_url?: string };
-  } catch {
-    body = {};
+  // Validate redirect URL if provided
+  if (params.redirect_url) {
+    const redirectErr = validateRedirectUrl(params.redirect_url, env);
+    if (redirectErr) {
+      return { error: "Invalid redirect URL", status: 400 };
+    }
   }
 
-  const redirectErr = validateRedirectUrl(body.redirect_url, env);
-  if (redirectErr) return redirectErr;
-
   const user = await database.queryOne<{ id: string; email: string; is_email_verified: boolean }>(
-    `users?id=eq.${payload.sub}&select=id,email,is_email_verified`,
+    `users?id=eq.${params.user_id}&select=id,email,is_email_verified`,
   );
 
-  if (!user) return error("User not found", 404);
-  if (user.is_email_verified) return json({ already_verified: true });
+  if (!user) return { error: "User not found", status: 404 };
+  if (user.is_email_verified) return { already_verified: true };
 
-  const throttled = await checkEmailThrottle(env, "verification", payload.sub);
-  if (throttled) return throttled;
+  const throttled = await checkEmailThrottle(env, "verification", params.user_id);
+  if (throttled) {
+    return { error: "Too many requests. Please try again later.", status: 429 };
+  }
 
   const token = crypto.randomUUID();
   const tokenHash = await hashToken(token);
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24h
 
   await database.mutate("email_verifications", {
-    user_id: payload.sub,
+    user_id: params.user_id,
     token_hash: tokenHash,
     expires_at: expiresAt,
   });
 
   // Send verification email
-  const appUrl = resolveAppUrl(body.redirect_url, env);
+  const appUrl = resolveAppUrl(params.redirect_url, env);
   const verifyUrl = `${appUrl}/verify-email?token=${token}`;
 
   // Generate email template locally
   const template = generateVerificationEmailTemplate(verifyUrl);
 
-  const emailTimeoutMs = 5_000;
-  const emailPromise = env.EMAIL_SERVICE.sendEmail({
-    to: user.email,
-    subject: template.subject,
-    html: template.html,
-    text: template.text,
-  });
-
-  ctx.waitUntil(emailPromise.then(() => {
-    console.log(JSON.stringify({ msg: "[SSO] Verification email delivered", email: user.email }));
-  }).catch((err: Error) => {
-    console.error(JSON.stringify({ msg: "[SSO] Verification email failed", error: err.message }));
-  }));
-
-  await Promise.race([
-    emailPromise,
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("Email send timed out")), emailTimeoutMs)
-    ),
-  ]).catch(() => {}); // timeout is non-fatal — response already promises delivery
+  ctx.waitUntil(sendEmail(env, { to: user.email, subject: template.subject, html: template.html, text: template.text }, ctx));
 
   audit(ctx, env, "verification_requested", {
-    user_id: payload.sub,
-    org_id: payload.org_id,
+    user_id: params.user_id,
+    org_id: params.org_id || null,
   });
 
-  return json({ message: "Verification email sent." });
+  return { message: "Verification email sent." };
 }
 
 /**
- * POST /auth/verify-email — verifies the email using the token.
- * No authentication required (user clicks link from email).
+ * Pure business logic for verifying email (extracted for RPC)
  */
-export async function verifyEmail(
-  req: Request,
+export async function performVerifyEmail(
   env: Env,
   ctx: ExecutionContext,
-): Promise<Response> {
-  let body: { token?: string };
-  try {
-    body = await req.json() as { token?: string };
-  } catch {
-    return error("Invalid JSON body");
-  }
-
-  if (!body.token) return error("token is required");
+  params: {
+    token: string;
+  },
+  ip?: string | null,
+  ua?: string | null
+): Promise<{ verified?: boolean; error?: string; status?: number }> {
+  if (!params.token) return { error: "token is required", status: 400 };
 
   const database = db(env);
 
-  const tokenHash = await hashToken(body.token);
+  const tokenHash = await hashToken(params.token);
   const record = await database.queryOne<{
     id: string;
     user_id: string;
@@ -118,9 +97,9 @@ export async function verifyEmail(
     `email_verifications?token_hash=eq.${encodeURIComponent(tokenHash)}&select=*`,
   );
 
-  if (!record) return error("Invalid verification token", 404);
-  if (record.used) return error("Token already used", 410);
-  if (new Date(record.expires_at) < new Date()) return error("Token expired", 410);
+  if (!record) return { error: "Invalid verification token", status: 404 };
+  if (record.used) return { error: "Token already used", status: 410 };
+  if (new Date(record.expires_at) < new Date()) return { error: "Token expired", status: 410 };
 
   // Mark token as used and verify the user's email
   await database.update(
@@ -141,9 +120,11 @@ export async function verifyEmail(
 
   audit(ctx, env, "email_verified", {
     user_id: record.user_id,
-    ip_address: req.headers.get("CF-Connecting-IP"),
-    user_agent: req.headers.get("User-Agent"),
+    ip_address: ip || null,
+    user_agent: ua || null,
   });
 
-  return json({ verified: true });
+  return { verified: true };
 }
+
+

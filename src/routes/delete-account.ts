@@ -1,69 +1,49 @@
 import { audit } from "../lib/audit";
-import { clearCookies } from "../lib/cookies";
+import { db } from "../lib/db";
 import { endpointRateLimit } from "../lib/rate-limit";
-import { error, json } from "../lib/response";
 import { publishSyncEvent } from "../lib/sync-queue";
-import type { AccessTokenPayload, Env } from "../types";
+import type { Env } from "../types";
 
 /**
- * POST /auth/delete-account
- *
- * Allows an authenticated user to delete their own account.
- * Used for rollback when app profile creation fails after SSO signup.
- *
- * Deletes: user, sessions, memberships (cascade), email_verifications, password_resets.
- * The `ON DELETE CASCADE` constraints handle most cleanup automatically.
+ * Pure business logic for deleting account (extracted for RPC)
  */
-export async function deleteAccount(
-  req: Request,
+export async function performDeleteAccount(
   env: Env,
   ctx: ExecutionContext,
-  auth?: AccessTokenPayload,
-): Promise<Response> {
-  const payload = auth!;
-  const rateLimited = await endpointRateLimit(env, `delete-account:user:${payload.sub}`, 20, 60);
-  if (rateLimited) return rateLimited;
-
-  const ip = req.headers.get("CF-Connecting-IP");
-  const ua = req.headers.get("User-Agent");
+  params: {
+    user_id: string;
+    org_id?: string;
+  },
+  ip?: string | null,
+  ua?: string | null
+): Promise<{ deleted?: boolean; error?: string; status?: number }> {
+  const rateLimited = await endpointRateLimit(env, `delete-account:user:${params.user_id}`, 20, 60);
+  if (rateLimited) {
+    return { error: "Rate limit exceeded", status: 429 };
+  }
 
   try {
     // Delete the user — CASCADE handles sessions, memberships, email_verifications, etc.
-    // Use raw fetch since db.query() expects JSON response but DELETE returns empty body
-    const base = `${env.SUPABASE_URL}/rest/v1`;
-    const headers = {
-      "Content-Type": "application/json",
-      apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-    };
+    const database = db(env);
+    await database.delete("users", { id: `eq.${params.user_id}` });
 
-    const res = await fetch(`${base}/users?id=eq.${payload.sub}`, {
-      method: "DELETE",
-      headers: { ...headers, Prefer: "return=minimal" },
-    });
-
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Delete failed [${res.status}]: ${text}`);
-    }
-
-    const response = json({ deleted: true });
-    clearCookies(response, env);
-
-    // Response fully built — emit sync events
+    // Emit sync events
     publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.deleted', {
-      user_id: payload.sub,
+      user_id: params.user_id,
     });
 
     audit(ctx, env, "account_deleted", {
-      user_id: payload.sub,
-      ip_address: ip,
-      user_agent: ua,
+      user_id: params.user_id,
+      org_id: params.org_id || null,
+      ip_address: ip || null,
+      user_agent: ua || null,
     });
 
-    return response;
+    return { deleted: true };
   } catch (err) {
     console.error("[SSO] Account deletion failed:", err);
-    return error("Failed to delete account", 500);
+    return { error: "Failed to delete account", status: 500 };
   }
 }
+
+

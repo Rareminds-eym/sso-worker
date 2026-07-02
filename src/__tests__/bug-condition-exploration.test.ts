@@ -34,7 +34,6 @@ const mockEnv: Env = {
     sendOTP: async () => ({ success: true }),
     verifyOTP: async () => ({ success: true })
   } as any,
-  EMAIL_API_KEY: "test_email_key",
   ALLOWED_APP_URLS: "https://skillpassport.rareminds.in",
   SYNC_QUEUE: { send: () => Promise.resolve() } as unknown as Queue<any>,
   SKILLPASSPORT_URL: "https://skillpassport.rareminds.in",

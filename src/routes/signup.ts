@@ -1,61 +1,52 @@
 import { audit } from "../lib/audit";
 import { SESSION_TTL_MS } from "../lib/constants";
-import { setAuthCookies } from "../lib/cookies";
 import { db } from "../lib/db";
+import { sendEmail } from "../lib/email";
+import { generateVerificationEmailTemplate } from "../lib/email-templates";
+import { checkEmailThrottle } from "../lib/email-throttle";
 import { generateRefreshToken, hashPassword, hashToken } from "../lib/hash";
 import { signAccessToken } from "../lib/jwt";
 import { endpointRateLimit } from "../lib/rate-limit";
-import { error, json } from "../lib/response";
 import { publishSyncEvent } from "../lib/sync-queue";
 import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "../lib/validate";
-import { generateVerificationEmailTemplate } from "../lib/email-templates";
 import type { Env, JwtClaims, SignupBody } from "../types";
 
 const EMAIL_SEND_TIMEOUT_MS = 5_000;
 
 /**
- * POST /auth/signup
- *
- * Creates a user + organization + membership with owner role.
- * Used by institution admins creating their school/college/university.
- *
- * Atomicity guarantee:
- * - If anything other than email delivery fails after user/org creation,
- *   the user and org are rolled back (deleted) from the database.
- * - Email delivery failure is non-blocking; the response includes
- *   `email_sent: false` so the frontend can offer a resend option.
+ * performSignup - Core business logic (pure RPC, no HTTP)
+ * Called by: SsoWorker.signup() RPC method, signup() HTTP handler
  */
-export async function signup(
-  req: Request,
+export async function performSignup(
   env: Env,
   ctx: ExecutionContext,
-): Promise<Response> {
-  let body: SignupBody;
-  try {
-    body = await req.json() as SignupBody;
-  } catch {
-    return error("Invalid JSON body");
-  }
-
+  body: SignupBody,
+  ip?: string | null,
+  ua?: string | null,
+) {
   if (!body.email || !body.password || !body.org_name || !body.role) {
-    return error("email, password, org_name, and role are required");
+    return { error: "email, password, org_name, and role are required", status: 400 };
   }
 
   const emailErr = validateEmail(body.email);
-  if (emailErr) return emailErr;
+  if (emailErr) {
+    return { error: "Invalid email format", status: 400 };
+  }
 
   const passErr = validatePassword(body.password);
-  if (passErr) return passErr;
+  if (passErr) {
+    return { error: "Invalid password", status: 400 };
+  }
 
   const redirectErr = validateRedirectUrl(body.redirect_url, env);
-  if (redirectErr) return redirectErr;
+  if (redirectErr) {
+    return { error: "Invalid redirect URL", status: 400 };
+  }
 
   const email = body.email.toLowerCase().trim();
-  const ip = req.headers.get("CF-Connecting-IP") ?? "unknown";
-  const ua = req.headers.get("User-Agent");
-
-  const rateLimited = await endpointRateLimit(env, `signup:ip:${ip}`, 5, 60);
-  if (rateLimited) return rateLimited;
+  const ipAddr = ip ?? "unknown";
+  const rateLimited = await endpointRateLimit(env, `signup:ip:${ipAddr}`, 5, 60);
+  if (rateLimited) return { error: "Rate limit exceeded", status: 429 };
 
   const database = db(env);
 
@@ -68,19 +59,14 @@ export async function signup(
     if (existingUsers && existingUsers.length > 0) {
       const existingUser = existingUsers[0];
 
-      // User exists and email is verified → reject
       if (existingUser.is_email_verified) {
-        return error("An account with this email already exists. Please log in.", 409);
+        return { error: "An account with this email already exists. Please log in.", status: 409 };
       }
 
-      // User exists but email NOT verified
-      // Prevent Account Takeover and Race Conditions by rejecting re-signup.
-      // Unverified users can still log in to trigger a new verification email.
-      return error("An account with this email exists but is not verified. Please check your inbox or log in to request a new verification link.", 409);
+      return { error: "An account with this email exists but is not verified. Please check your inbox or log in to request a new verification link.", status: 409 };
     }
   } catch (checkErr) {
     console.error("[SSO] Error checking existing user:", checkErr);
-    // Continue with signup attempt - let database constraints handle duplicates
   }
 
   const password_hash = await hashPassword(body.password);
@@ -90,7 +76,6 @@ export async function signup(
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
 
-  // ─── Step 1: Create user + org in database ───────────────────
   let result: { user_id: string; org_id: string; slug: string };
   try {
     result = await database.rpc<{ user_id: string; org_id: string; slug: string }>(
@@ -106,12 +91,11 @@ export async function signup(
     );
   } catch (err: any) {
     if (err?.message?.includes("duplicate") || err?.message?.includes("23505")) {
-      return error("An account with this email already exists. Please log in.", 409);
+      return { error: "An account with this email already exists. Please log in.", status: 409 };
     }
     throw err;
   }
 
-  // ─── Step 2: Create session + sign JWT (rollback on failure) ──
   try {
     const claims = await database.rpc<JwtClaims>("get_jwt_claims", {
       p_user_id: result.user_id,
@@ -127,8 +111,8 @@ export async function signup(
       user_id: result.user_id,
       org_id: result.org_id,
       refresh_token_hash: refreshHash,
-      user_agent: ua,
-      ip_address: ip,
+      user_agent: ua ?? null,
+      ip_address: ipAddr,
       revoked: false,
       expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
       family_id: sessionId,
@@ -149,70 +133,30 @@ export async function signup(
       env,
     );
 
-    // ─── Step 3: Send verification email ──
     let emailSent = true;
     try {
-      const verifyToken = crypto.randomUUID();
-      const verifyTokenHash = await hashToken(verifyToken);
-      await database.mutate("email_verifications", {
-        user_id: result.user_id,
-        token_hash: verifyTokenHash,
-        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      });
-      const appUrl = resolveAppUrl(body.redirect_url, env);
-      const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
-
-      const template = generateVerificationEmailTemplate(verifyUrl);
-      const emailPromise = env.EMAIL_SERVICE.sendEmail({
-        to: email,
-        subject: template.subject,
-        html: template.html,
-        text: template.text,
-      });
-
-      // Keep the promise alive in background even after we respond — the email
-      // may still succeed after the user-facing timeout.
-      ctx.waitUntil(emailPromise.then(() => {
-        console.log(JSON.stringify({
-          msg: "[SSO] Verification email delivered (after timeout window)",
-          email,
+      // Throttle verification email sending (5/hour per email)
+      const throttled = await checkEmailThrottle(env, "verification", email);
+      if (throttled) {
+        emailSent = false;
+      } else {
+        const verifyToken = crypto.randomUUID();
+        const verifyTokenHash = await hashToken(verifyToken);
+        await database.mutate("email_verifications", {
           user_id: result.user_id,
-        }));
-      }).catch((err) => {
-        console.error(JSON.stringify({
-          msg: "[SSO] Verification email permanently failed",
-          email,
-          user_id: result.user_id,
-          error: err instanceof Error ? err.message : String(err),
-        }));
-      }));
+          token_hash: verifyTokenHash,
+          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        });
+        const appUrl = resolveAppUrl(body.redirect_url, env);
+        const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
 
-      await Promise.race([
-        emailPromise,
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("Email send timed out")), EMAIL_SEND_TIMEOUT_MS)
-        ),
-      ]).catch(() => {
-        emailSent = false; // timeout or immediate failure — ctx.waitUntil handler logs the actual outcome
-      });
+        const template = generateVerificationEmailTemplate(verifyUrl);
+        ctx.waitUntil(sendEmail(env, { to: email, subject: template.subject, html: template.html, text: template.text }, ctx));
+      }
     } catch (emailErr) {
       emailSent = false;
     }
 
-    // ─── Step 4: Build response ──────────────────────────────────
-    const response = json(
-      {
-        access_token: accessToken,
-        user: { id: result.user_id, email },
-        org: { id: result.org_id, name: body.org_name, slug: result.slug },
-        email_sent: emailSent,
-      },
-      201,
-    );
-
-    setAuthCookies(response, accessToken, refreshToken, env);
-
-    // Response fully built — emit sync events (safe, no rollback after this point)
     publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.created', {
       id: result.user_id,
       email,
@@ -239,9 +183,14 @@ export async function signup(
       metadata: { email_sent: emailSent },
     });
 
-    return response;
+    return {
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      user: { id: result.user_id, email },
+      org: { id: result.org_id, name: body.org_name, slug: result.slug },
+      email_sent: emailSent,
+    };
   } catch (err) {
-    // ─── Rollback: delete user (cascades to membership, org if created_by) ──
     console.error(
       JSON.stringify({
         msg: "[SSO] Signup post-creation failed, rolling back",
@@ -264,7 +213,7 @@ export async function signup(
         }),
       );
     }
-    return error("Signup failed. Please try again.", 500);
+    throw err;
   }
 }
 

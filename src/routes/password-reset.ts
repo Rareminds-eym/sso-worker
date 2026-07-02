@@ -1,10 +1,11 @@
 import { audit } from "../lib/audit";
 import { db } from "../lib/db";
+import { sendEmail } from "../lib/email";
 import { generatePasswordResetEmailTemplate } from "../lib/email-templates";
 import { checkEmailThrottle } from "../lib/email-throttle";
 import { hashPassword, hashToken } from "../lib/hash";
 import { endpointRateLimit } from "../lib/rate-limit";
-import { error, json } from "../lib/response";
+
 import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "../lib/validate";
 import type { Env, User } from "../types";
 
@@ -76,26 +77,7 @@ export async function performForgotPassword(
   // Generate email template locally
   const template = generatePasswordResetEmailTemplate(resetUrl);
 
-  const emailTimeoutMs = 5_000;
-  const emailPromise = env.EMAIL_SERVICE.sendEmail({
-    to: email,
-    subject: template.subject,
-    html: template.html,
-    text: template.text,
-  });
-
-  ctx.waitUntil(emailPromise.then(() => {
-    console.log(JSON.stringify({ msg: "[SSO] Password reset email delivered", email }));
-  }).catch((err: Error) => {
-    console.error(JSON.stringify({ msg: "[SSO] Password reset email failed", error: err.message }));
-  }));
-
-  await Promise.race([
-    emailPromise,
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("Email send timed out")), emailTimeoutMs)
-    ),
-  ]).catch(() => {}); // timeout is non-fatal — response already says "If an account exists..."
+  ctx.waitUntil(sendEmail(env, { to: email, subject: template.subject, html: template.html, text: template.text }, ctx));
 
   audit(ctx, env, "password_reset_requested", {
     user_id: user.id,
@@ -106,35 +88,7 @@ export async function performForgotPassword(
   return { message: "If an account exists, a reset email has been sent." };
 }
 
-/**
- * POST /auth/forgot-password
- * Sends a password reset email if the account exists.
- * Always returns the same message to prevent email enumeration.
- */
-export async function forgotPassword(
-  req: Request,
-  env: Env,
-  ctx: ExecutionContext,
-): Promise<Response> {
-  let body: { email?: string; redirect_url?: string };
-  try {
-    body = await req.json() as { email?: string; redirect_url?: string };
-  } catch {
-    return error("Invalid JSON body");
-  }
 
-  const ip = req.headers.get("CF-Connecting-IP") ?? "unknown";
-  const ua = req.headers.get("User-Agent");
-
-  const result = await performForgotPassword(env, ctx, body, ip, ua);
-
-  if (result.error) {
-    // We need to parse error if it's JSON format from earlier responses, but we return string errors now.
-    return error(result.error, result.status || 400);
-  }
-
-  return json({ message: result.message });
-}
 
 export async function performResetPassword(
   env: Env,
@@ -204,31 +158,4 @@ export async function performResetPassword(
   return { reset: true };
 }
 
-/**
- * POST /auth/reset-password
- * Resets the password using a valid reset token.
- * Revokes all existing sessions for the user (force re-login everywhere).
- */
-export async function resetPassword(
-  req: Request,
-  env: Env,
-  ctx: ExecutionContext,
-): Promise<Response> {
-  let body: { token?: string; password?: string };
-  try {
-    body = await req.json() as { token?: string; password?: string };
-  } catch {
-    return error("Invalid JSON body");
-  }
 
-  const ip = req.headers.get("CF-Connecting-IP");
-  const ua = req.headers.get("User-Agent");
-
-  const result = await performResetPassword(env, ctx, body, ip, ua);
-
-  if (result.error) {
-    return error(result.error, result.status || 400);
-  }
-
-  return json({ reset: result.reset });
-}

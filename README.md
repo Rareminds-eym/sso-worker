@@ -186,7 +186,7 @@ Requires `owner` or `admin` role. Assignable roles: `admin`, `member`.
 { "email": "new@example.com", "org_id": "your-org-uuid", "role": ["member"] }
 
 // Response 201
-{ "invite_id": "uuid", "token": "uuid", "email": "new@example.com", "expires_at": "..." }
+{ "invite_id": "uuid", "email": "new@example.com", "expires_at": "..." }
 ```
 Expires in 7 days. Errors: `400`, `403`, `409`.
 
@@ -223,7 +223,7 @@ Authenticated. Owner/admin only. Generates new token and extends expiry.
 { "invite_id": "uuid" }
 
 // Response 200
-{ "invite_id": "uuid", "token": "new-uuid", "email": "...", "expires_at": "..." }
+{ "invite_id": "uuid", "email": "...", "expires_at": "..." }
 ```
 Errors: `400`, `403`, `404`, `409` (already accepted).
 
@@ -233,7 +233,7 @@ Authenticated. Returns a token to deliver via email.
 
 ```json
 // Response 201
-{ "verification_token": "uuid", "expires_at": "..." }
+{ "message": "Verification email sent", "expires_at": "..." }
 ```
 Token expires in 24 hours. Returns `{ "already_verified": true }` if already verified.
 
@@ -257,9 +257,9 @@ Always returns 200 to prevent email enumeration. Invalidates previous unused res
 { "email": "user@example.com" }
 
 // Response 200
-{ "reset_token": "uuid", "expires_at": "..." }
+{ "message": "If an account exists, a reset link has been sent to your email." }
 ```
-Token expires in 1 hour. If email doesn't exist: `{ "message": "If an account exists, a reset token has been generated." }`.
+Token expires in 1 hour. If email doesn't exist: `{ "message": "If an account exists, a reset link has been sent to your email." }`.
 
 ### `POST /auth/reset-password`
 
@@ -330,7 +330,6 @@ Configure `wrangler.toml`:
 SUPABASE_URL       = "https://your-project.supabase.co"
 ALLOWED_ORIGINS    = "https://yourapp.com,https://admin.yourapp.com"
 ALLOWED_APP_URLS   = "https://yourapp.com"
-EMAIL_API_KEY      = "your-email-api-key"
 ```
 
 `nodejs_compat` flag is required for `bcryptjs`.
@@ -350,8 +349,7 @@ EMAIL_API_KEY      = "your-email-api-key"
 | `JWT_KID` | secret | Key ID for JWT header and JWKS (e.g. `key-1`) |
 | `JWT_PUBLIC_KEY_PREVIOUS` | secret | Previous public key PEM (set during key rotation) |
 | `JWT_KID_PREVIOUS` | secret | Previous key ID (set during key rotation) |
-| `EMAIL_SERVICE` | binding | Service binding to the email-worker for sending emails |
-| `EMAIL_API_KEY` | secret | API key for authenticating with the email-worker |
+| `EMAIL_SERVICE` | binding | Service binding to the email-worker for sending emails via RPC |
 
 ---
 
@@ -559,7 +557,7 @@ sso-worker/
 - **In-memory rate limiting is per-worker** — each worker instance has its own Map. Under load with multiple workers, effective limits are multiplied. For strict global limits, migrate to Durable Objects.
 - **No session listing endpoint** — users cannot view or selectively revoke individual sessions.
 - **OAuth not implemented** — routes return 501 until a provider is configured.
-- **Email delivery** — Uses `EMAIL_SERVICE` service binding to send through the email-worker. Requires `EMAIL_API_KEY` secret for authentication.
+- **Email delivery** — Uses `EMAIL_SERVICE` service binding to send through the email-worker via RPC.
 
 ## License
 

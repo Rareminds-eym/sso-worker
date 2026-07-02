@@ -1,11 +1,9 @@
 import { audit } from "../lib/audit";
 import { SESSION_TTL_MS } from "../lib/constants";
-import { setAuthCookies } from "../lib/cookies";
 import { db } from "../lib/db";
 import { generateRefreshToken, hashToken, verifyPassword } from "../lib/hash";
 import { signAccessToken } from "../lib/jwt";
 import { checkAccountLockout, clearFailedLogins, endpointRateLimit, recordFailedLogin } from "../lib/rate-limit";
-import { error, json } from "../lib/response";
 import { validateEmail } from "../lib/validate";
 import type { Env, JwtClaims, LoginBody, Membership, User } from "../types";
 
@@ -142,37 +140,4 @@ export async function performLogin(
   };
 }
 
-export async function login(
-  req: Request,
-  env: Env,
-  ctx: ExecutionContext,
-): Promise<Response> {
-  let body: LoginBody;
-  try {
-    body = await req.json() as LoginBody;
-  } catch {
-    return error("Invalid JSON body");
-  }
 
-  const ip = req.headers.get("CF-Connecting-IP");
-  const ua = req.headers.get("User-Agent");
-
-  const result = await performLogin(env, ctx, body, ip, ua);
-
-  if (result.error) {
-    return error(result.error, result.status);
-  }
-
-  const response = json({
-    access_token: result.access_token,
-    user: result.user,
-    active_org_id: result.active_org_id,
-    organizations: result.organizations,
-  });
-
-  if (result.access_token && result.refresh_token) {
-    setAuthCookies(response, result.access_token, result.refresh_token, env);
-  }
-
-  return response;
-}
