@@ -2,6 +2,7 @@ import { audit } from "../lib/audit";
 import { SESSION_TTL_MS } from "../lib/constants";
 import { db } from "../lib/db";
 import { sendEmail } from "../lib/email";
+import { checkEmailThrottle } from "../lib/email-throttle";
 import { generateRefreshToken, hashPassword, hashToken } from "../lib/hash";
 import { signAccessToken } from "../lib/jwt";
 import { endpointRateLimit } from "../lib/rate-limit";
@@ -146,18 +147,24 @@ async function signupMemberImpl(
     // Step 3: Send verification email
     let emailSent = true;
     try {
-      const verifyToken = crypto.randomUUID();
-      const verifyTokenHash = await hashToken(verifyToken);
-      await database.mutate("email_verifications", {
-        user_id: result.user_id,
-        token_hash: verifyTokenHash,
-        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      });
-      const appUrl = resolveAppUrl(params.redirect_url, env);
-      const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
+      // Throttle verification email sending (5/hour per email)
+      const throttled = await checkEmailThrottle(env, "verification", email);
+      if (throttled) {
+        emailSent = false;
+      } else {
+        const verifyToken = crypto.randomUUID();
+        const verifyTokenHash = await hashToken(verifyToken);
+        await database.mutate("email_verifications", {
+          user_id: result.user_id,
+          token_hash: verifyTokenHash,
+          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        });
+        const appUrl = resolveAppUrl(params.redirect_url, env);
+        const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
 
-      const template = generateVerificationEmailTemplate(verifyUrl);
-      ctx.waitUntil(sendEmail(env, { to: email, subject: template.subject, html: template.html, text: template.text }, ctx));
+        const template = generateVerificationEmailTemplate(verifyUrl);
+        ctx.waitUntil(sendEmail(env, { to: email, subject: template.subject, html: template.html, text: template.text }, ctx));
+      }
     } catch (emailErr) {
       emailSent = false;
     }
