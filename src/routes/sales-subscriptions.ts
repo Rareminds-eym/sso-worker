@@ -1,6 +1,5 @@
 import type { Env, SalesSubscription } from "../types";
 import { db } from "../lib/db";
-import { json, error } from "../lib/response";
 
 /**
  * GET /api/sales/subscriptions — fetch subscription data for sales dashboard
@@ -237,16 +236,5 @@ export async function performGetSalesSubscriptions(
   }
 }
 
-export async function getSalesSubscriptions(
-  req: Request,
-  env: Env,
-): Promise<Response> {
-  const url = new URL(req.url);
-  const result = await performGetSalesSubscriptions(env, url.searchParams);
-  
-  if ('error' in result && result.error) {
-    return error(result.error, result.status);
-  }
-  
-  return json(result);
-}
+// HTTP handler removed - all access via RPC method in index.ts:
+// - getSalesSubscriptions() → env.SSO_SERVICE.getSalesSubscriptions()

@@ -1,136 +1,15 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { audit } from "./lib/audit";
-import { authenticate } from "./lib/auth";
 import { addMonths, parseDurationMonths } from "./lib/date";
 import { db } from "./lib/db";
-import { hashPassword, hashToken } from "./lib/hash";
-import { exportPemAsJwk, getPublicJWK, verifyAccessToken } from "./lib/jwt";
-import { error, json } from "./lib/response";
+import { generateRefreshToken, hashPassword, hashToken } from "./lib/hash";
+import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "./lib/jwt";
+import { endpointRateLimit } from "./lib/rate-limit";
 import { rotateRefreshToken } from "./lib/session-rotation";
-import {
-  getAddonByFeatureKey,
-  listAddonCatalog,
-  listBundles,
-} from "./routes/addon-catalog";
-import { adminResetPassword, changePassword } from "./routes/change-password";
-import { deleteAccount } from "./routes/delete-account";
-import { acceptInvite, createInvite } from "./routes/invite";
-import { cancelInvite, resendInvite } from "./routes/invite-manage";
-import { jwks } from "./routes/jwks";
-import { login } from "./routes/login";
-import { logout } from "./routes/logout";
-import { me } from "./routes/me";
-import { oauthCallback, oauthRedirect } from "./routes/oauth";
-import { listOrgs } from "./routes/orgs";
-import { forgotPassword, resetPassword } from "./routes/password-reset";
-import { refresh } from "./routes/refresh";
-import { getSalesSubscriptions } from "./routes/sales-subscriptions";
-import { signup } from "./routes/signup";
-import { signupMember } from "./routes/signup-member";
-import {
-  getPlanByCode,
-  listPlans,
-} from "./routes/subscriptions";
-import { switchOrg } from "./routes/switch-org";
-import { requestVerification, verifyEmail } from "./routes/verify-email";
-import type { AccessTokenPayload, Env, RouteConfig, Session } from "./types";
+import type { AccessTokenPayload, Env, Session } from "./types";
 
-/** Max request body size: 10 KB */
-const MAX_BODY_SIZE = 10_240;
-
-// ─── Public Route Table ───────────────────────────────────────
-const routes: Record<string, Record<string, RouteConfig>> = {
-  POST: {
-    "/auth/signup": { handler: signup },
-    "/auth/signup-member": { handler: signupMember },
-    "/auth/login": { handler: login },
-    "/auth/refresh": { handler: refresh },
-    "/auth/logout": { handler: logout },
-    "/auth/switch-org": { handler: switchOrg, auth: true },
-    "/auth/invite": { handler: createInvite, auth: true },
-    "/auth/invite/accept": { handler: acceptInvite },
-    "/auth/invite/cancel": { handler: cancelInvite, auth: true },
-    "/auth/invite/resend": { handler: resendInvite, auth: true },
-    "/auth/request-verification": { handler: requestVerification, auth: true },
-    "/auth/verify-email": { handler: verifyEmail },
-    "/auth/forgot-password": { handler: forgotPassword },
-    "/auth/reset-password": { handler: resetPassword },
-    "/auth/change-password": { handler: changePassword, auth: true },
-    "/auth/admin-reset-password": { handler: adminResetPassword, auth: true },
-    "/auth/delete-account": { handler: deleteAccount, auth: true },
-  },
-  GET: {
-    "/auth/me": { handler: me, auth: true },
-    "/auth/orgs": { handler: listOrgs, auth: true },
-    "/auth/oauth/google": { handler: oauthRedirect },
-    "/auth/oauth/github": { handler: oauthRedirect },
-    "/auth/oauth/google/callback": { handler: oauthCallback },
-    "/auth/oauth/github/callback": { handler: oauthCallback },
-    "/.well-known/jwks.json": { handler: (_req, env) => jwks(env) },
-    "/health": { handler: () => Promise.resolve(json({ status: "ok" })) },
-    "/api/plans": { handler: listPlans },
-    "/api/addon-catalog": { handler: listAddonCatalog },
-    "/api/addon-catalog/:featureKey": { handler: getAddonByFeatureKey },
-    "/api/bundles": { handler: listBundles },
-    "/api/sales/subscriptions": { handler: getSalesSubscriptions },
-  },
-};
-
-// ─── CORS ──────────────────────────────────────────────────────
-function originMatchesPattern(origin: string, pattern: string): boolean {
-  if (pattern === "*") return true;
-  if (pattern.includes("*.")) {
-    const wildcardSuffix = pattern.replace("*.", "");
-    try {
-      const originUrl = new URL(origin);
-      const patternUrl = new URL(wildcardSuffix);
-      return (
-        originUrl.protocol === patternUrl.protocol &&
-        (originUrl.hostname === patternUrl.hostname ||
-          originUrl.hostname.endsWith("." + patternUrl.hostname))
-      );
-    } catch {
-      return false;
-    }
-  }
-  return origin === pattern;
-}
-
-function corsHeaders(req: Request, env: Env): Record<string, string> {
-  const origin = req.headers.get("Origin") ?? "";
-  const allowed = env.ALLOWED_ORIGINS.split(",").map((o) => o.trim());
-  const isAllowed = allowed.some((pattern) => originMatchesPattern(origin, pattern));
-
-  if (!isAllowed) return {};
-
-  return {
-    "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Request-ID",
-    "Access-Control-Allow-Credentials": "true",
-    "Access-Control-Expose-Headers": "X-Access-Token, X-Request-ID",
-    "Access-Control-Max-Age": "86400",
-  };
-}
-
-function withCors(response: Response, cors: Record<string, string>): Response {
-  const res = new Response(response.body, response);
-  for (const [k, v] of Object.entries(cors)) res.headers.set(k, v);
-  return res;
-}
-
-function validateOrigin(req: Request, env: Env): boolean {
-  // For read-only methods (GET, OPTIONS), allow missing Origin (simple CORS requests)
-  if (req.method === "GET" || req.method === "OPTIONS") return true;
-
-  // For state-changing methods (POST, PUT, DELETE, PATCH), require Origin header
-  const origin = req.headers.get("Origin");
-  if (!origin) return false; // Missing Origin on state-changing request → reject
-
-  // Origin present: validate against allowlist
-  const allowed = env.ALLOWED_ORIGINS.split(",").map((o) => o.trim());
-  return allowed.some((pattern) => originMatchesPattern(origin, pattern));
-}
+// HTTP route handlers removed - all imports now unused except for types
+// Business logic functions (perform*) are imported dynamically in RPC methods
 
 // ─── WorkerEntrypoint ─────────────────────────────────────────
 export class SsoWorker extends WorkerEntrypoint<Env> {
@@ -204,88 +83,23 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
   }
 
-  // ── Fetch handler (public routes only) ────────────────────────
+  // ── Fetch handler (RPC-only mode) ────────────────────────────
+  // HTTP routes disabled - all access via RPC service binding only
   async fetch(req: Request): Promise<Response> {
-    const env = this.env;
-    const ctx = this.ctx;
-    const cors = corsHeaders(req, env);
-    const requestId = crypto.randomUUID();
-
-    if (req.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: cors });
-    }
-
-    const url = new URL(req.url);
-    const { pathname } = url;
-    const method = req.method;
-    const start = Date.now();
-
-    if (!validateOrigin(req, env)) {
-      return withCors(error("Origin not allowed", 403), cors);
-    }
-
-    const contentLength = parseInt(req.headers.get("Content-Length") ?? "0", 10);
-    if (contentLength > MAX_BODY_SIZE) {
-      return withCors(error("Request body too large", 413), cors);
-    }
-
-    // Route matching
-    let config = routes[method]?.[pathname];
-
-    if (!config) {
-      const methodRoutes = routes[method];
-      if (methodRoutes) {
-        if (method === "GET" && pathname.startsWith("/api/plans/")) {
-          config = { handler: getPlanByCode };
-        } else if (method === "GET" && pathname.startsWith("/api/addon-catalog/")) {
-          config = { handler: getAddonByFeatureKey };
-        }
-      }
-    }
-
-    if (!config) {
-      return withCors(error("Not found", 404), cors);
-    }
-
-    try {
-      let authPayload: AccessTokenPayload | undefined;
-      if (config.auth) {
-        authPayload = await authenticate(req, env) ?? undefined;
-        if (!authPayload) {
-          return withCors(error("Unauthorized", 401), cors);
-        }
-      }
-
-      const response = await config.handler(req, env, ctx, authPayload);
-      const res = withCors(response, cors);
-      res.headers.set("X-Request-ID", requestId);
-
-      console.log(
-        JSON.stringify({
-          rid: requestId,
-          method,
-          path: pathname,
-          status: res.status,
-          ms: Date.now() - start,
-        }),
-      );
-
-      return res;
-    } catch (err: any) {
-      console.error(
-        JSON.stringify({
-          rid: requestId,
-          method,
-          path: pathname,
-          error: err?.message ?? "unknown",
-          stack: err?.stack,
-          ms: Date.now() - start,
-        }),
-      );
-      const errResponse = withCors(error(err?.message ?? "Internal server error", 500), cors);
-      errResponse.headers.set("X-Request-ID", requestId);
-      return errResponse;
-    }
+    return new Response(JSON.stringify({
+      error: "HTTP access disabled",
+      message: "This service is only accessible via RPC service binding (env.SSO_SERVICE)",
+      rpc_methods: [
+        "signup", "signupMember", "login", "refreshSession", "logoutSession",
+        "switchOrg", "getMe", "listOrgs", "requestVerification", "verifyEmail",
+        "forgotPassword", "resetPassword", "changePassword", "adminResetPassword",
+        "deleteAccount", "listAddonCatalog", "getAddonByFeatureKey", "listBundles",
+        "createSubscription", "getUserSubscription", "recordTransaction", "and more..."
+      ]
+    }), {
+      status: 403,
+      headers: { "Content-Type": "application/json" }
+    });
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -1091,18 +905,39 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     org_name: string;
     role: string;
     redirect_url?: string;
+    ip?: string;
+    ua?: string;
   }): Promise<any> {
-    const { signup } = await import("./routes/signup");
-    const req = new Request('http://internal/rpc/signup', {
-      method: 'POST',
-      body: JSON.stringify(params),
-    });
-    const response = await signup(req, this.env, this.ctx);
-    const data = await response.json() as any;
-    if (!response.ok) {
-      return { success: false, error: data.error || 'Signup failed' };
+    const { performSignup } = await import("./routes/signup");
+
+    try {
+      const result = await performSignup(
+        this.env,
+        this.ctx,
+        params as any,
+        params.ip,
+        params.ua
+      );
+
+      if (result.error) {
+        return { success: false, error: result.error, status: result.status ?? 400 };
+      }
+
+      return {
+        success: true,
+        access_token: result.access_token,
+        refresh_token: result.refresh_token,
+        user: result.user,
+        org: result.org,
+        email_sent: result.email_sent
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err?.message || 'Signup failed',
+        status: 500
+      };
     }
-    return { success: true, ...data };
   }
 
   /**
@@ -1113,20 +948,20 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     user_id: string;
     email: string;
     redirect_url?: string;
+    org_id?: string;
   }): Promise<any> {
-    const { requestVerification } = await import('./routes/verify-email');
-    const req = new Request('http://internal/rpc/request-verification', {
-      method: 'POST',
-      body: JSON.stringify(params),
-    });
-    // Create a mock auth payload for the RPC call
-    const auth = { sub: params.user_id, email: params.email, org_id: '', roles: [], products: [], membership_status: 'inactive' as const, is_email_verified: false };
-    const response = await requestVerification(req, this.env, this.ctx, auth);
-    const data = await response.json() as any;
-    if (!response.ok) {
-      throw new Error(data.error || 'Request verification failed');
+    const { performRequestVerification } = await import('./routes/verify-email');
+    const result = await performRequestVerification(
+      this.env,
+      this.ctx,
+      params
+    );
+
+    if (result.error) {
+      throw new Error(result.error);
     }
-    return data;
+
+    return result;
   }
 
   /**
@@ -1135,18 +970,135 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
    */
   async verifyEmail(params: {
     token: string;
+    ip?: string;
+    ua?: string;
   }): Promise<any> {
-    const { verifyEmail } = await import('./routes/verify-email');
-    const req = new Request('http://internal/rpc/verify-email', {
-      method: 'POST',
-      body: JSON.stringify(params),
-    });
-    const response = await verifyEmail(req, this.env, this.ctx);
-    const data = await response.json() as any;
-    if (!response.ok) {
-      return { success: false, error: data.error || 'Verify email failed' };
+    const { performVerifyEmail } = await import('./routes/verify-email');
+    const result = await performVerifyEmail(
+      this.env,
+      this.ctx,
+      { token: params.token },
+      params.ip || null,
+      params.ua || null
+    );
+
+    if (result.error) {
+      return { success: false, error: result.error };
     }
-    return { success: true, ...data };
+
+    return { success: true, verified: result.verified };
+  }
+
+  /**
+   * Delete account RPC
+   * Called by skillpassport via RPC
+   */
+  async deleteAccount(params: {
+    user_id: string;
+    org_id?: string;
+    ip?: string;
+    ua?: string;
+  }): Promise<any> {
+    const { performDeleteAccount } = await import('./routes/delete-account');
+    const result = await performDeleteAccount(
+      this.env,
+      this.ctx,
+      {
+        user_id: params.user_id,
+        org_id: params.org_id,
+      },
+      params.ip || null,
+      params.ua || null
+    );
+
+    if (result.error) {
+      throw new Error(result.error);
+    }
+
+    return { success: true, deleted: result.deleted };
+  }
+
+  /**
+   * Change password RPC
+   * Called by skillpassport via RPC
+   */
+  async changePassword(params: {
+    user_id: string;
+    current_password: string;
+    new_password: string;
+    org_id?: string;
+    ip?: string;
+    ua?: string;
+  }): Promise<any> {
+    const { performChangePassword } = await import('./routes/change-password');
+    const result = await performChangePassword(
+      this.env,
+      this.ctx,
+      {
+        user_id: params.user_id,
+        current_password: params.current_password,
+        new_password: params.new_password,
+        org_id: params.org_id,
+      },
+      params.ip || null,
+      params.ua || null
+    );
+
+    if (result.error) {
+      throw new Error(result.error);
+    }
+
+    return { success: true, message: result.message };
+  }
+
+  /**
+   * Admin reset password RPC
+   * Called by skillpassport via RPC
+   */
+  async adminResetPassword(params: {
+    admin_user_id: string;
+    admin_roles: string[];
+    admin_org_id?: string;
+    target_user_id: string;
+    new_password: string;
+    ip?: string;
+    ua?: string;
+  }): Promise<any> {
+    const { performAdminResetPassword } = await import('./routes/change-password');
+    const result = await performAdminResetPassword(
+      this.env,
+      this.ctx,
+      {
+        admin_user_id: params.admin_user_id,
+        admin_roles: params.admin_roles,
+        admin_org_id: params.admin_org_id,
+        target_user_id: params.target_user_id,
+        new_password: params.new_password,
+      },
+      params.ip || null,
+      params.ua || null
+    );
+
+    if (result.error) {
+      throw new Error(result.error);
+    }
+
+    return { success: true, message: result.message };
+  }
+
+  /**
+   * Signup member RPC
+   * Called by skillpassport via RPC
+   */
+  async signupMember(params: SignupMemberBody & { ip?: string; ua?: string }): Promise<any> {
+    const { performSignupMember } = await import('./routes/signup-member');
+    const result = await performSignupMember(this.env, this.ctx, params);
+
+    if (result.error) {
+      return { success: false, error: result.error, status: result.status };
+    }
+
+    return { success: true, ...result };
   }
 
   /**
@@ -1165,11 +1117,20 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       params.ua ?? null
     );
 
+    // If error exists, return failure response
     if (result.error) {
       return { success: false, error: result.error, status: result.status ?? 401 };
     }
 
-    return { success: true, ...result };
+    // Return success response with all login data
+    return { 
+      success: true, 
+      access_token: result.access_token,
+      refresh_token: result.refresh_token,
+      user: result.user,
+      active_org_id: result.active_org_id,
+      organizations: result.organizations
+    };
   }
 
   /**
@@ -1292,7 +1253,156 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     };
   }
 
-  async forgotPassword(params: { email?: string; redirect_url?: string }, ip?: string, ua?: string): Promise<any> {
+  async listOrgs(accessToken: string): Promise<{ organizations: Array<any> }> {
+    if (!accessToken) throw new Error("No access token provided");
+
+    let payload: AccessTokenPayload;
+    try {
+      payload = await verifyAccessToken(accessToken, this.env);
+    } catch {
+      throw new Error("Invalid or expired access token");
+    }
+
+    const database = db(this.env);
+
+    // Only active memberships
+    const memberships = await database.query<Membership>(
+      `memberships?user_id=eq.${payload.sub}&status=eq.active&select=*&order=created_at.asc`,
+    );
+
+    const orgIds = memberships.map((m) => m.org_id);
+    const orgs = orgIds.length
+      ? await database.query<Organization>(
+          `organizations?id=in.(${orgIds.join(",")})&select=*`,
+        )
+      : [];
+
+    const orgMap = new Map(orgs.map((o: any) => [o.id, o]));
+
+    // Fetch roles for each membership via join table
+    const membershipIds = memberships.map((m) => m.id);
+    const roleRows = membershipIds.length
+      ? await database.query<{ membership_id: string; name: string }>(
+          `membership_roles?membership_id=in.(${membershipIds.join(",")})&select=membership_id,role_id(name)`,
+        )
+      : [];
+
+    // PostgREST returns nested objects for FK selects — flatten
+    const roleMap = new Map<string, string[]>();
+    for (const row of roleRows) {
+      const mid = row.membership_id;
+      const roleName = (row as any).role_id?.name ?? (row as any).name;
+      if (!roleMap.has(mid)) roleMap.set(mid, []);
+      if (roleName) roleMap.get(mid)!.push(roleName);
+    }
+
+    return {
+      organizations: memberships.map((m) => ({
+        org_id: m.org_id,
+        roles: roleMap.get(m.id) ?? [],
+        name: orgMap.get(m.org_id)?.name ?? null,
+        slug: orgMap.get(m.org_id)?.slug ?? null,
+        is_active: m.org_id === payload.org_id,
+      })),
+    };
+  }
+
+  async switchOrg(params: { access_token?: string; org_id?: string; ip?: string; ua?: string }): Promise<{ access_token: string; org_id: string; roles: string[]; refresh_token?: string }> {
+    if (!params.access_token || !params.org_id) {
+      throw new Error("access_token and org_id are required");
+    }
+
+    let payload: AccessTokenPayload;
+    try {
+      payload = await verifyAccessToken(params.access_token, this.env);
+    } catch {
+      throw new Error("Invalid or expired access token");
+    }
+
+    const database = db(this.env);
+    const rateLimited = await endpointRateLimit(this.env, `switch-org:user:${payload.sub}`, 30, 60);
+    if (rateLimited) throw new Error("Rate limit exceeded");
+
+    // Verify ACTIVE membership in target org and check if user is blocked
+    const [membership, user] = await Promise.all([
+      database.queryOne<Membership>(
+        `memberships?user_id=eq.${payload.sub}&org_id=eq.${params.org_id}&status=eq.active&select=*`,
+      ),
+      database.queryOne<{ is_blocked: boolean }>(
+        `users?id=eq.${payload.sub}&select=is_blocked`,
+      )
+    ]);
+
+    if (user?.is_blocked) {
+      throw new Error("Account is blocked");
+    }
+
+    if (!membership) {
+      throw new Error("You are not an active member of this organization");
+    }
+
+    // Revoke old session and create new one
+    let familyId = crypto.randomUUID();
+    let familyCreatedAt = new Date().toISOString();
+
+    // Get RBAC claims for the target org
+    const claims = await database.rpc<JwtClaims>("get_jwt_claims", {
+      p_user_id: payload.sub,
+      p_org_id: params.org_id,
+    });
+
+    if (!claims) {
+      throw new Error("Failed to resolve membership claims");
+    }
+
+    const refreshToken = generateRefreshToken();
+    const refreshHash = await hashToken(refreshToken);
+    const sessionId = crypto.randomUUID();
+
+    await database.mutate("sessions", {
+      id: sessionId,
+      user_id: payload.sub,
+      org_id: params.org_id,
+      refresh_token_hash: refreshHash,
+      user_agent: params.ua,
+      ip_address: params.ip,
+      revoked: false,
+      expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+      family_id: familyId,
+      family_created_at: familyCreatedAt,
+    });
+
+    const accessToken = await signAccessToken(
+      {
+        sub: payload.sub,
+        email: payload.email,
+        org_id: params.org_id,
+        roles: claims.roles,
+        products: claims.products,
+        membership_status: claims.membership_status,
+        is_email_verified: payload.is_email_verified,
+        user_metadata: payload.user_metadata ?? {},
+      },
+      this.env,
+    );
+
+    audit(this.ctx, this.env, "switch_org", {
+      user_id: payload.sub,
+      org_id: params.org_id,
+      ip_address: params.ip,
+      user_agent: params.ua,
+      metadata: { from_org: payload.org_id, to_org: params.org_id },
+    });
+
+    return {
+      access_token: accessToken,
+      org_id: params.org_id,
+      roles: claims.roles,
+      refresh_token: refreshToken,
+    };
+  }
+
+  async forgotPassword(params: { email?: string; redirect_url?: string }, ip?: string, ua?: string): Promise<{ message?: string }> {
     const { performForgotPassword } = await import("./routes/password-reset");
     const result = await performForgotPassword(
       this.env,
@@ -1326,27 +1436,25 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return { success: true, reset: result.reset };
   }
 
-  async listAddonCatalog(): Promise<any> {
-    const { listAddonCatalog } = await import("./routes/addon-catalog");
-    // The listAddonCatalog route is a standard HTTP handler. We need to extract its logic if we want pure RPC,
-    // but we can also just create a dummy request to pass to it for now, since it doesn't use the request.
-    const req = new Request("https://internal/api/addon-catalog");
-    const res = await listAddonCatalog(req, this.env);
-    return res.json();
+  async listAddonCatalog(params?: { category?: string; role?: string; product?: string }): Promise<any> {
+    const { performListAddonCatalog } = await import("./routes/addon-catalog");
+    return performListAddonCatalog(this.env, params);
   }
 
   async getAddonByFeatureKey(featureKey: string): Promise<any> {
-    const { getAddonByFeatureKey } = await import("./routes/addon-catalog");
-    const req = new Request(`https://internal/api/addon-catalog/${featureKey}`);
-    const res = await getAddonByFeatureKey(req, this.env);
-    return res.json();
+    const { performGetAddonByFeatureKey } = await import("./routes/addon-catalog");
+    const result = await performGetAddonByFeatureKey(this.env, featureKey);
+    
+    if (result.error) {
+      throw new Error(result.error);
+    }
+    
+    return result;
   }
 
-  async listBundles(): Promise<any> {
-    const { listBundles } = await import("./routes/addon-catalog");
-    const req = new Request("https://internal/api/bundles");
-    const res = await listBundles(req, this.env);
-    return res.json();
+  async listBundles(params?: { role?: string }): Promise<any> {
+    const { performListBundles } = await import("./routes/addon-catalog");
+    return performListBundles(this.env, params);
   }
 
   async logoutSession(refreshToken: string, ip?: string, ua?: string): Promise<{ success: boolean }> {
