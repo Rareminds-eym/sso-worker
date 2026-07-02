@@ -186,7 +186,7 @@ Requires `owner` or `admin` role. Assignable roles: `admin`, `member`.
 { "email": "new@example.com", "org_id": "your-org-uuid", "role": ["member"] }
 
 // Response 201
-{ "invite_id": "uuid", "token": "uuid", "email": "new@example.com", "expires_at": "..." }
+{ "invite_id": "uuid", "email": "new@example.com", "expires_at": "..." }
 ```
 Expires in 7 days. Errors: `400`, `403`, `409`.
 
@@ -223,7 +223,7 @@ Authenticated. Owner/admin only. Generates new token and extends expiry.
 { "invite_id": "uuid" }
 
 // Response 200
-{ "invite_id": "uuid", "token": "new-uuid", "email": "...", "expires_at": "..." }
+{ "invite_id": "uuid", "email": "...", "expires_at": "..." }
 ```
 Errors: `400`, `403`, `404`, `409` (already accepted).
 
@@ -233,7 +233,7 @@ Authenticated. Returns a token to deliver via email.
 
 ```json
 // Response 201
-{ "verification_token": "uuid", "expires_at": "..." }
+{ "message": "Verification email sent", "expires_at": "..." }
 ```
 Token expires in 24 hours. Returns `{ "already_verified": true }` if already verified.
 
@@ -257,9 +257,9 @@ Always returns 200 to prevent email enumeration. Invalidates previous unused res
 { "email": "user@example.com" }
 
 // Response 200
-{ "reset_token": "uuid", "expires_at": "..." }
+{ "message": "If an account exists, a reset link has been sent to your email." }
 ```
-Token expires in 1 hour. If email doesn't exist: `{ "message": "If an account exists, a reset token has been generated." }`.
+Token expires in 1 hour. If email doesn't exist: `{ "message": "If an account exists, a reset link has been sent to your email." }`.
 
 ### `POST /auth/reset-password`
 
