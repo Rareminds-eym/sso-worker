@@ -19,8 +19,6 @@ export interface Env {
     sendOTP(params: any): Promise<any>;
     verifyOTP(params: any): Promise<any>;
   };
-  /** API key for authenticating with the email-worker. */
-  EMAIL_API_KEY: string;
 
   /** Base URL for the SkillPassport Pages app (e.g. https://skillpassport.rareminds.in) */
   SKILLPASSPORT_URL: string;

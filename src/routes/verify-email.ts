@@ -1,12 +1,13 @@
 import { audit } from "../lib/audit";
 import { db } from "../lib/db";
+import { sendEmail } from "../lib/email";
 import { generateVerificationEmailTemplate } from "../lib/email-templates";
 import { checkEmailThrottle } from "../lib/email-throttle";
 import { hashToken } from "../lib/hash";
 
 import { publishSyncEvent } from "../lib/sync-queue";
 import { resolveAppUrl, validateRedirectUrl } from "../lib/validate";
-import type { AccessTokenPayload, Env } from "../types";
+import type { Env } from "../types";
 
 /**
  * Pure business logic for requesting verification email (extracted for RPC)
@@ -60,26 +61,7 @@ export async function performRequestVerification(
   // Generate email template locally
   const template = generateVerificationEmailTemplate(verifyUrl);
 
-  const emailTimeoutMs = 5_000;
-  const emailPromise = env.EMAIL_SERVICE.sendEmail({
-    to: user.email,
-    subject: template.subject,
-    html: template.html,
-    text: template.text,
-  });
-
-  ctx.waitUntil(emailPromise.then(() => {
-    console.log(JSON.stringify({ msg: "[SSO] Verification email delivered", email: user.email }));
-  }).catch((err: Error) => {
-    console.error(JSON.stringify({ msg: "[SSO] Verification email failed", error: err.message }));
-  }));
-
-  await Promise.race([
-    emailPromise,
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("Email send timed out")), emailTimeoutMs)
-    ),
-  ]).catch(() => {}); // timeout is non-fatal — response already promises delivery
+  ctx.waitUntil(sendEmail(env, { to: user.email, subject: template.subject, html: template.html, text: template.text }, ctx));
 
   audit(ctx, env, "verification_requested", {
     user_id: params.user_id,

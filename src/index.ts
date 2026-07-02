@@ -1,12 +1,17 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { audit } from "./lib/audit";
+import { INVITE_TTL_MS, SESSION_TTL_MS } from "./lib/constants";
 import { addMonths, parseDurationMonths } from "./lib/date";
 import { db } from "./lib/db";
+import { inviteEmail, sendEmail } from "./lib/email";
+import { checkEmailThrottle } from "./lib/email-throttle";
 import { generateRefreshToken, hashPassword, hashToken } from "./lib/hash";
 import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "./lib/jwt";
 import { endpointRateLimit } from "./lib/rate-limit";
 import { rotateRefreshToken } from "./lib/session-rotation";
-import type { AccessTokenPayload, Env, Session } from "./types";
+import { publishSyncEvent } from "./lib/sync-queue";
+import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "./lib/validate";
+import type { AccessTokenPayload, Env, Invite, Session } from "./types";
 
 // HTTP route handlers removed - all imports now unused except for types
 // Business logic functions (perform*) are imported dynamically in RPC methods
@@ -94,7 +99,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         "switchOrg", "getMe", "listOrgs", "requestVerification", "verifyEmail",
         "forgotPassword", "resetPassword", "changePassword", "adminResetPassword",
         "deleteAccount", "listAddonCatalog", "getAddonByFeatureKey", "listBundles",
-        "createSubscription", "getUserSubscription", "recordTransaction", "and more..."
+        "createSubscription", "getUserSubscription", "recordTransaction",
+        "createInvite", "acceptInvite", "cancelInvite", "resendInvite", "and more..."
       ]
     }), {
       status: 403,
@@ -1123,8 +1129,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     // Return success response with all login data
-    return { 
-      success: true, 
+    return {
+      success: true,
       access_token: result.access_token,
       refresh_token: result.refresh_token,
       user: result.user,
@@ -1273,8 +1279,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const orgIds = memberships.map((m) => m.org_id);
     const orgs = orgIds.length
       ? await database.query<Organization>(
-          `organizations?id=in.(${orgIds.join(",")})&select=*`,
-        )
+        `organizations?id=in.(${orgIds.join(",")})&select=*`,
+      )
       : [];
 
     const orgMap = new Map(orgs.map((o: any) => [o.id, o]));
@@ -1283,8 +1289,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const membershipIds = memberships.map((m) => m.id);
     const roleRows = membershipIds.length
       ? await database.query<{ membership_id: string; name: string }>(
-          `membership_roles?membership_id=in.(${membershipIds.join(",")})&select=membership_id,role_id(name)`,
-        )
+        `membership_roles?membership_id=in.(${membershipIds.join(",")})&select=membership_id,role_id(name)`,
+      )
       : [];
 
     // PostgREST returns nested objects for FK selects — flatten
@@ -1444,11 +1450,11 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   async getAddonByFeatureKey(featureKey: string): Promise<any> {
     const { performGetAddonByFeatureKey } = await import("./routes/addon-catalog");
     const result = await performGetAddonByFeatureKey(this.env, featureKey);
-    
+
     if (result.error) {
       throw new Error(result.error);
     }
-    
+
     return result;
   }
 
@@ -1485,6 +1491,388 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     return { success: true };
+  }
+
+  // ── Invite Management RPC Methods ─────────────────────────────
+
+  /**
+   * Create an invite for a user to join an organization.
+   * Sends an invite email with a token that expires in 7 days.
+   */
+  async createInvite(params: {
+    email: string;
+    org_id: string;
+    role: string[];
+    redirect_url?: string;
+    caller: AccessTokenPayload;
+    ip?: string;
+    ua?: string;
+  }): Promise<{ invite_id: string; email: string; expires_at: string }> {
+    if (!params.email || !params.org_id || !params.role || !params.caller) {
+      throw new Error("email, org_id, role, and caller are required");
+    }
+
+    const emailErr = validateEmail(params.email);
+    if (emailErr) throw new Error(await emailErr.text());
+
+    const redirectErr = validateRedirectUrl(params.redirect_url, this.env);
+    if (redirectErr) throw new Error(await redirectErr.text());
+
+    const database = db(this.env);
+    const inviteEmailAddress = params.email.toLowerCase().trim();
+
+    // Check for existing pending invite
+    const existing = await database.queryOne<{ id: string }>(
+      `invites?email=eq.${encodeURIComponent(inviteEmailAddress)}&org_id=eq.${params.org_id}&accepted=eq.false&select=id`,
+    );
+    if (existing) {
+      throw new Error("An invite for this email already exists");
+    }
+
+    const throttled = await checkEmailThrottle(this.env, "invite", params.org_id);
+    if (throttled) throw new Error("Too many invite requests. Please try again later.");
+
+    const inviteToken = crypto.randomUUID();
+    const inviteTokenHash = await hashToken(inviteToken);
+    const invite = await database.mutate<Invite>("invites", {
+      email: inviteEmailAddress,
+      org_id: params.org_id,
+      role: params.role,
+      token_hash: inviteTokenHash,
+      invited_by: params.caller.sub,
+      expires_at: new Date(Date.now() + INVITE_TTL_MS).toISOString(),
+      accepted: false,
+    });
+
+    // Fetch org name for the email template
+    const org = await database.queryOne<{ name: string }>(
+      `organizations?id=eq.${params.org_id}&select=name`,
+    );
+
+    // Send invite email
+    const appUrl = resolveAppUrl(params.redirect_url, this.env);
+    const acceptUrl = `${appUrl}/invite/accept?token=${inviteToken}`;
+    const { subject, html, text } = inviteEmail(
+      params.caller.email,
+      org?.name ?? "an organization",
+      acceptUrl,
+    );
+    this.ctx.waitUntil(sendEmail(this.env, { to: inviteEmailAddress, subject, html, text }, this.ctx));
+
+    audit(this.ctx, this.env, "invite_created", {
+      user_id: params.caller.sub,
+      org_id: params.org_id,
+      ip_address: params.ip,
+      user_agent: params.ua,
+      metadata: { invited_email: inviteEmailAddress, roles: params.role },
+    });
+
+    return {
+      invite_id: invite.id,
+      email: inviteEmailAddress,
+      expires_at: invite.expires_at || "",
+    };
+  }
+
+  /**
+   * Accept an invite by token. Creates user if needed and adds them to the organization.
+   */
+  async acceptInvite(params: {
+    token: string;
+    password?: string;
+    ip?: string;
+    ua?: string;
+  }): Promise<{ access_token: string; user: { id: string; email: string }; org_id: string }> {
+    if (!params.token) {
+      throw new Error("token is required");
+    }
+
+    const database = db(this.env);
+    const tokenHash = await hashToken(params.token);
+    const invite = await database.queryOne<Invite>(
+      `invites?token_hash=eq.${encodeURIComponent(tokenHash)}&select=*`,
+    );
+
+    if (!invite) throw new Error("Invalid invite token");
+    if (invite.accepted) throw new Error("Invite has already been accepted");
+    if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
+      throw new Error("Invite has expired");
+    }
+
+    let user = await database.queryOne<{ id: string; email: string; is_email_verified: boolean; user_metadata?: Record<string, unknown> }>(
+      `users?email=eq.${encodeURIComponent(invite.email)}&select=*`,
+    );
+
+    let isNewUser = false;
+    if (!user) {
+      isNewUser = true;
+      if (!params.password) {
+        throw new Error("password is required for new users");
+      }
+
+      const passErr = validatePassword(params.password);
+      if (passErr) throw new Error(await passErr.text());
+
+      const password_hash = await hashPassword(params.password);
+      user = await database.mutate("users", {
+        email: invite.email,
+        password_hash,
+        is_email_verified: false,
+      });
+
+      if (!user) {
+        throw new Error("Failed to create user");
+      }
+    }
+
+    const existingMembership = await database.queryOne<{ id: string; status: string }>(
+      `memberships?user_id=eq.${user.id}&org_id=eq.${invite.org_id}&select=id,status`,
+    );
+
+    let membershipId: string;
+
+    if (existingMembership) {
+      membershipId = existingMembership.id;
+      // Reactivate if deactivated
+      if (existingMembership.status !== "active") {
+        await database.update(
+          "memberships",
+          { id: `eq.${existingMembership.id}` },
+          { status: "active" },
+        );
+      }
+    } else {
+      const newMembership = await database.mutate("memberships", {
+        user_id: user.id,
+        org_id: invite.org_id,
+        status: "active",
+      });
+      membershipId = newMembership.id;
+    }
+
+    // Assign roles from invite via join table
+    const inviteRoles = invite.role?.length ? invite.role : ["member"];
+    const roleRows = await database.query<{ id: string; name: string }>(
+      `roles?name=in.(${inviteRoles.join(",")})&select=id,name`,
+    );
+
+    for (const role of roleRows) {
+      try {
+        await database.mutate("membership_roles", {
+          membership_id: membershipId,
+          role_id: role.id,
+        });
+      } catch (err: any) {
+        // Ignore duplicate — role already assigned
+        if (!err?.message?.includes("23505") && !err?.message?.includes("duplicate")) {
+          throw err;
+        }
+      }
+    }
+
+    // Mark invite as accepted
+    await database.update("invites", { id: `eq.${invite.id}` }, {
+      accepted: true,
+      accepted_at: new Date().toISOString(),
+    });
+
+    // Get RBAC claims for the new membership
+    const claims = await database.rpc<{ roles: string[]; products: string[]; membership_status: string }>("get_jwt_claims", {
+      p_user_id: user.id,
+      p_org_id: invite.org_id,
+    });
+
+    const refreshToken = generateRefreshToken();
+    const refreshHash = await hashToken(refreshToken);
+    const sessionId = crypto.randomUUID();
+
+    await database.mutate("sessions", {
+      id: sessionId,
+      user_id: user.id,
+      org_id: invite.org_id,
+      refresh_token_hash: refreshHash,
+      user_agent: params.ua,
+      ip_address: params.ip,
+      revoked: false,
+      expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+      family_id: sessionId,
+      family_created_at: new Date().toISOString(),
+    });
+
+    const accessToken = await signAccessToken(
+      {
+        sub: user.id,
+        email: user.email,
+        org_id: invite.org_id,
+        roles: claims?.roles ?? inviteRoles,
+        products: claims?.products ?? [],
+        membership_status: (claims?.membership_status ?? "active") as "active" | "inactive" | "suspended" | "expired",
+        is_email_verified: user.is_email_verified,
+        user_metadata: user.user_metadata ?? {},
+      },
+      this.env,
+    );
+
+    // Emit sync events (non-blocking, post-response)
+    if (isNewUser) {
+      publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'user.created', {
+        id: user.id,
+        email: user.email,
+        user_metadata: {},
+      });
+    }
+    if (existingMembership && existingMembership.status !== 'active') {
+      publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'membership.role_changed', {
+        user_id: user.id,
+        organization_id: invite.org_id,
+        roles: inviteRoles,
+        status: 'active',
+      });
+    } else if (!existingMembership) {
+      publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'membership.created', {
+        user_id: user.id,
+        organization_id: invite.org_id,
+        roles: inviteRoles,
+        status: 'active',
+      });
+    }
+
+    audit(this.ctx, this.env, "invite_accepted", {
+      user_id: user.id,
+      org_id: invite.org_id,
+      ip_address: params.ip,
+      user_agent: params.ua,
+      metadata: { invite_id: invite.id },
+    });
+
+    return {
+      access_token: accessToken,
+      user: { id: user.id, email: user.email },
+      org_id: invite.org_id,
+    };
+  }
+
+  /**
+   * Cancel a pending invite. Only the inviter (or org owner/admin) can cancel.
+   */
+  async cancelInvite(params: {
+    invite_id: string;
+    caller: AccessTokenPayload;
+    ip?: string;
+    ua?: string;
+  }): Promise<{ cancelled: boolean }> {
+    if (!params.invite_id || !params.caller) {
+      throw new Error("invite_id and caller are required");
+    }
+
+    const database = db(this.env);
+    const invite = await database.queryOne<Invite>(
+      `invites?id=eq.${encodeURIComponent(params.invite_id)}&select=*`,
+    );
+
+    if (!invite) throw new Error("Invite not found");
+    if (invite.accepted) throw new Error("Cannot cancel an accepted invite");
+    if (invite.org_id !== params.caller.org_id) {
+      throw new Error("You can only cancel invites for your active organization");
+    }
+
+    // Only owner, admin, or the original inviter can cancel
+    const isOwnerOrAdmin = params.caller.roles.includes("owner") || params.caller.roles.includes("admin");
+    const isInviter = invite.invited_by === params.caller.sub;
+    if (!isOwnerOrAdmin && !isInviter) {
+      throw new Error("Insufficient permissions to cancel this invite");
+    }
+
+    // Delete the invite
+    await database.query(
+      `invites?id=eq.${encodeURIComponent(params.invite_id)}`,
+      { method: "DELETE" },
+    );
+
+    audit(this.ctx, this.env, "invite_cancelled", {
+      user_id: params.caller.sub,
+      org_id: params.caller.org_id,
+      ip_address: params.ip,
+      user_agent: params.ua,
+      metadata: { invite_id: params.invite_id, invited_email: invite.email },
+    });
+
+    return { cancelled: true };
+  }
+
+  /**
+   * Resend an invite by generating a new token and extending the expiry.
+   */
+  async resendInvite(params: {
+    invite_id: string;
+    redirect_url?: string;
+    caller: AccessTokenPayload;
+    ip?: string;
+    ua?: string;
+  }): Promise<{ invite_id: string; email: string; expires_at: string }> {
+    if (!params.invite_id || !params.caller) {
+      throw new Error("invite_id and caller are required");
+    }
+
+    const redirectErr = validateRedirectUrl(params.redirect_url, this.env);
+    if (redirectErr) throw new Error(await redirectErr.text());
+
+    const database = db(this.env);
+    const invite = await database.queryOne<Invite>(
+      `invites?id=eq.${encodeURIComponent(params.invite_id)}&select=*`,
+    );
+
+    if (!invite) throw new Error("Invite not found");
+    if (invite.accepted) throw new Error("Cannot resend an accepted invite");
+    if (invite.org_id !== params.caller.org_id) {
+      throw new Error("You can only resend invites for your active organization");
+    }
+
+    if (!params.caller.roles.includes("owner") && !params.caller.roles.includes("admin")) {
+      throw new Error("Only owners and admins can resend invites");
+    }
+
+    const throttled = await checkEmailThrottle(this.env, "invite", params.caller.org_id);
+    if (throttled) throw new Error("Too many invite requests. Please try again later.");
+
+    // Generate new token and extend expiry
+    const newToken = crypto.randomUUID();
+    const newTokenHash = await hashToken(newToken);
+    const newExpiry = new Date(Date.now() + INVITE_TTL_MS).toISOString();
+    await database.update(
+      "invites",
+      { id: `eq.${invite.id}` },
+      { token_hash: newTokenHash, expires_at: newExpiry },
+    );
+
+    // Fetch org name for the email template
+    const org = await database.queryOne<{ name: string }>(
+      `organizations?id=eq.${params.caller.org_id}&select=name`,
+    );
+
+    // Send invite email
+    const appUrl = resolveAppUrl(params.redirect_url, this.env);
+    const acceptUrl = `${appUrl}/invite/accept?token=${newToken}`;
+    const { subject, html, text } = inviteEmail(
+      params.caller.email,
+      org?.name ?? "an organization",
+      acceptUrl,
+    );
+    this.ctx.waitUntil(sendEmail(this.env, { to: invite.email, subject, html, text }, this.ctx));
+
+    audit(this.ctx, this.env, "invite_resent", {
+      user_id: params.caller.sub,
+      org_id: params.caller.org_id,
+      ip_address: params.ip,
+      user_agent: params.ua,
+      metadata: { invite_id: invite.id, invited_email: invite.email },
+    });
+
+    return {
+      invite_id: invite.id,
+      email: invite.email,
+      expires_at: newExpiry,
+    };
   }
 }
 

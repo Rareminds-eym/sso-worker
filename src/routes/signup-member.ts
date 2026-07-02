@@ -1,13 +1,14 @@
 import { audit } from "../lib/audit";
 import { SESSION_TTL_MS } from "../lib/constants";
 import { db } from "../lib/db";
+import { sendEmail } from "../lib/email";
 import { generateRefreshToken, hashPassword, hashToken } from "../lib/hash";
 import { signAccessToken } from "../lib/jwt";
 import { endpointRateLimit } from "../lib/rate-limit";
 
+import { generateVerificationEmailTemplate } from "../lib/email-templates";
 import { publishSyncEvent } from "../lib/sync-queue";
 import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "../lib/validate";
-import { generateVerificationEmailTemplate } from "../lib/email-templates";
 import type { Env, JwtClaims, SignupMemberBody } from "../types";
 
 const EMAIL_SEND_TIMEOUT_MS = 5_000;
@@ -156,36 +157,7 @@ async function signupMemberImpl(
       const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
 
       const template = generateVerificationEmailTemplate(verifyUrl);
-      const emailPromise = env.EMAIL_SERVICE.sendEmail({
-        to: email,
-        subject: template.subject,
-        html: template.html,
-        text: template.text,
-      });
-
-      ctx.waitUntil(emailPromise.then(() => {
-        console.log(JSON.stringify({
-          msg: "[SSO] Verification email delivered (after timeout window)",
-          email,
-          user_id: result.user_id,
-        }));
-      }).catch((err) => {
-        console.error(JSON.stringify({
-          msg: "[SSO] Verification email permanently failed",
-          email,
-          user_id: result.user_id,
-          error: err instanceof Error ? err.message : String(err),
-        }));
-      }));
-
-      await Promise.race([
-        emailPromise,
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("Email send timed out")), EMAIL_SEND_TIMEOUT_MS)
-        ),
-      ]).catch(() => {
-        emailSent = false;
-      });
+      ctx.waitUntil(sendEmail(env, { to: email, subject: template.subject, html: template.html, text: template.text }, ctx));
     } catch (emailErr) {
       emailSent = false;
     }

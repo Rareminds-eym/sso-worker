@@ -330,7 +330,6 @@ Configure `wrangler.toml`:
 SUPABASE_URL       = "https://your-project.supabase.co"
 ALLOWED_ORIGINS    = "https://yourapp.com,https://admin.yourapp.com"
 ALLOWED_APP_URLS   = "https://yourapp.com"
-EMAIL_API_KEY      = "your-email-api-key"
 ```
 
 `nodejs_compat` flag is required for `bcryptjs`.
@@ -350,8 +349,7 @@ EMAIL_API_KEY      = "your-email-api-key"
 | `JWT_KID` | secret | Key ID for JWT header and JWKS (e.g. `key-1`) |
 | `JWT_PUBLIC_KEY_PREVIOUS` | secret | Previous public key PEM (set during key rotation) |
 | `JWT_KID_PREVIOUS` | secret | Previous key ID (set during key rotation) |
-| `EMAIL_SERVICE` | binding | Service binding to the email-worker for sending emails |
-| `EMAIL_API_KEY` | secret | API key for authenticating with the email-worker |
+| `EMAIL_SERVICE` | binding | Service binding to the email-worker for sending emails via RPC |
 
 ---
 
@@ -559,7 +557,7 @@ sso-worker/
 - **In-memory rate limiting is per-worker** — each worker instance has its own Map. Under load with multiple workers, effective limits are multiplied. For strict global limits, migrate to Durable Objects.
 - **No session listing endpoint** — users cannot view or selectively revoke individual sessions.
 - **OAuth not implemented** — routes return 501 until a provider is configured.
-- **Email delivery** — Uses `EMAIL_SERVICE` service binding to send through the email-worker. Requires `EMAIL_API_KEY` secret for authentication.
+- **Email delivery** — Uses `EMAIL_SERVICE` service binding to send through the email-worker via RPC.
 
 ## License
 
