@@ -215,7 +215,15 @@ async function resolveRevoked(
 
     let replacement: string | null = null;
     try {
-        replacement = await env.RATE_LIMIT_KV.get(graceKey(oldHash));
+        // Retry logic: KV is eventually consistent and the winning request might 
+        // still be executing its KV write. This mitigates React Strict Mode double-fetches.
+        for (let attempt = 0; attempt < 3; attempt++) {
+            replacement = await env.RATE_LIMIT_KV.get(graceKey(oldHash));
+            if (replacement) break;
+            
+            // Wait 300ms before retrying if not found yet
+            await new Promise(resolve => setTimeout(resolve, 300));
+        }
     } catch (err) {
         // Secure default: a grace read we cannot trust is treated as theft.
         console.error("[SSO] Grace KV read failed; classifying as theft:", err);
