@@ -31,15 +31,28 @@ export async function signAccessToken(
   payload: AccessTokenPayload,
   env: Env,
 ): Promise<string> {
+  if (!env.JWT_PRIVATE_KEY) {
+    throw new Error("JWT_PRIVATE_KEY environment variable not set");
+  }
+  if (!env.JWT_KID) {
+    throw new Error("JWT_KID environment variable not set");
+  }
+
   const privateKey = await getPrivateKey(env);
 
-  return new SignJWT(payload as unknown as Record<string, unknown>)
+  const token = await new SignJWT(payload as unknown as Record<string, unknown>)
     .setProtectedHeader({ alg: ALG, kid: env.JWT_KID, typ: "JWT" })
     .setIssuedAt()
     .setExpirationTime(ACCESS_TOKEN_TTL)
     .setIssuer(JWT_ISSUER)
     .setAudience(JWT_AUDIENCE)
     .sign(privateKey);
+
+  if (!token) {
+    throw new Error("JWT signing returned empty token");
+  }
+
+  return token;
 }
 
 /** Verify an access token with the cached public key */

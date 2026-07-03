@@ -207,12 +207,14 @@ async function signupMemberImpl(
     return responseBody;
   } catch (err) {
     // Rollback: delete the user if session/JWT creation failed
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    const errorStack = err instanceof Error ? err.stack : undefined;
     console.error(
       JSON.stringify({
         msg: "[SSO] Signup post-creation failed, rolling back",
         user_id: result.user_id,
         org_id: result.org_id,
-        error: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
+        error: { message: errorMessage, stack: errorStack },
       }),
     );
     try {
@@ -227,7 +229,7 @@ async function signupMemberImpl(
         }),
       );
     }
-    return { error: "Signup failed. Please try again.", status: 500 };
+    return { error: errorMessage || "Signup failed. Please try again.", status: 500 };
   }
 }
 

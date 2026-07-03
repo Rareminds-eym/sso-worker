@@ -25,7 +25,7 @@ export async function performDeleteAccount(
   try {
     // Delete the user — CASCADE handles sessions, memberships, email_verifications, etc.
     const database = db(env);
-    await database.delete("users", { id: `eq.${params.user_id}` });
+    await database.query(`users?id=eq.${encodeURIComponent(params.user_id)}`, { method: "DELETE" });
 
     // Emit sync events
     publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.deleted', {
