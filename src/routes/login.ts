@@ -75,12 +75,12 @@ export async function performLogin(
   ctx.waitUntil(clearFailedLogins(env, email));
 
   ctx.waitUntil(
-    database.update("users", { id: `eq.${user.id}` }, { last_login_at: new Date().toISOString() })
+    database.update("users", { id: `eq.${encodeURIComponent(user.id)}` }, { last_login_at: new Date().toISOString() })
       .catch((err) => console.warn("[SSO] Failed to update last_login_at:", err)),
   );
 
   const memberships = await database.query<Membership>(
-    `memberships?user_id=eq.${user.id}&status=eq.active&select=*&order=created_at.asc`,
+    `memberships?user_id=eq.${encodeURIComponent(user.id)}&status=eq.active&select=*&order=created_at.asc`,
   );
 
   const activeMembership = memberships[0] ?? null;

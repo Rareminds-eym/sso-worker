@@ -33,7 +33,7 @@ export async function performRequestVerification(
   }
 
   const user = await database.queryOne<{ id: string; email: string; is_email_verified: boolean }>(
-    `users?id=eq.${params.user_id}&select=id,email,is_email_verified`,
+    `users?id=eq.${encodeURIComponent(params.user_id)}&select=id,email,is_email_verified`,
   );
 
   if (!user) return { error: "User not found", status: 404 };
@@ -104,13 +104,13 @@ export async function performVerifyEmail(
   // Mark token as used and verify the user's email
   await database.update(
     "email_verifications",
-    { id: `eq.${record.id}` },
+    { id: `eq.${encodeURIComponent(record.id)}` },
     { used: true },
   );
 
   await database.update(
     "users",
-    { id: `eq.${record.user_id}` },
+    { id: `eq.${encodeURIComponent(record.user_id)}` },
     { is_email_verified: true },
   );
 

@@ -94,7 +94,7 @@ export async function performListBundles(
   const enriched = await Promise.all(
     (bundles || []).map(async (bundle: Record<string, unknown>) => {
       const features = await database.query(
-        `bundle_features?bundle_id=eq.${bundle.id}&select=feature_key`,
+        `bundle_features?bundle_id=eq.${encodeURIComponent(String(bundle.id))}&select=feature_key`,
       );
       return {
         ...bundle,

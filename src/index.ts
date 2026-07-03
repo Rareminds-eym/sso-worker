@@ -44,7 +44,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       );
       if (pendingEvents && pendingEvents.length > 0) {
         for (const event of pendingEvents) {
-          await database.update("events", { id: `eq.${event.id}` }, { status: "processing" });
+          await database.update("events", { id: `eq.${encodeURIComponent(event.id)}` }, { status: "processing" });
           try {
             if (event.event_type === 'payment.captured' || event.event_type === 'order.paid') {
               if (!this.env.SKILLPASSPORT_URL || !this.env.INTERNAL_WEBHOOK_SECRET) {
@@ -69,13 +69,13 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
             }
 
             // Mark as completed since fulfillment succeeded (or event type was ignored)
-            await database.update("events", { id: `eq.${event.id}` }, {
+            await database.update("events", { id: `eq.${encodeURIComponent(event.id)}` }, {
               status: "completed",
               processed_at: new Date().toISOString()
             });
             console.log(`[SSO] Processed webhook event ${event.event_id} of type ${event.event_type}`);
           } catch (processErr: any) {
-            await database.update("events", { id: `eq.${event.id}` }, {
+            await database.update("events", { id: `eq.${encodeURIComponent(event.id)}` }, {
               status: "failed",
               error_message: processErr?.message || "Unknown error",
               retry_count: (event.retry_count || 0) + 1
@@ -134,19 +134,19 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           if (first_name !== undefined || last_name !== undefined) {
             try {
               // Note: using db(this.env) which wraps Postgres REST. 
-              const user = await database.queryOne(`users?id=eq.${body.user_id}&select=user_metadata`);
+              const user = await database.queryOne(`users?id=eq.${encodeURIComponent(body.user_id)}&select=user_metadata`);
               const currentMetadata = (user as any)?.user_metadata || {};
 
               const newMetadata = { ...currentMetadata };
               if (first_name !== undefined) newMetadata.first_name = first_name;
               if (last_name !== undefined) newMetadata.last_name = last_name;
 
-              await database.update('users', { id: `eq.${body.user_id}` }, { user_metadata: newMetadata });
+              await database.update('users', { id: `eq.${encodeURIComponent(body.user_id)}` }, { user_metadata: newMetadata });
               console.log(`[SSO] Bidirectional sync complete: updated user_metadata for user ${body.user_id}`);
 
               // Broadcast to all forward consumers (e.g. App 1, App 2) so they stay in sync
               if (this.env.SYNC_QUEUE) {
-                const userObj = await database.queryOne<{ id: string, email: string }>(`users?id=eq.${body.user_id}&select=id,email`);
+                const userObj = await database.queryOne<{ id: string, email: string }>(`users?id=eq.${encodeURIComponent(body.user_id)}&select=id,email`);
                 if (userObj) {
                   await this.env.SYNC_QUEUE.send({
                     type: 'user.updated',
@@ -276,7 +276,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     const existing = await database.queryOne(
-      `subscriptions?user_id=eq.${data.user_id}&status=in.(active,pending)`,
+      `subscriptions?user_id=eq.${encodeURIComponent(data.user_id)}&status=in.(active,pending)`,
     );
     if (existing) {
       return existing as Record<string, unknown>;
@@ -348,7 +348,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     // Admin-created members are trusted — auto-verify their email so they can log
     // in immediately without an email-verification step.
-    await database.update("users", { id: `eq.${result.user_id}` }, { is_email_verified: true });
+    await database.update("users", { id: `eq.${encodeURIComponent(result.user_id)}` }, { is_email_verified: true });
 
     // Emit sync events — await directly (RPC method, no ctx.waitUntil)
     try {
@@ -390,7 +390,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     const plan = await database.queryOne(
-      `plans?id=eq.${subscription.plan_id}`,
+      `plans?id=eq.${encodeURIComponent(subscription.plan_id)}`,
     );
 
     return { subscription: subscription as Record<string, unknown>, plan: plan as Record<string, unknown> };
@@ -438,12 +438,12 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     await database.update(
       "subscriptions",
-      { id: `eq.${subscriptionId}` },
+      { id: `eq.${encodeURIComponent(subscriptionId)}` },
       updateData,
     );
 
     const updated = await database.queryOne(
-      `subscriptions?id=eq.${subscriptionId}`,
+      `subscriptions?id=eq.${encodeURIComponent(subscriptionId)}`,
     );
 
     return updated as Record<string, unknown>;
@@ -493,7 +493,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const database = db(this.env);
     await database.update(
       "subscriptions",
-      { id: `eq.${subscriptionId}` },
+      { id: `eq.${encodeURIComponent(subscriptionId)}` },
       {
         status: "cancelled",
         cancellation_reason: data?.reason || null,
@@ -504,7 +504,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     );
 
     const updated = await database.queryOne(
-      `subscriptions?id=eq.${subscriptionId}`,
+      `subscriptions?id=eq.${encodeURIComponent(subscriptionId)}`,
     );
 
     return updated as Record<string, unknown>;
@@ -529,9 +529,9 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     const database = db(this.env);
-    await database.update("subscriptions", { id: `eq.${subscriptionId}` }, updateData);
+    await database.update("subscriptions", { id: `eq.${encodeURIComponent(subscriptionId)}` }, updateData);
 
-    const updated = await database.queryOne(`subscriptions?id=eq.${subscriptionId}`);
+    const updated = await database.queryOne(`subscriptions?id=eq.${encodeURIComponent(subscriptionId)}`);
     return updated as Record<string, unknown>;
   }
 
@@ -568,13 +568,13 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     let productId = data.product_id;
     if (!productId && data.subscription_id) {
       const sub = await database.queryOne(
-        `subscriptions?id=eq.${data.subscription_id}&select=product_id,plan_id`,
+        `subscriptions?id=eq.${encodeURIComponent(data.subscription_id)}&select=product_id,plan_id`,
       );
       const subRow = sub as any;
       productId = subRow?.product_id || null;
       if (!productId && subRow?.plan_id) {
         const plan = await database.queryOne(
-          `plans?id=eq.${subRow.plan_id}&select=product_id`,
+          `plans?id=eq.${encodeURIComponent(subRow.plan_id)}&select=product_id`,
         );
         productId = (plan as any)?.product_id || null;
       }
@@ -637,7 +637,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     const plan = await database.queryOne(
-      `plans?id=eq.${subscription.plan_id}`,
+      `plans?id=eq.${encodeURIComponent(subscription.plan_id)}`,
     );
 
     return { subscription: subscription as Record<string, unknown>, plan: plan as Record<string, unknown> };
@@ -861,7 +861,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const database = db(this.env);
     await database.update(
       "memberships",
-      { id: `eq.${data.membership_id}` },
+      { id: `eq.${encodeURIComponent(data.membership_id)}` },
       { status: data.status },
     );
     return { success: true };
@@ -1213,7 +1213,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const tokenHash = await hashToken(refreshToken);
 
     const session = await database.queryOne<{ user_id: string; org_id: string | null; expires_at: string }>(
-      `sessions?refresh_token_hash=eq.${tokenHash}&revoked=eq.false&select=user_id,org_id,expires_at`
+      `sessions?refresh_token_hash=eq.${encodeURIComponent(tokenHash)}&revoked=eq.false&select=user_id,org_id,expires_at`
     );
 
     if (!session) {
@@ -1225,7 +1225,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     const user = await database.queryOne<{ is_blocked: boolean }>(
-      `users?id=eq.${session.user_id}&select=is_blocked`
+      `users?id=eq.${encodeURIComponent(session.user_id)}&select=is_blocked`
     );
 
     if (!user || user.is_blocked) {
@@ -1273,13 +1273,13 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     // Only active memberships
     const memberships = await database.query<Membership>(
-      `memberships?user_id=eq.${payload.sub}&status=eq.active&select=*&order=created_at.asc`,
+      `memberships?user_id=eq.${encodeURIComponent(payload.sub)}&status=eq.active&select=*&order=created_at.asc`,
     );
 
     const orgIds = memberships.map((m) => m.org_id);
     const orgs = orgIds.length
       ? await database.query<Organization>(
-        `organizations?id=in.(${orgIds.join(",")})&select=*`,
+        `organizations?id=in.(${orgIds.map(id => encodeURIComponent(id)).join(",")})&select=*`,
       )
       : [];
 
@@ -1289,7 +1289,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const membershipIds = memberships.map((m) => m.id);
     const roleRows = membershipIds.length
       ? await database.query<{ membership_id: string; name: string }>(
-        `membership_roles?membership_id=in.(${membershipIds.join(",")})&select=membership_id,role_id(name)`,
+        `membership_roles?membership_id=in.(${membershipIds.map(id => encodeURIComponent(id)).join(",")})&select=membership_id,role_id(name)`,
       )
       : [];
 
@@ -1332,10 +1332,10 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     // Verify ACTIVE membership in target org and check if user is blocked
     const [membership, user] = await Promise.all([
       database.queryOne<Membership>(
-        `memberships?user_id=eq.${payload.sub}&org_id=eq.${params.org_id}&status=eq.active&select=*`,
+        `memberships?user_id=eq.${encodeURIComponent(payload.sub)}&org_id=eq.${encodeURIComponent(params.org_id)}&status=eq.active&select=*`,
       ),
       database.queryOne<{ is_blocked: boolean }>(
-        `users?id=eq.${payload.sub}&select=is_blocked`,
+        `users?id=eq.${encodeURIComponent(payload.sub)}&select=is_blocked`,
       )
     ]);
 
@@ -1470,13 +1470,13 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const tokenHash = await hashToken(refreshToken);
 
     const session = await database.queryOne<Session>(
-      `sessions?refresh_token_hash=eq.${tokenHash}&select=user_id,org_id`,
+      `sessions?refresh_token_hash=eq.${encodeURIComponent(tokenHash)}&select=user_id,org_id`,
     );
 
     if (session) {
       await database.update(
         "sessions",
-        { refresh_token_hash: `eq.${tokenHash}` },
+        { refresh_token_hash: `eq.${encodeURIComponent(tokenHash)}` },
         { revoked: true },
       ).catch((err) => {
         console.warn("[SSO] Session revocation failed on logout:", err);
@@ -1523,7 +1523,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     // Check for existing pending invite
     const existing = await database.queryOne<{ id: string }>(
-      `invites?email=eq.${encodeURIComponent(inviteEmailAddress)}&org_id=eq.${params.org_id}&accepted=eq.false&select=id`,
+      `invites?email=eq.${encodeURIComponent(inviteEmailAddress)}&org_id=eq.${encodeURIComponent(params.org_id)}&accepted=eq.false&select=id`,
     );
     if (existing) {
       throw new Error("An invite for this email already exists");
@@ -1546,7 +1546,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     // Fetch org name for the email template
     const org = await database.queryOne<{ name: string }>(
-      `organizations?id=eq.${params.org_id}&select=name`,
+      `organizations?id=eq.${encodeURIComponent(params.org_id)}&select=name`,
     );
 
     // Send invite email
@@ -1626,7 +1626,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     const existingMembership = await database.queryOne<{ id: string; status: string }>(
-      `memberships?user_id=eq.${user.id}&org_id=eq.${invite.org_id}&select=id,status`,
+      `memberships?user_id=eq.${encodeURIComponent(user.id)}&org_id=eq.${encodeURIComponent(invite.org_id)}&select=id,status`,
     );
 
     let membershipId: string;
@@ -1637,7 +1637,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       if (existingMembership.status !== "active") {
         await database.update(
           "memberships",
-          { id: `eq.${existingMembership.id}` },
+          { id: `eq.${encodeURIComponent(existingMembership.id)}` },
           { status: "active" },
         );
       }
@@ -1671,7 +1671,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     // Mark invite as accepted
-    await database.update("invites", { id: `eq.${invite.id}` }, {
+    await database.update("invites", { id: `eq.${encodeURIComponent(invite.id)}` }, {
       accepted: true,
       accepted_at: new Date().toISOString(),
     });
@@ -1841,13 +1841,13 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const newExpiry = new Date(Date.now() + INVITE_TTL_MS).toISOString();
     await database.update(
       "invites",
-      { id: `eq.${invite.id}` },
+      { id: `eq.${encodeURIComponent(invite.id)}` },
       { token_hash: newTokenHash, expires_at: newExpiry },
     );
 
     // Fetch org name for the email template
     const org = await database.queryOne<{ name: string }>(
-      `organizations?id=eq.${params.caller.org_id}&select=name`,
+      `organizations?id=eq.${encodeURIComponent(params.caller.org_id)}&select=name`,
     );
 
     // Send invite email

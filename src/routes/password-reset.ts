@@ -58,7 +58,7 @@ export async function performForgotPassword(
   // Invalidate any existing unused reset tokens for this user
   await database.update(
     "password_resets",
-    { user_id: `eq.${user.id}`, used: "eq.false" },
+    { user_id: `eq.${encodeURIComponent(user.id)}`, used: "eq.false" },
     { used: true },
   ).catch((err) => {
     console.error("[SSO] Failed to invalidate existing reset tokens:", err);
@@ -131,21 +131,21 @@ export async function performResetPassword(
   // Mark token as used
   await database.update(
     "password_resets",
-    { id: `eq.${record.id}` },
+    { id: `eq.${encodeURIComponent(record.id)}` },
     { used: true },
   );
 
   // Update password
   await database.update(
     "users",
-    { id: `eq.${record.user_id}` },
+    { id: `eq.${encodeURIComponent(record.user_id)}` },
     { password_hash },
   );
 
   // Revoke all sessions (force re-login everywhere)
   await database.update(
     "sessions",
-    { user_id: `eq.${record.user_id}` },
+    { user_id: `eq.${encodeURIComponent(record.user_id)}` },
     { revoked: true },
   );
 

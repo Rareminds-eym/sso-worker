@@ -38,7 +38,7 @@ export async function performChangePassword(
 
   // Get current user's password hash
   const users = await database.query<{ password_hash: string }>(
-    `users?id=eq.${params.user_id}&select=password_hash`,
+    `users?id=eq.${encodeURIComponent(params.user_id)}&select=password_hash`,
   );
 
   if (!users.length) {
@@ -55,14 +55,14 @@ export async function performChangePassword(
   const newHash = await hashPassword(params.new_password);
   await database.update(
     "users",
-    { id: `eq.${params.user_id}` },
+    { id: `eq.${encodeURIComponent(params.user_id)}` },
     { password_hash: newHash, updated_at: new Date().toISOString() },
   );
 
   // Revoke all other sessions (force re-login everywhere)
   await database.update(
     "sessions",
-    { user_id: `eq.${params.user_id}`, revoked: "eq.false" },
+    { user_id: `eq.${encodeURIComponent(params.user_id)}`, revoked: "eq.false" },
     { revoked: true },
   );
 
@@ -119,7 +119,7 @@ export async function performAdminResetPassword(
 
   // Verify target user exists
   const users = await database.query<{ id: string }>(
-    `users?id=eq.${params.target_user_id}&select=id`,
+    `users?id=eq.${encodeURIComponent(params.target_user_id)}&select=id`,
   );
   if (!users.length) {
     return { error: "Target user not found", status: 404 };
@@ -129,14 +129,14 @@ export async function performAdminResetPassword(
   const newHash = await hashPassword(params.new_password);
   await database.update(
     "users",
-    { id: `eq.${params.target_user_id}` },
+    { id: `eq.${encodeURIComponent(params.target_user_id)}` },
     { password_hash: newHash, updated_at: new Date().toISOString() },
   );
 
   // Revoke all sessions for the target user
   await database.update(
     "sessions",
-    { user_id: `eq.${params.target_user_id}`, revoked: "eq.false" },
+    { user_id: `eq.${encodeURIComponent(params.target_user_id)}`, revoked: "eq.false" },
     { revoked: true },
   );
 

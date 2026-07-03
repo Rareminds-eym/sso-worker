@@ -301,7 +301,7 @@ async function resolveFamilyOrgId(
     familyId: string,
 ): Promise<string | null> {
     const survivor = await database.queryOne<{ org_id: string | null }>(
-        `sessions?family_id=eq.${familyId}&revoked=eq.false&select=org_id&limit=1`,
+        `sessions?family_id=eq.${encodeURIComponent(familyId)}&revoked=eq.false&select=org_id&limit=1`,
     );
     return survivor?.org_id ?? null;
 }
@@ -319,7 +319,7 @@ async function mintAccessToken(
 ): Promise<{ token: string } | "blocked" | "not_found"> {
     const [user, claims] = await Promise.all([
         database.queryOne<{ id: string; email: string; is_email_verified: boolean; is_blocked: boolean; user_metadata?: Record<string, unknown> }>(
-            `users?id=eq.${userId}&select=id,email,is_email_verified,is_blocked,user_metadata`,
+            `users?id=eq.${encodeURIComponent(userId)}&select=id,email,is_email_verified,is_blocked,user_metadata`,
         ),
         database.rpc<JwtClaims>("get_jwt_claims", {
             p_user_id: userId,
