@@ -1652,8 +1652,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     // Assign roles from invite via join table
     const inviteRoles = invite.role?.length ? invite.role : ["member"];
-    const roleRows = await database.query<{ id: string; name: string }>(
-      `roles?name=in.(${inviteRoles.join(",")})&select=id,name`,
+   const roleRows = await database.query<{ id: string; name: string }>(
+  `roles?name=in.(${inviteRoles.map(r => encodeURIComponent(r)).join(",")})&select=id,name`,
     );
 
     for (const role of roleRows) {
