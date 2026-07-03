@@ -17,7 +17,7 @@ enabled = true
 head_sampling_rate = 0.01
 
 [triggers]
-crons = ["0 * * * *"]
+crons = ["0 3 * * *"]
 
 [vars]
 ENVIRONMENT = "production"
@@ -31,7 +31,6 @@ SKILLPASSPORT_URL = "https://skillpassport.rareminds.in"
 # JWT_PRIVATE_KEY  (PEM-encoded RS256 private key)
 # JWT_PUBLIC_KEY   (PEM-encoded RS256 public key)
 # JWT_KID          (Key ID for JWKS, e.g. "key-1")
-# EMAIL_API_KEY    (Shared API key for email-worker service binding)
 
 [[kv_namespaces]]
 binding = "RATE_LIMIT_KV"

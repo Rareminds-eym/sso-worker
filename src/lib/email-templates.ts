@@ -1,3 +1,5 @@
+import { escapeHrefAttr } from "./escape";
+
 export function generateVerificationEmailTemplate(verifyUrl: string) {
   return {
     subject: 'Verify your email',
@@ -14,7 +16,7 @@ export function generateVerificationEmailTemplate(verifyUrl: string) {
             <h2 style="color: #2563eb;">Welcome to SkillPassport</h2>
             <p>Thank you for signing up! Please verify your email address by clicking the button below:</p>
             <div style="text-align: center; margin: 30px 0;">
-              <a href="${verifyUrl}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; display: inline-block;">Verify Email</a>
+              <a href="${escapeHrefAttr(verifyUrl)}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; display: inline-block;">Verify Email</a>
             </div>
             <p>Or copy and paste this link into your browser:</p>
             <p style="word-break: break-all; color: #666;">${verifyUrl}</p>
@@ -48,7 +50,7 @@ export function generatePasswordResetEmailTemplate(resetUrl: string) {
             <h2 style="color: #2563eb;">Reset your password</h2>
             <p>We received a request to reset your password. Click the button below to reset it:</p>
             <div style="text-align: center; margin: 30px 0;">
-              <a href="${resetUrl}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; display: inline-block;">Reset Password</a>
+              <a href="${escapeHrefAttr(resetUrl)}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; display: inline-block;">Reset Password</a>
             </div>
             <p>Or copy and paste this link into your browser:</p>
             <p style="word-break: break-all; color: #666;">${resetUrl}</p>
