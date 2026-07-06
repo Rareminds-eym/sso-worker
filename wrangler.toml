@@ -24,7 +24,6 @@ ENVIRONMENT = "production"
 SUPABASE_URL = "https://quvdgaydpctuspzeqknc.supabase.co"
 ALLOWED_ORIGINS = "http://localhost:3000,http://localhost:5173,http://localhost:8788,https://*.rareminds.in,https://*.pages.dev,http://127.0.0.1:8788"
 ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:5173,http://localhost:8788,http://127.0.0.1:8788,https://skillpassport.rareminds.in,https://*.rareminds.in,https://*.pages.dev"
-SKILLPASSPORT_URL = "https://skillpassport.rareminds.in"
 
 # Secrets (set via `wrangler secret put`):
 # SUPABASE_SERVICE_ROLE_KEY
