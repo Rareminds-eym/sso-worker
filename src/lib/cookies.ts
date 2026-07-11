@@ -1,20 +1,19 @@
 import { SESSION_TTL_MS } from "./constants";
 
 // ─── Centralized Cookie Attributes ─────────────────────────────
-/** Base cookie attributes for secure auth cookies. HttpOnly, Secure, Path=/. */
-export const COOKIE_BASE_ATTRS = "HttpOnly; Secure; Path=/";
-
-/** SameSite policy for refresh token (cross-site silent refresh support). */
-export const COOKIE_SAMESITE = "SameSite=None";
+/** Base cookie attributes. SameSite and Secure are added conditionally per-environment. */
+export const COOKIE_BASE_ATTRS = "HttpOnly; Path=/";
 
 /** Refresh token max age in seconds. */
 export const REFRESH_MAX_AGE = Math.floor(SESSION_TTL_MS / 1000);
 
 // ─── Cookie Configuration ──────────────────────────────────────
-/** Configuration for refresh cookie Domain attribute. */
+/** Configuration for refresh cookie attributes. */
 export interface CookieConfig {
   /** Optional registrable parent domain (e.g., ".rareminds.in"). When omitted, cookie is host-only. */
   domain?: string;
+  /** Environment name — when "dev", omit Secure flag (self-signed certs block Secure cookies locally). */
+  environment?: string;
 }
 
 // ─── Cookie Builders ───────────────────────────────────────────
@@ -26,8 +25,17 @@ export interface CookieConfig {
  * @returns Set-Cookie header value for refresh_token
  */
 export function refreshCookie(token: string, maxAgeSec: number, cfg: CookieConfig): string {
+  const isDev = cfg.environment === "dev";
+  const secure = isDev ? "" : "; Secure";
+  const samesite = isDev ? "Lax" : "None";
   const domain = cfg.domain ? `; Domain=${cfg.domain}` : "";
-  return `refresh_token=${token}; ${COOKIE_BASE_ATTRS}; ${COOKIE_SAMESITE}${domain}; Max-Age=${maxAgeSec}`;
+  // Use __Secure- prefix (allows Domain) for cross-subdomain cookies.
+  // __Secure- requires Secure + Path=/, __Host- additionally requires no Domain attribute.
+  // When Domain is set (cross-subdomain), use __Secure- which allows Domain.
+  // When Domain is unset (host-only), use __Host- for strongest protection.
+  // Dev mode omits the prefix (no Secure flag).
+  const prefix = isDev ? "" : (cfg.domain ? "__Secure-" : "__Host-");
+  return `${prefix}refresh_token=${token}; ${COOKIE_BASE_ATTRS}${secure}; SameSite=${samesite}${domain}; Max-Age=${maxAgeSec}`;
 }
 
 /**
@@ -36,8 +44,12 @@ export function refreshCookie(token: string, maxAgeSec: number, cfg: CookieConfi
  * @returns Set-Cookie header value to clear refresh_token
  */
 export function clearRefreshCookie(cfg: CookieConfig): string {
+  const isDev = cfg.environment === "dev";
+  const secure = isDev ? "" : "; Secure";
+  const samesite = isDev ? "Lax" : "None";
   const domain = cfg.domain ? `; Domain=${cfg.domain}` : "";
-  return `refresh_token=; ${COOKIE_BASE_ATTRS}; ${COOKIE_SAMESITE}${domain}; Max-Age=0`;
+  const prefix = isDev ? "" : (cfg.domain ? "__Secure-" : "__Host-");
+  return `${prefix}refresh_token=; ${COOKIE_BASE_ATTRS}${secure}; SameSite=${samesite}${domain}; Max-Age=0`;
 }
 
 // ─── Legacy Helper (For Rollout Window) ────────────────────────
@@ -46,7 +58,7 @@ export function clearRefreshCookie(cfg: CookieConfig): string {
  * TODO: Remove after rollout window (task 13.3 — approval-gated Contract phase).
  */
 function clearLegacyAccessTokenCookie(): string {
-  return `access_token=; ${COOKIE_BASE_ATTRS}; ${COOKIE_SAMESITE}; Max-Age=0`;
+  return `access_token=; ${COOKIE_BASE_ATTRS}; SameSite=None; Secure; Max-Age=0`;
 }
 
 // ─── High-Level Response Helpers ───────────────────────────────
@@ -65,13 +77,13 @@ export function setAuthCookies(
   res: Response,
   accessToken: string,
   refreshToken: string,
-  env: { REFRESH_COOKIE_DOMAIN?: string },
+  env: { REFRESH_COOKIE_DOMAIN?: string; ENVIRONMENT?: string },
 ): void {
   // Access token delivered via header only (in-memory on client)
   res.headers.set("X-Access-Token", accessToken);
 
   // Build cookie config from env
-  const cfg: CookieConfig = { domain: env.REFRESH_COOKIE_DOMAIN };
+  const cfg: CookieConfig = { domain: env.REFRESH_COOKIE_DOMAIN, environment: env.ENVIRONMENT };
 
   // Refresh token delivered via HttpOnly cookie with configured Domain
   res.headers.append("Set-Cookie", refreshCookie(refreshToken, REFRESH_MAX_AGE, cfg));
@@ -84,9 +96,9 @@ export function setAuthCookies(
  * @param res - Response object to mutate
  * @param env - Environment (reads REFRESH_COOKIE_DOMAIN) — must match the set cookies
  */
-export function clearCookies(res: Response, env: { REFRESH_COOKIE_DOMAIN?: string }): void {
+export function clearCookies(res: Response, env: { REFRESH_COOKIE_DOMAIN?: string; ENVIRONMENT?: string }): void {
   // Build cookie config from env
-  const cfg: CookieConfig = { domain: env.REFRESH_COOKIE_DOMAIN };
+  const cfg: CookieConfig = { domain: env.REFRESH_COOKIE_DOMAIN, environment: env.ENVIRONMENT };
 
   // Clear refresh_token with matching attributes (including Domain)
   res.headers.append("Set-Cookie", clearRefreshCookie(cfg));
@@ -96,17 +108,21 @@ export function clearCookies(res: Response, env: { REFRESH_COOKIE_DOMAIN?: strin
   res.headers.append("Set-Cookie", clearLegacyAccessTokenCookie());
 }
 
-/** Parse a specific cookie value from the Cookie header */
+/** Parse a specific cookie value from the Cookie header.
+ *  Also checks for __Secure- and __Host- prefixed variants. */
 export function getCookie(req: Request, name: string): string | null {
   const header = req.headers.get("Cookie");
   if (!header) return null;
 
-  for (const part of header.split(";")) {
-    const trimmed = part.trim();
-    // Exact name match: "name=" not "name_other="
-    if (trimmed.startsWith(`${name}=`)) {
-      const idx = trimmed.indexOf("=");
-      return idx === -1 ? null : trimmed.slice(idx + 1).trim();
+  // Prefer __Host- > __Secure- > bare name (most secure first)
+  const candidates = [`__Host-${name}`, `__Secure-${name}`, name];
+  for (const candidate of candidates) {
+    for (const part of header.split(";")) {
+      const trimmed = part.trim();
+      if (trimmed.startsWith(`${candidate}=`)) {
+        const idx = trimmed.indexOf("=");
+        return idx === -1 ? null : trimmed.slice(idx + 1).trim();
+      }
     }
   }
   return null;

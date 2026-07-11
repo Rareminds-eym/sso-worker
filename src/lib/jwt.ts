@@ -11,19 +11,43 @@ let cachedPublicKey: { pem: string; key: any } | null = null;
 
 async function getPrivateKey(env: Env): Promise<any> {
   if (!cachedPrivateKey || cachedPrivateKey.pem !== env.JWT_PRIVATE_KEY) {
-    cachedPrivateKey = {
-      pem: env.JWT_PRIVATE_KEY,
-      key: await importPKCS8(env.JWT_PRIVATE_KEY, "RS256"),
-    };
+    if (!env.JWT_PRIVATE_KEY) throw new Error("JWT_PRIVATE_KEY is missing from environment");
+    
+    // Handle both literal string '\n' (from .dev.vars) and actual newlines
+    let formattedKey = env.JWT_PRIVATE_KEY;
+    if (typeof formattedKey === 'string' && formattedKey.includes('\\n')) {
+      formattedKey = formattedKey.split('\\n').join('\n');
+    }
+    
+    try {
+      const key = await importPKCS8(formattedKey, "RS256");
+      cachedPrivateKey = {
+        pem: env.JWT_PRIVATE_KEY,
+        key: key,
+      };
+    } catch (err: any) {
+      throw new Error(`Failed to import JWT_PRIVATE_KEY (PKCS8). Key length: ${formattedKey.length}, Starts with: ${formattedKey.substring(0, 30)}. Error: ${err.message}`);
+    }
   }
   return cachedPrivateKey.key;
 }
 
 async function getPublicKey(env: Env): Promise<any> {
   if (cachedPublicKey?.pem === env.JWT_PUBLIC_KEY) return cachedPublicKey.key;
-  const key = await importSPKI(env.JWT_PUBLIC_KEY, ALG);
-  cachedPublicKey = { pem: env.JWT_PUBLIC_KEY, key };
-  return key;
+  if (!env.JWT_PUBLIC_KEY) throw new Error("JWT_PUBLIC_KEY is missing from environment");
+  
+  let formattedKey = env.JWT_PUBLIC_KEY;
+  if (typeof formattedKey === 'string' && formattedKey.includes('\\n')) {
+    formattedKey = formattedKey.split('\\n').join('\n');
+  }
+
+  try {
+    const key = await importSPKI(formattedKey, ALG);
+    cachedPublicKey = { pem: env.JWT_PUBLIC_KEY, key };
+    return key;
+  } catch (err: any) {
+    throw new Error(`Failed to import JWT_PUBLIC_KEY (SPKI). Key length: ${formattedKey.length}, Starts with: ${formattedKey.substring(0, 30)}. Error: ${err.message}`);
+  }
 }
 
 /** Sign an access token with the rich RBAC payload */
@@ -31,15 +55,28 @@ export async function signAccessToken(
   payload: AccessTokenPayload,
   env: Env,
 ): Promise<string> {
+  if (!env.JWT_PRIVATE_KEY) {
+    throw new Error("JWT_PRIVATE_KEY environment variable not set");
+  }
+  if (!env.JWT_KID) {
+    throw new Error("JWT_KID environment variable not set");
+  }
+
   const privateKey = await getPrivateKey(env);
 
-  return new SignJWT(payload as unknown as Record<string, unknown>)
+  const token = await new SignJWT(payload as unknown as Record<string, unknown>)
     .setProtectedHeader({ alg: ALG, kid: env.JWT_KID, typ: "JWT" })
     .setIssuedAt()
     .setExpirationTime(ACCESS_TOKEN_TTL)
     .setIssuer(JWT_ISSUER)
     .setAudience(JWT_AUDIENCE)
     .sign(privateKey);
+
+  if (!token) {
+    throw new Error("JWT signing returned empty token");
+  }
+
+  return token;
 }
 
 /** Verify an access token with the cached public key */

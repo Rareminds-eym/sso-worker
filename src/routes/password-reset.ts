@@ -1,12 +1,13 @@
-import type { Env, User } from "../types";
-import { db } from "../lib/db";
-import { hashPassword, hashToken } from "../lib/hash";
-import { validateEmail, validatePassword, validateRedirectUrl, resolveAppUrl } from "../lib/validate";
-import { json, error } from "../lib/response";
 import { audit } from "../lib/audit";
-import { sendPasswordResetEmail } from "../lib/email";
+import { db } from "../lib/db";
+import { sendEmail } from "../lib/email";
+import { generatePasswordResetEmailTemplate } from "../lib/email-templates";
 import { checkEmailThrottle } from "../lib/email-throttle";
+import { hashPassword, hashToken } from "../lib/hash";
 import { endpointRateLimit } from "../lib/rate-limit";
+
+import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "../lib/validate";
+import type { Env, User } from "../types";
 
 const RESET_TTL_MS = 1 * 60 * 60 * 1000; // 1 hour
 
@@ -57,7 +58,7 @@ export async function performForgotPassword(
   // Invalidate any existing unused reset tokens for this user
   await database.update(
     "password_resets",
-    { user_id: `eq.${user.id}`, used: "eq.false" },
+    { user_id: `eq.${encodeURIComponent(user.id)}`, used: "eq.false" },
     { used: true },
   ).catch((err) => {
     console.error("[SSO] Failed to invalidate existing reset tokens:", err);
@@ -69,14 +70,14 @@ export async function performForgotPassword(
     expires_at: expiresAt,
   });
 
-  // Send password reset email via template router (platform-specific template)
+  // Send password reset email via EMAIL_SERVICE RPC
   const appUrl = resolveAppUrl(body.redirect_url, env);
   const resetUrl = `${appUrl}/reset-password?token=${token}`;
-  
-  ctx.waitUntil(
-    sendPasswordResetEmail(env, email, resetUrl)
-      .catch(err => console.error("[SSO] Password reset email background task failed:", err))
-  );
+
+  // Generate email template locally
+  const template = generatePasswordResetEmailTemplate(resetUrl);
+
+  ctx.waitUntil(sendEmail(env, { to: email, subject: template.subject, html: template.html, text: template.text }, ctx));
 
   audit(ctx, env, "password_reset_requested", {
     user_id: user.id,
@@ -87,35 +88,7 @@ export async function performForgotPassword(
   return { message: "If an account exists, a reset email has been sent." };
 }
 
-/**
- * POST /auth/forgot-password
- * Sends a password reset email if the account exists.
- * Always returns the same message to prevent email enumeration.
- */
-export async function forgotPassword(
-  req: Request,
-  env: Env,
-  ctx: ExecutionContext,
-): Promise<Response> {
-  let body: { email?: string; redirect_url?: string };
-  try {
-    body = await req.json() as { email?: string; redirect_url?: string };
-  } catch {
-    return error("Invalid JSON body");
-  }
 
-  const ip = req.headers.get("CF-Connecting-IP") ?? "unknown";
-  const ua = req.headers.get("User-Agent");
-
-  const result = await performForgotPassword(env, ctx, body, ip, ua);
-  
-  if (result.error) {
-    // We need to parse error if it's JSON format from earlier responses, but we return string errors now.
-    return error(result.error, result.status || 400);
-  }
-
-  return json({ message: result.message });
-}
 
 export async function performResetPassword(
   env: Env,
@@ -127,7 +100,7 @@ export async function performResetPassword(
   if (!body.token) {
     return { error: "token is required", status: 400 };
   }
-  
+
   if (!body.password) {
     return { error: "password is required", status: 400 };
   }
@@ -158,21 +131,21 @@ export async function performResetPassword(
   // Mark token as used
   await database.update(
     "password_resets",
-    { id: `eq.${record.id}` },
+    { id: `eq.${encodeURIComponent(record.id)}` },
     { used: true },
   );
 
   // Update password
   await database.update(
     "users",
-    { id: `eq.${record.user_id}` },
+    { id: `eq.${encodeURIComponent(record.user_id)}` },
     { password_hash },
   );
 
   // Revoke all sessions (force re-login everywhere)
   await database.update(
     "sessions",
-    { user_id: `eq.${record.user_id}` },
+    { user_id: `eq.${encodeURIComponent(record.user_id)}` },
     { revoked: true },
   );
 
@@ -185,31 +158,4 @@ export async function performResetPassword(
   return { reset: true };
 }
 
-/**
- * POST /auth/reset-password
- * Resets the password using a valid reset token.
- * Revokes all existing sessions for the user (force re-login everywhere).
- */
-export async function resetPassword(
-  req: Request,
-  env: Env,
-  ctx: ExecutionContext,
-): Promise<Response> {
-  let body: { token?: string; password?: string };
-  try {
-    body = await req.json() as { token?: string; password?: string };
-  } catch {
-    return error("Invalid JSON body");
-  }
 
-  const ip = req.headers.get("CF-Connecting-IP");
-  const ua = req.headers.get("User-Agent");
-
-  const result = await performResetPassword(env, ctx, body, ip, ua);
-
-  if (result.error) {
-    return error(result.error, result.status || 400);
-  }
-
-  return json({ reset: result.reset });
-}

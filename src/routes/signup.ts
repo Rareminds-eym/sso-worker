@@ -1,30 +1,23 @@
 import { audit } from "../lib/audit";
 import { SESSION_TTL_MS } from "../lib/constants";
-import { setAuthCookies } from "../lib/cookies";
 import { db } from "../lib/db";
-import { sendVerificationEmail } from "../lib/email";
+import { sendEmail } from "../lib/email";
+import { generateVerificationEmailTemplate } from "../lib/email-templates";
+import { checkEmailThrottle } from "../lib/email-throttle";
 import { generateRefreshToken, hashPassword, hashToken } from "../lib/hash";
 import { signAccessToken } from "../lib/jwt";
 import { endpointRateLimit } from "../lib/rate-limit";
-import { error, json } from "../lib/response";
 import { publishSyncEvent } from "../lib/sync-queue";
 import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "../lib/validate";
 import type { Env, JwtClaims, SignupBody } from "../types";
 
+const EMAIL_SEND_TIMEOUT_MS = 5_000;
+
 /**
- * POST /auth/signup
- *
- * Creates a user + organization + membership with owner role.
- * Used by institution admins creating their school/college/university.
- *
- * Atomicity guarantee:
- * - If anything other than email delivery fails after user/org creation,
- *   the user and org are rolled back (deleted) from the database.
- * - Email delivery failure is non-blocking; the response includes
- *   `email_sent: false` so the frontend can offer a resend option.
+ * performSignup - Core business logic (pure RPC, no HTTP)
+ * Called by: SsoWorker.signup() RPC method, signup() HTTP handler
  */
-export async function signup(
-  req: Request,
+export async function performSignup(
   env: Env,
   ctx: ExecutionContext,
 ): Promise<Response> {
@@ -98,19 +91,14 @@ export async function signup(
     if (existingUsers && existingUsers.length > 0) {
       const existingUser = existingUsers[0];
 
-      // User exists and email is verified → reject
       if (existingUser.is_email_verified) {
-        return error("An account with this email already exists. Please log in.", 409);
+        return { error: "An account with this email already exists. Please log in.", status: 409 };
       }
 
-      // User exists but email NOT verified
-      // Prevent Account Takeover and Race Conditions by rejecting re-signup.
-      // Unverified users can still log in to trigger a new verification email.
-      return error("An account with this email exists but is not verified. Please check your inbox or log in to request a new verification link.", 409);
+      return { error: "An account with this email exists but is not verified. Please check your inbox or log in to request a new verification link.", status: 409 };
     }
   } catch (checkErr) {
     console.error("[SSO] Error checking existing user:", checkErr);
-    // Continue with signup attempt - let database constraints handle duplicates
   }
 
   const password_hash = await hashPassword(body.password);
@@ -123,7 +111,6 @@ export async function signup(
       .replace(/^-|-$/g, "")
     : `org-${crypto.randomUUID().split('-')[0]}`;
 
-  // ─── Step 1: Create user + org in database ───────────────────
   let result: { user_id: string; org_id: string; slug: string };
   try {
     console.log('[SSO] signup: Calling signup_user RPC with:', {
@@ -158,12 +145,11 @@ export async function signup(
     });
 
     if (err?.message?.includes("duplicate") || err?.message?.includes("23505")) {
-      return error("An account with this email already exists. Please log in.", 409);
+      return { error: "An account with this email already exists. Please log in.", status: 409 };
     }
     throw err;
   }
 
-  // ─── Step 2: Create session + sign JWT (rollback on failure) ──
   try {
     const claims = await database.rpc<JwtClaims>("get_jwt_claims", {
       p_user_id: result.user_id,
@@ -179,8 +165,8 @@ export async function signup(
       user_id: result.user_id,
       org_id: result.org_id,
       refresh_token_hash: refreshHash,
-      user_agent: ua,
-      ip_address: ip,
+      user_agent: ua ?? null,
+      ip_address: ipAddr,
       revoked: false,
       expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
       family_id: sessionId,
@@ -201,25 +187,28 @@ export async function signup(
       env,
     );
 
-    // ─── Step 3: Send verification email (non-blocking, no rollback) ──
     let emailSent = true;
     try {
-      const verifyToken = crypto.randomUUID();
-      const verifyTokenHash = await hashToken(verifyToken);
-      await database.mutate("email_verifications", {
-        user_id: result.user_id,
-        token_hash: verifyTokenHash,
-        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      });
-      const appUrl = resolveAppUrl(body.redirect_url, env);
-      const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
-      ctx.waitUntil(
-        sendVerificationEmail(env, email, verifyUrl)
-          .catch(err => console.error("[SSO] Verification email background task failed:", err))
-      );
+      // Throttle verification email sending (5/hour per email)
+      const throttled = await checkEmailThrottle(env, "verification", email);
+      if (throttled) {
+        emailSent = false;
+      } else {
+        const verifyToken = crypto.randomUUID();
+        const verifyTokenHash = await hashToken(verifyToken);
+        await database.mutate("email_verifications", {
+          user_id: result.user_id,
+          token_hash: verifyTokenHash,
+          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        });
+        const appUrl = resolveAppUrl(body.redirect_url, env);
+        const verifyUrl = `${appUrl}/verify-email?token=${verifyToken}`;
+
+        const template = generateVerificationEmailTemplate(verifyUrl);
+        ctx.waitUntil(sendEmail(env, { to: email, subject: template.subject, html: template.html, text: template.text }, ctx));
+      }
     } catch (emailErr) {
       emailSent = false;
-      console.error("[SSO] Verification email setup failed:", emailErr);
     }
 
     // ─── Step 4: Build response ──────────────────────────────────
@@ -262,9 +251,14 @@ export async function signup(
       metadata: { email_sent: emailSent },
     });
 
-    return response;
+    return {
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      user: { id: result.user_id, email },
+      org: { id: result.org_id, name: body.org_name, slug: result.slug },
+      email_sent: emailSent,
+    };
   } catch (err) {
-    // ─── Rollback: delete user (cascades to membership, org if created_by) ──
     console.error(
       JSON.stringify({
         msg: "[SSO] Signup post-creation failed, rolling back",
@@ -287,6 +281,8 @@ export async function signup(
         }),
       );
     }
-    return error("Signup failed. Please try again.", 500);
+    throw err;
   }
 }
+
+

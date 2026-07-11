@@ -1,5 +1,5 @@
 import type { Env } from "../types";
-import { escapeHtmlAttr, escapeHrefAttr } from "./escape";
+import { escapeHrefAttr, escapeHtmlAttr } from "./escape";
 
 export interface EmailPayload {
   to: string;
@@ -8,203 +8,45 @@ export interface EmailPayload {
   text: string;
 }
 
-interface EmailTemplate {
-  html: string;
-  subject: string;
-  text: string;
-  [key: string]: JsonPrimitive | JsonObject | JsonArray;
-}
-
-type JsonPrimitive = string | number | boolean | null;
-type JsonObject = { [key: string]: JsonPrimitive | JsonObject | JsonArray };
-type JsonArray = (JsonPrimitive | JsonObject | JsonArray)[];
-
-/**
- * Type guard to validate email template structure
- */
-function isValidEmailTemplate(data: JsonObject): data is EmailTemplate {
-  return (
-    typeof data === 'object' &&
-    data !== null &&
-    !Array.isArray(data) &&
-    'html' in data &&
-    'subject' in data &&
-    'text' in data &&
-    typeof data.html === 'string' &&
-    typeof data.subject === 'string' &&
-    typeof data.text === 'string'
-  );
-}
+const EMAIL_SEND_TIMEOUT_MS = 5_000;
 
 /**
  * Send an email via the email-worker service binding.
  *
- * Non-blocking — designed to be called inside ctx.waitUntil().
+ * Uses Promise.race for a user-facing timeout (5s) so the caller never hangs.
+ * The underlying RPC completes in the background even if the timeout fires
+ * (tracked via ctx.waitUntil to keep the Worker alive).
  * Errors are logged but never thrown to avoid blocking the HTTP response.
  */
-export async function sendEmail(env: Env, payload: EmailPayload): Promise<void> {
+export async function sendEmail(env: Env, payload: EmailPayload, ctx?: ExecutionContext): Promise<void> {
   try {
-    const res = await env.EMAIL_SERVICE.sendEmail({
+    const emailPromise = env.EMAIL_SERVICE.sendEmail({
       to: payload.to,
       subject: payload.subject,
       html: payload.html,
       text: payload.text,
     });
-    if (!res.success) {
+
+    if (ctx) {
+      ctx.waitUntil(emailPromise.then(() => {
+        console.log(JSON.stringify({ msg: "[SSO] Email delivered", to: payload.to }));
+      }).catch((err: Error) => {
+        console.error(JSON.stringify({ msg: "[SSO] Email delivery failed", error: err.message }));
+      }));
+    }
+
+    const res = await Promise.race([
+      emailPromise,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Email send timed out")), EMAIL_SEND_TIMEOUT_MS)
+      ),
+    ]).catch(() => undefined);
+
+    if (res && !res.success) {
       console.error(`[SSO] Email delivery failed: ${res.errorCode} ${res.error}`);
     }
   } catch (err) {
-    console.error("[SSO] Email delivery error:", err);
-  }
-}
-
-
-
-/**
- * Fetch with retry for transient Cloudflare subrequest failures.
- * Prefers the Service Binding if available, falls back to global fetch.
- */
-async function fetchWithRetry(env: Env, uri: string, options: RequestInit, retries = 2, baseDelay = 1000): Promise<Response> {
-  let lastError: Error | undefined;
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      if (env.SKILLPASSPORT) {
-        return await env.SKILLPASSPORT.fetch(uri, options as any);
-      }
-      return await fetch(uri, options);
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-      if (attempt < retries) {
-        const delay = Math.min(baseDelay * Math.pow(2, attempt), 5000);
-        await new Promise(r => setTimeout(r, delay));
-      }
-    }
-  }
-  throw lastError!;
-}
-
-/**
- * Send email verification - fetches template via SkillPassport service binding
- */
-export async function sendVerificationEmail(
-  env: Env,
-  to: string,
-  verifyUrl: string,
-): Promise<void> {
-  try {
-    const templateResponse = await fetchWithRetry(
-      env,
-      `${env.SKILLPASSPORT_URL}/api/email/verification`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          to, 
-          verifyUrl,
-          templateOnly: true 
-        }),
-      }
-    );
-
-    if (!templateResponse.ok) {
-      const errorText = await templateResponse.text().catch(() => "Response body unreadable");
-      throw new Error(`Failed to fetch verification email template from SkillPassport service: ${templateResponse.status} ${templateResponse.statusText} - ${errorText}`);
-    }
-
-    const rawData = await templateResponse.json();
-
-    const validated = rawData as JsonObject;
-    if (!isValidEmailTemplate(validated)) {
-      throw new Error('Invalid template response structure from SkillPassport service');
-    }
-
-    const templateData: EmailTemplate = validated;
-    
-    // Send email via service binding to email-worker
-    await sendEmail(env, { 
-      to, 
-      subject: templateData.subject, 
-      html: templateData.html, 
-      text: templateData.text 
-    });
-  } catch (error) {
-    console.error(`[SSO] Failed to send verification email:`, error);
-    throw new Error(`Email verification failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
-/**
- * Send password reset - fetches template via SkillPassport service binding
- */
-export async function sendPasswordResetEmail(
-  env: Env,
-  to: string,
-  resetUrl: string,
-): Promise<void> {
-  try {
-    const templateResponse = await fetchWithRetry(
-      env,
-      `${env.SKILLPASSPORT_URL}/api/email/password-reset`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          to, 
-          resetUrl,
-          templateOnly: true 
-        }),
-      }
-    );
-
-    if (!templateResponse.ok) {
-      const errorText = await templateResponse.text().catch(() => "Response body unreadable");
-      throw new Error(`Failed to fetch password reset email template from SkillPassport service: ${templateResponse.status} ${templateResponse.statusText} - ${errorText}`);
-    }
-
-    const rawData = await templateResponse.json();
-
-    const validated = rawData as JsonObject;
-    if (!isValidEmailTemplate(validated)) {
-      throw new Error('Invalid template response structure from SkillPassport service');
-    }
-
-    const templateData: EmailTemplate = validated;
-    
-    // Send email via service binding to email-worker
-    await sendEmail(env, { 
-      to, 
-      subject: templateData.subject, 
-      html: templateData.html, 
-      text: templateData.text 
-    });
-  } catch (error) {
-    console.error(`[SSO] Failed to send password reset email:`, error);
-    throw new Error(`Password reset email failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
-/**
- * Send welcome email using simple template
- */
-export async function sendWelcomeEmail(
-  env: Env,
-  to: string,
-  name: string,
-  baseUrl: string,
-): Promise<void> {
-  try {
-    const subject = "Welcome to SkillPassport!";
-    const html = `
-      <p>Hello ${escapeHtmlAttr(name)},</p>
-      <p>Welcome to SkillPassport! Your account has been created successfully.</p>
-      <p><a href="${escapeHrefAttr(baseUrl)}/login">Login now</a></p>
-    `.trim();
-    const text = `Hello ${name},\n\nWelcome to SkillPassport! Your account has been created successfully.\n\nLogin: ${baseUrl}/login`;
-    
-    await sendEmail(env, { to, subject, html, text });
-  } catch (error) {
-    console.error(`[SSO] Failed to send welcome email:`, error);
-    throw new Error(`Welcome email failed: ${error instanceof Error ? error.message : String(error)}`);
+    console.error("[SSO] Email delivery setup failed:", err);
   }
 }
 

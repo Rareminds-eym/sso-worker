@@ -1,6 +1,5 @@
 import type { Env, SalesSubscription } from "../types";
 import { db } from "../lib/db";
-import { json, error } from "../lib/response";
 
 /**
  * GET /api/sales/subscriptions — fetch subscription data for sales dashboard
@@ -88,7 +87,7 @@ export async function performGetSalesSubscriptions(
     if (userIdList) {
       try {
         allSubscriptions = await database.query<SalesSubscription>(
-          `subscriptions?select=*&user_id=in.(${userIdList})`
+          `subscriptions?select=*&user_id=in.(${userIdList})&order=created_at.desc,id.desc`
         );
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
@@ -146,12 +145,37 @@ export async function performGetSalesSubscriptions(
       console.error("Error fetching user roles:", errorMessage);
     }
 
-    // Step 5: Filter subscriptions by clientType and search (in memory)
+    // Step 5: Filter subscriptions by ALL criteria (in memory, after role resolution)
     // This must happen BEFORE pagination to get accurate total count
     const filteredSubscriptions = allSubscriptions.filter(subscription => {
       // Always exclude rm_admin
       if (userRoles[subscription.user_id] === "rm_admin") {
         return false;
+      }
+
+      // Re-apply subscription-level filters (query 1 found users, but query 2 may have returned
+      // additional subscriptions for those users that don't match the original filters)
+      if (planType && subscription.plan_type !== planType) {
+        return false;
+      }
+      if (status && subscription.status !== status) {
+        return false;
+      }
+      if (startDate) {
+        if (!subscription.subscription_start_date) return false;
+        const subStart = new Date(subscription.subscription_start_date).getTime();
+        const filterStart = new Date(startDate).getTime();
+        if (!isNaN(subStart) && !isNaN(filterStart) && subStart < filterStart) {
+          return false;
+        }
+      }
+      if (endDate) {
+        if (!subscription.subscription_end_date) return false;
+        const subEnd = new Date(subscription.subscription_end_date).getTime();
+        const filterEnd = new Date(endDate).getTime();
+        if (!isNaN(subEnd) && !isNaN(filterEnd) && subEnd > filterEnd) {
+          return false;
+        }
       }
 
       // Filter by clientType if specified
@@ -212,16 +236,5 @@ export async function performGetSalesSubscriptions(
   }
 }
 
-export async function getSalesSubscriptions(
-  req: Request,
-  env: Env,
-): Promise<Response> {
-  const url = new URL(req.url);
-  const result = await performGetSalesSubscriptions(env, url.searchParams);
-  
-  if ('error' in result && result.error) {
-    return error(result.error, result.status);
-  }
-  
-  return json(result);
-}
+// HTTP handler removed - all access via RPC method in index.ts:
+// - getSalesSubscriptions() → env.SSO_SERVICE.getSalesSubscriptions()
