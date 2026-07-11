@@ -1,5 +1,17 @@
 import type { SyncEvent } from './lib/sync-queue';
 
+// ─── Queue Types ───────────────────────────────────────────────
+export interface QueueMessage<T = any> {
+  readonly body: T;
+  ack(): void;
+  retry(): void;
+}
+
+export interface MessageBatch<T = any> {
+  readonly queue: string;
+  readonly messages: readonly QueueMessage<T>[];
+}
+
 // ─── Environment ───────────────────────────────────────────────
 export interface Env {
   SUPABASE_URL: string;
@@ -28,6 +40,12 @@ export interface Env {
 
   /** Queue for pushing auth DB sync events to SkillPassport. */
   SYNC_QUEUE: Queue<SyncEvent>;
+
+  /** Queue for learner admission processing (parse CSV, create users). */
+  LEARNER_ADMISSION_QUEUE: Queue<any>;
+
+  /** Queue for sending emails (learner invitations, notifications, etc.). */
+  EMAIL_QUEUE: Queue<any>;
 
   /** Comma-separated allowlist of base URLs for email links, e.g. "https://skillpassport.rareminds.in,https://courses.rareminds.in". */
   ALLOWED_APP_URLS: string;
@@ -206,7 +224,7 @@ export interface SignupMemberBody {
   user_metadata?: Record<string, unknown>;
 }
 
-// ─── Sales Database Models ─────────────────────────────────────
+// ─── Database Models (aligned to actual Supabase schema) ───────
 export interface SalesUser {
   id: string;
   email: string;

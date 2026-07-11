@@ -4,9 +4,14 @@ export type SyncEventType =
   | 'user.email_verified'
   | 'user.deleted'
   | 'organization.created'
+  | 'organization.updated'
   | 'membership.created'
   | 'membership.role_changed'
-  | 'membership.removed';
+  | 'membership.removed'
+  | 'subscription.created'
+  | 'subscription.updated'
+  | 'subscription.cancelled'
+  | 'subscription.expired';
 
 export interface SyncEvent {
   type: SyncEventType;
