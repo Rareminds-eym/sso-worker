@@ -31,11 +31,25 @@ export async function signup(
   let body: SignupBody;
   try {
     body = await req.json() as SignupBody;
-  } catch {
+  } catch (parseErr) {
+    console.error('[SSO] signup: Failed to parse JSON body:', parseErr);
     return error("Invalid JSON body");
   }
 
+  console.log('[SSO] signup: Received request with body:', {
+    email: body.email,
+    hasPassword: !!body.password,
+    org_name: body.org_name,
+    role: body.role,
+    redirect_url: body.redirect_url,
+    hasUserMetadata: !!body.user_metadata
+  });
+
   if (!body.email || !body.password) {
+    console.error('[SSO] signup: Missing required fields', {
+      hasEmail: !!body.email,
+      hasPassword: !!body.password
+    });
     return error("email and password are required");
   }
 
@@ -44,19 +58,31 @@ export async function signup(
 
   // role is optional, defaults to 'owner'
   const role = body.role || 'owner';
+  console.log('[SSO] signup: Using role:', role);
 
   const emailErr = validateEmail(body.email);
-  if (emailErr) return emailErr;
+  if (emailErr) {
+    console.error('[SSO] signup: Email validation failed:', body.email);
+    return emailErr;
+  }
 
   const passErr = validatePassword(body.password);
-  if (passErr) return passErr;
+  if (passErr) {
+    console.error('[SSO] signup: Password validation failed');
+    return passErr;
+  }
 
   const redirectErr = validateRedirectUrl(body.redirect_url, env);
-  if (redirectErr) return redirectErr;
+  if (redirectErr) {
+    console.error('[SSO] signup: Redirect URL validation failed:', body.redirect_url);
+    return redirectErr;
+  }
 
   const email = body.email.toLowerCase().trim();
   const ip = req.headers.get("CF-Connecting-IP") ?? "unknown";
   const ua = req.headers.get("User-Agent");
+
+  console.log('[SSO] signup: All validations passed', { email, ip, org_name: body.org_name });
 
   const rateLimited = await endpointRateLimit(env, `signup:ip:${ip}`, 5, 60);
   if (rateLimited) return rateLimited;
@@ -100,6 +126,13 @@ export async function signup(
   // ─── Step 1: Create user + org in database ───────────────────
   let result: { user_id: string; org_id: string; slug: string };
   try {
+    console.log('[SSO] signup: Calling signup_user RPC with:', {
+      email,
+      org_name: body.org_name || null,
+      slug,
+      role
+    });
+
     result = await database.rpc<{ user_id: string; org_id: string; slug: string }>(
       "signup_user",
       {
@@ -111,7 +144,19 @@ export async function signup(
         p_user_metadata: body.user_metadata ?? {},
       },
     );
+
+    console.log('[SSO] signup: signup_user RPC succeeded', {
+      user_id: result.user_id,
+      org_id: result.org_id,
+      slug: result.slug
+    });
   } catch (err: any) {
+    console.error('[SSO] signup: signup_user RPC failed:', {
+      error: err.message,
+      code: err.code,
+      details: err.details
+    });
+
     if (err?.message?.includes("duplicate") || err?.message?.includes("23505")) {
       return error("An account with this email already exists. Please log in.", 409);
     }
