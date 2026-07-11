@@ -1219,16 +1219,20 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         console.log(`[SSO] Published membership.created event for learner ${user.id} to sync queue`);
         
         // Publish invitation email job
-        await this.env.EMAIL_QUEUE.send({
-          type: 'learner-invitation',
-          user_id: user.id,
-          email: user.email,
-          name,
-          temp_password: tempPassword,
-          organization_id,
-        });
-        
-        console.log(`[SSO] Published learner-invitation email job for ${user.id}`);
+        if (!this.env.EMAIL_QUEUE) {
+          console.error(`[SSO] EMAIL_QUEUE not bound, cannot send invitation for ${user.id}`);
+        } else {
+          await this.env.EMAIL_QUEUE.send({
+            type: 'learner-invitation',
+            user_id: user.id,
+            email: user.email,
+            name,
+            temp_password: tempPassword,
+            organization_id,
+          });
+          
+          console.log(`[SSO] Published learner-invitation email job for ${user.id}`);
+        }
       } catch (queueError) {
         // User created successfully, but queue sync failed
         // Log for manual reconciliation but don't fail the operation
@@ -1269,6 +1273,10 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       console.log(`[SSO] Queueing bulk upload batch ${batchId} for org ${data.organization_id}`);
       
       // Publish to learner-admission-queue
+      if (!this.env.LEARNER_ADMISSION_QUEUE) {
+        throw new Error('LEARNER_ADMISSION_QUEUE not bound');
+      }
+      
       await this.env.LEARNER_ADMISSION_QUEUE.send({
         type: 'parse-csv',
         batch_id: batchId,
