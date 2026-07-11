@@ -121,7 +121,15 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     if (!batch || !Array.isArray(batch.messages)) {
       throw new Error('Invalid batch: messages array required');
     }
-    await handleQueueBatch(this.env, batch);
+    
+    try {
+      await handleQueueBatch(this.env, batch);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error('[SSO] Queue batch processing failed:', errorMsg);
+      // Re-throw to trigger batch-level retry by Cloudflare Queues
+      throw err;
+    }
   }
 
 
@@ -1149,27 +1157,33 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           // Organization doesn't exist in SSO, need to fetch from Skillpassport and create it
           console.log(`[SSO] Organization ${organization_id} not in SSO DB, syncing from Skillpassport`);
           
-          const skillpassportResponse = await fetch(`${this.env.SKILLPASSPORT_URL}/api/organizations/${organization_id}`, {
-            headers: {
-              'Authorization': `Bearer ${this.env.INTERNAL_WEBHOOK_SECRET}`
-            }
-          });
-          
-          if (skillpassportResponse.ok) {
-            const orgData = await skillpassportResponse.json() as { name: string; slug?: string; metadata?: Record<string, unknown> };
-            
-            // Create org in SSO DB
-            orgInSSO = await database.mutate<{ id: string }>("organizations", {
-              id: organization_id,
-              name: orgData.name,
-              slug: orgData.slug || `org-${organization_id.slice(0, 8)}`,
-              metadata: orgData.metadata || {}
+          try {
+            const skillpassportResponse = await fetch(`${this.env.SKILLPASSPORT_URL}/api/organizations/${organization_id}`, {
+              headers: {
+                'Authorization': `Bearer ${this.env.INTERNAL_WEBHOOK_SECRET}`
+              }
             });
             
-            console.log(`[SSO] Created organization ${organization_id} in SSO DB`);
-          } else {
-            console.error(`[SSO] Failed to fetch org ${organization_id} from Skillpassport: ${skillpassportResponse.status}`);
-            throw new Error(`Cannot sync organization ${organization_id} from Skillpassport`);
+            if (skillpassportResponse.ok) {
+              const orgData = await skillpassportResponse.json() as { name: string; slug?: string; metadata?: Record<string, unknown> };
+              
+              // Create org in SSO DB
+              orgInSSO = await database.mutate<{ id: string }>("organizations", {
+                id: organization_id,
+                name: orgData.name,
+                slug: orgData.slug || `org-${organization_id.slice(0, 8)}`,
+                metadata: orgData.metadata || {}
+              });
+              
+              console.log(`[SSO] Created organization ${organization_id} in SSO DB`);
+            } else {
+              console.error(`[SSO] Failed to fetch org ${organization_id} from Skillpassport: ${skillpassportResponse.status}`);
+              throw new Error(`Cannot sync organization ${organization_id} from Skillpassport: HTTP ${skillpassportResponse.status}`);
+            }
+          } catch (fetchError) {
+            const errorMsg = fetchError instanceof Error ? fetchError.message : String(fetchError);
+            console.error(`[SSO] Error fetching organization ${organization_id} from Skillpassport:`, errorMsg);
+            throw new Error(`Failed to sync organization ${organization_id}: ${errorMsg}`);
           }
         }
         
