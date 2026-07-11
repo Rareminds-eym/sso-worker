@@ -118,6 +118,9 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
   // ── Queue Handler (Asynchronous Events) ─────────────────────
   async queue(batch: MessageBatch): Promise<void> {
+    if (!batch || !Array.isArray(batch.messages)) {
+      throw new Error('Invalid batch: messages array required');
+    }
     await handleQueueBatch(this.env, batch);
   }
 
@@ -131,6 +134,11 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   async queueUserSync(userId: string): Promise<{ queued: boolean; reason: string }> {
     if (!userId) {
       throw new Error('userId is required');
+    }
+
+    if (!this.env.SYNC_QUEUE) {
+      console.error('[SSO] SYNC_QUEUE not bound');
+      return { queued: false, reason: 'SYNC_QUEUE not bound' };
     }
 
     const { checkUserExistsInSkillpassport } = await import('./lib/skillpassport-check');
@@ -368,30 +376,34 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     await database.update("users", { id: `eq.${encodeURIComponent(result.user_id)}` }, { is_email_verified: true });
 
     // Emit sync events — await directly (RPC method, no ctx.waitUntil)
-    try {
-      await this.env.SYNC_QUEUE.send({
-        type: 'user.created',
-        payload: {
-          id: result.user_id,
-          email,
-          user_metadata: {
-            role: data.role, // Include role for Skillpassport sync
+    if (!this.env.SYNC_QUEUE) {
+      console.error('[SSO] SYNC_QUEUE not bound, member created but not synced');
+    } else {
+      try {
+        await this.env.SYNC_QUEUE.send({
+          type: 'user.created',
+          payload: {
+            id: result.user_id,
+            email,
+            user_metadata: {
+              role: data.role, // Include role for Skillpassport sync
+            },
           },
-        },
-        timestamp: new Date().toISOString(),
-      });
-      await this.env.SYNC_QUEUE.send({
-        type: 'membership.created',
-        payload: {
-          user_id: result.user_id,
-          organization_id: data.org_id,
-          roles: [data.role],
-          status: 'active',
-        },
-        timestamp: new Date().toISOString(),
-      });
-    } catch (e) {
-      console.error('[SSO] Failed to emit sync events:', e);
+          timestamp: new Date().toISOString(),
+        });
+        await this.env.SYNC_QUEUE.send({
+          type: 'membership.created',
+          payload: {
+            user_id: result.user_id,
+            organization_id: data.org_id,
+            roles: [data.role],
+            status: 'active',
+          },
+          timestamp: new Date().toISOString(),
+        });
+      } catch (e) {
+        console.error('[SSO] Failed to emit sync events:', e);
+      }
     }
 
     return result;
@@ -946,6 +958,11 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       console.log(`[SSO] Created organization ${org.id}: "${data.name}"`);
 
       // Publish to sync queue to create in Skillpassport
+      if (!this.env.SYNC_QUEUE) {
+        console.error('[SSO] SYNC_QUEUE not bound, organization created but not synced');
+        return { success: false, error: 'SYNC_QUEUE not bound' };
+      }
+
       await this.env.SYNC_QUEUE.send({
         type: 'organization.created',
         payload: {
@@ -1035,6 +1052,11 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       console.log(`[SSO] Updated organization ${data.id} metadata`);
 
       // Publish organization.updated event to sync to Skillpassport
+      if (!this.env.SYNC_QUEUE) {
+        console.error('[SSO] SYNC_QUEUE not bound, organization updated but not synced');
+        return { success: false, error: 'SYNC_QUEUE not bound' };
+      }
+
       await this.env.SYNC_QUEUE.send({
         type: 'organization.updated',
         payload: {
@@ -1183,6 +1205,11 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       }
       
       // Publish to auth-db-sync-queue and email queue (with error handling)
+      if (!this.env.SYNC_QUEUE) {
+        console.error(`[SSO] SYNC_QUEUE not bound, learner ${user.id} created but not synced`);
+        return { success: false, error: 'SYNC_QUEUE not bound' };
+      }
+
       try {
         await this.env.SYNC_QUEUE.send({
           type: 'user.created',
@@ -1221,17 +1248,25 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         // Publish invitation email job
         if (!this.env.EMAIL_QUEUE) {
           console.error(`[SSO] EMAIL_QUEUE not bound, cannot send invitation for ${user.id}`);
+          console.error(`[SSO] MANUAL ACTION: Send credentials to ${email} - temp password: ${tempPassword}`);
+          // Don't throw - user created successfully, just email delivery failed
         } else {
-          await this.env.EMAIL_QUEUE.send({
-            type: 'learner-invitation',
-            user_id: user.id,
-            email: user.email,
-            name,
-            temp_password: tempPassword,
-            organization_id,
-          });
-          
-          console.log(`[SSO] Published learner-invitation email job for ${user.id}`);
+          try {
+            await this.env.EMAIL_QUEUE.send({
+              type: 'learner-invitation',
+              user_id: user.id,
+              email: user.email,
+              name,
+              temp_password: tempPassword,
+              organization_id,
+            });
+            
+            console.log(`[SSO] Published learner-invitation email job for ${user.id}`);
+          } catch (emailError) {
+            console.error(`[SSO] Failed to queue email for ${user.id}:`, emailError);
+            console.error(`[SSO] MANUAL ACTION: Send credentials to ${email} - temp password: ${tempPassword}`);
+            // Don't throw - user created successfully, just email delivery failed
+          }
         }
       } catch (queueError) {
         // User created successfully, but queue sync failed
@@ -1274,7 +1309,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       
       // Publish to learner-admission-queue
       if (!this.env.LEARNER_ADMISSION_QUEUE) {
-        throw new Error('LEARNER_ADMISSION_QUEUE not bound');
+        console.error('[SSO] LEARNER_ADMISSION_QUEUE not bound');
+        return { success: false, error: 'LEARNER_ADMISSION_QUEUE not bound' };
       }
       
       await this.env.LEARNER_ADMISSION_QUEUE.send({

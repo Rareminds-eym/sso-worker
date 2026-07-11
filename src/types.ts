@@ -1,13 +1,13 @@
 import type { SyncEvent } from './lib/sync-queue';
 
 // ─── Queue Types ───────────────────────────────────────────────
-export interface QueueMessage<T = any> {
+export interface QueueMessage<T = unknown> {
   readonly body: T;
   ack(): void;
   retry(): void;
 }
 
-export interface MessageBatch<T = any> {
+export interface MessageBatch<T = unknown> {
   readonly queue: string;
   readonly messages: readonly QueueMessage<T>[];
 }
@@ -27,9 +27,9 @@ export interface Env {
   RATE_LIMIT_KV: KVNamespace;
   /** Service binding to the email-worker for sending emails via RPC. */
   EMAIL_SERVICE: Fetcher & {
-    sendEmail(params: any): Promise<any>;
-    sendOTP(params: any): Promise<any>;
-    verifyOTP(params: any): Promise<any>;
+    sendEmail(params: unknown): Promise<unknown>;
+    sendOTP(params: unknown): Promise<unknown>;
+    verifyOTP(params: unknown): Promise<unknown>;
   };
 
   /** Base URL for the SkillPassport Pages app (e.g. https://skillpassport.rareminds.in) */
@@ -42,10 +42,10 @@ export interface Env {
   SYNC_QUEUE: Queue<SyncEvent>;
 
   /** Queue for learner admission processing (parse CSV, create users). */
-  LEARNER_ADMISSION_QUEUE: Queue<any>;
+  LEARNER_ADMISSION_QUEUE: Queue<unknown>;
 
   /** Queue for sending emails (learner invitations, notifications, etc.). */
-  EMAIL_QUEUE: Queue<any>;
+  EMAIL_QUEUE: Queue<unknown>;
 
   /** Comma-separated allowlist of base URLs for email links, e.g. "https://skillpassport.rareminds.in,https://courses.rareminds.in". */
   ALLOWED_APP_URLS: string;
