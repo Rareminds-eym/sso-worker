@@ -1170,7 +1170,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       }
       
       // Generate temporary password
-      const tempPassword = generateTempPassword(email);
+      const tempPassword = generateTempPassword();
       const passwordHash = await hashPassword(tempPassword);
       
       // Split name
@@ -1243,11 +1243,9 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         // Only create membership if org exists in SSO
         if (orgInSSO) {
           // Get learner role ID
-          const learnerRole = await database.queryOne<{ id: string }>(
-            `roles?name=eq.learner&select=id`
-          );
+          const learnerRoleId = await getLearnerRole(database);
           
-          if (learnerRole) {
+          if (learnerRoleId) {
             // Create membership with the actual organization_id
             const membership = await database.mutate<{ id: string }>("memberships", {
               user_id: user.id,
@@ -1258,7 +1256,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
             // Create membership_role
             await database.mutate("membership_roles", {
               membership_id: membership.id,
-              role_id: learnerRole.id
+              role_id: learnerRoleId
             });
             
             console.log(`[SSO] Created membership ${membership.id} and role for learner ${user.id} in org ${organization_id}`);

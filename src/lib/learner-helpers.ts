@@ -24,14 +24,20 @@ export interface CreateLearnerResult {
 
 /**
  * Generate temporary password for learner
- * Default: use email as password for simplicity
+ * Uses Web Crypto API for secure random password generation
  */
-export function generateTempPassword(email: string): string {
-  // Option 1: Use email as password (simple, user-friendly)
-  return email;
+export function generateTempPassword(length: number = 12): string {
+  // Generate random bytes using Web Crypto API (Cloudflare Workers compatible)
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
   
-  // Option 2: Generate random password (more secure)
-  // return crypto.randomUUID().slice(0, 8).toUpperCase();
+  // Convert to base64url and slice to desired length
+  const base64 = btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=/g, '');
+  
+  return base64.slice(0, length);
 }
 
 /**

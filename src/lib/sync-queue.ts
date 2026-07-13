@@ -30,6 +30,10 @@ export function publishSyncEvent(
       type,
       payload,
       timestamp: new Date().toISOString(),
+    }).catch((err) => {
+      // ponytail: Log queue errors so they're not silently swallowed
+      // waitUntil doesn't propagate errors, so explicit catch is needed
+      console.error(`[SYNC_QUEUE] Failed to publish ${type}:`, err);
     }),
   );
 }
