@@ -5,6 +5,7 @@ import { addMonths, parseDurationMonths } from "./lib/date";
 import { db } from "./lib/db";
 import { inviteEmail, sendEmail } from "./lib/email";
 import { checkEmailThrottle } from "./lib/email-throttle";
+import { buildLearnerInvitationEmail } from "./lib/email-templates";
 import { generateRefreshToken, hashPassword, hashToken } from "./lib/hash";
 import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "./lib/jwt";
 import { endpointRateLimit } from "./lib/rate-limit";
@@ -1221,82 +1222,96 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       
       // ✅ CREATE MEMBERSHIP AND ROLE for learner in SSO DB
       // Use the organization_id passed from frontend (college/school that created the learner)
+      let membershipCreated = false;
       try {
-        // First, ensure the organization exists in SSO DB
-        let orgInSSO = await database.queryOne<{ id: string }>(
-          `organizations?id=eq.${encodeURIComponent(organization_id)}&select=id`
-        );
+        // ponytail: race-safe org upsert — concurrent inserts both succeed, one returns existing row
+        const { ensureOrganizationExists } = await import('./lib/organization-sync');
+        await ensureOrganizationExists(this.env, organization_id);
         
-        if (!orgInSSO) {
-          // Organization doesn't exist in SSO, need to fetch from Skillpassport and create it
-          console.log(`[SSO] Organization ${organization_id} not in SSO DB, syncing from Skillpassport`);
-          
-          try {
-            let skillpassportResponse: Response;
-            try {
-              skillpassportResponse = await fetchWithTimeout(
-                `${this.env.SKILLPASSPORT_URL}/api/organizations/${organization_id}`,
-                {
-                  headers: {
-                    'Authorization': `Bearer ${this.env.INTERNAL_WEBHOOK_SECRET}`
-                  }
-                },
-                5000
-              );
-            } catch (timeoutErr) {
-              throw new Error(`Timeout fetching organization ${organization_id}: ${timeoutErr instanceof Error ? timeoutErr.message : String(timeoutErr)}`);
-            }
-            
-            if (skillpassportResponse.ok) {
-              const orgData = await skillpassportResponse.json() as { name: string; slug?: string; metadata?: Record<string, unknown> };
-              
-              // Create org in SSO DB
-              orgInSSO = await database.mutate<{ id: string }>("organizations", {
-                id: organization_id,
-                name: orgData.name,
-                slug: orgData.slug || `org-${organization_id.slice(0, 8)}`,
-                metadata: orgData.metadata || {}
-              });
-              
-              console.log(`[SSO] Created organization ${organization_id} in SSO DB`);
-            } else {
-              console.error(`[SSO] Failed to fetch org ${organization_id} from Skillpassport: ${skillpassportResponse.status}`);
-              throw new Error(`Cannot sync organization ${organization_id} from Skillpassport: HTTP ${skillpassportResponse.status}`);
-            }
-          } catch (fetchError) {
-            const errorMsg = fetchError instanceof Error ? fetchError.message : String(fetchError);
-            console.error(`[SSO] Error fetching organization ${organization_id} from Skillpassport:`, errorMsg);
-            throw new Error(`Failed to sync organization ${organization_id}: ${errorMsg}`);
-          }
+        // Get learner role ID
+        const learnerRoleId = await getLearnerRole(database);
+        
+        if (!learnerRoleId) {
+          throw new Error('Learner role not found in database');
         }
         
-        // Only create membership if org exists in SSO
-        if (orgInSSO) {
-          // Get learner role ID
-          const learnerRoleId = await getLearnerRole(database);
+        // Upsert membership (race-safe: check-insert-catch-recheck)
+        let membershipId: string | undefined;
+        
+        try {
+          const membershipResult = await database.query<{ id: string }>(
+            `memberships?user_id=eq.${encodeURIComponent(user.id)}&org_id=eq.${encodeURIComponent(organization_id)}&select=id`
+          );
           
-          if (learnerRoleId) {
-            // Create membership with the actual organization_id
+          if (membershipResult.length > 0) {
+            membershipId = membershipResult[0].id;
+            console.log(`[SSO] Membership already exists: ${membershipId}`);
+          } else {
             const membership = await database.mutate<{ id: string }>("memberships", {
               user_id: user.id,
               org_id: organization_id,
               status: 'active'
             });
-            
-            // Create membership_role
-            await database.mutate("membership_roles", {
-              membership_id: membership.id,
-              role_id: learnerRoleId
-            });
-            
-            console.log(`[SSO] Created membership ${membership.id} and role for learner ${user.id} in org ${organization_id}`);
+            membershipId = membership.id;
+          }
+        } catch (insertError) {
+          // Duplicate key from concurrent request — re-check
+          const errorMsg = insertError instanceof Error ? insertError.message : String(insertError);
+          if (errorMsg.includes('duplicate') || errorMsg.includes('23505') || errorMsg.includes('unique')) {
+            console.log(`[SSO] Membership inserted by concurrent request, re-fetching for user ${user.id}`);
+            const retryResult = await database.query<{ id: string }>(
+              `memberships?user_id=eq.${encodeURIComponent(user.id)}&org_id=eq.${encodeURIComponent(organization_id)}&select=id`
+            );
+            if (retryResult.length > 0) {
+              membershipId = retryResult[0].id;
+            } else {
+              throw new Error('Membership lost after concurrent insert detected');
+            }
           } else {
-            console.error(`[SSO] Learner role not found in database!`);
+            throw insertError;
           }
         }
+        
+        if (!membershipId) {
+          throw new Error('Failed to create or retrieve membership');
+        }
+        
+        // Upsert membership_role (race-safe: check first)
+        const roleResult = await database.query<{ id: string }>(
+          `membership_roles?membership_id=eq.${encodeURIComponent(membershipId)}&role_id=eq.${encodeURIComponent(learnerRoleId)}&select=id`
+        );
+        
+        if (roleResult.length === 0) {
+          try {
+            await database.mutate("membership_roles", {
+              membership_id: membershipId,
+              role_id: learnerRoleId
+            });
+          } catch (roleInsertError) {
+            // Duplicate from concurrent request is OK
+            const errorMsg = roleInsertError instanceof Error ? roleInsertError.message : String(roleInsertError);
+            if (!errorMsg.includes('duplicate') && !errorMsg.includes('23505') && !errorMsg.includes('unique')) {
+              throw roleInsertError;
+            }
+          }
+        }
+        
+        console.log(`[SSO] Membership setup complete for learner ${user.id} in org ${organization_id}`);
+        membershipCreated = true;
       } catch (membershipError) {
         console.error(`[SSO] Failed to create membership for learner ${user.id}:`, membershipError);
-        // Don't fail user creation if membership fails
+        // Don't fail user creation, but track that membership failed
+        membershipCreated = false;
+      }
+      
+      // CRITICAL: If membership creation failed, return error immediately
+      // Don't sync to Skillpassport or send invitation email
+      if (!membershipCreated) {
+        return {
+          success: false,
+          error: `User created in SSO but membership setup failed for organization ${organization_id}`,
+          user_id: user.id,
+        };
       }
       
       // Publish to auth-db-sync-queue and email queue (with error handling)
@@ -1326,6 +1341,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         
         console.log(`[SSO] Published user.created event for ${user.id} to sync queue`);
         
+        // Membership was verified successful above - always publish membership.created
         await this.env.SYNC_QUEUE.send({
           type: 'membership.created',
           payload: {
@@ -1350,17 +1366,19 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           };
         }
         
+        // Get email template (simple local template)
+        const template = buildLearnerInvitationEmail(name, user.email, tempPassword);
+        
         await this.env.EMAIL_QUEUE.send({
-          type: 'learner-invitation',
-          user_id: user.id,
-          email: user.email,
-          name,
-          temp_password: tempPassword,
-          organization_id,
+          type: 'send-email',
+          to: user.email,
+          subject: template.subject,
+          html: template.html,
+          text: template.text,
         });
         
-        console.log(`[SSO] Published learner-invitation email job for ${user.id}`);
-      } catch (queueError) {
+        console.log(`[SSO] Published email invitation for ${user.id} to email queue`);
+        } catch (queueError) {
         const queueErrorMsg = queueError instanceof Error ? queueError.message : String(queueError);
         console.error(`[SSO] Failed to queue sync events for ${user.id}:`, queueErrorMsg);
         console.error(`[SSO] MANUAL ACTION REQUIRED: User ${user.id} (${email}) created but not synced to Skillpassport`);

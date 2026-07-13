@@ -70,3 +70,57 @@ This link will expire in 1 hour.
 If you didn't request this password reset, please ignore this email.`
   };
 }
+
+/**
+ * Build learner invitation email template for bulk imports
+ * 
+ * @param name - Learner's full name
+ * @param email - Learner's email address
+ * @param temp_password - Temporary password
+ * @returns Email template with subject, html, and text
+ */
+export function buildLearnerInvitationEmail(
+  name: string,
+  email: string,
+  temp_password: string
+): { subject: string; html: string; text: string } {
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2>Welcome to SkillPassport!</h2>
+      <p>Hi ${name},</p>
+      <p>Your learner account has been created by your institution.</p>
+      
+      <div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0;">
+        <h3 style="margin-top: 0;">Login Details:</h3>
+        <p><strong>Portal:</strong> <a href="https://skillpassport.rareminds.in/login">https://skillpassport.rareminds.in/login</a></p>
+        <p><strong>Email:</strong> ${email}</p>
+        <p><strong>Password:</strong> ${temp_password}</p>
+      </div>
+      
+      <p><strong>Important:</strong> Please change your password after first login.</p>
+      <p>Best regards,<br>SkillPassport Team</p>
+    </div>
+  `;
+
+  const text = `Welcome to SkillPassport!
+
+Hi ${name},
+
+Your learner account has been created by your institution.
+
+Login Details:
+Portal: https://skillpassport.rareminds.in/login
+Email: ${email}
+Password: ${temp_password}
+
+Important: Please change your password after first login.
+
+Best regards,
+SkillPassport Team`;
+
+  return {
+    subject: 'Welcome to SkillPassport - Your Account is Ready!',
+    html,
+    text,
+  };
+}
