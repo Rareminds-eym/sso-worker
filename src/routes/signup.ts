@@ -11,8 +11,6 @@ import { publishSyncEvent } from "../lib/sync-queue";
 import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "../lib/validate";
 import type { Env, JwtClaims, SignupBody } from "../types";
 
-const EMAIL_SEND_TIMEOUT_MS = 5_000;
-
 /**
  * performSignup - Core business logic (pure RPC, no HTTP)
  * Called by: SsoWorker.signup() RPC method, signup() HTTP handler
@@ -160,8 +158,6 @@ export async function performSignup(
     // ponytail: Always publish sync events - consumer's upsert handles deduplication
     // Simpler than checking if user exists first, let database handle it
     console.log(`[SSO] Publishing sync events for user ${result.user_id}`);
-    
-    const { publishSyncEvent } = await import('../lib/sync-queue');
     
     publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.created', {
       id: result.user_id,
