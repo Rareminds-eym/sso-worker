@@ -208,11 +208,19 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     // User doesn't exist, fetch their data from SSO DB and queue sync
     const database = db(this.env);
-    const user = await database.queryOne<{
-      id: string;
-      email: string;
-      user_metadata: Record<string, unknown>;
-    }>(`users?id=eq.${encodeURIComponent(userId)}&select=id,email,user_metadata`);
+    
+    let user;
+    try {
+      user = await database.queryOne<{
+        id: string;
+        email: string;
+        user_metadata: Record<string, unknown>;
+      }>(`users?id=eq.${encodeURIComponent(userId)}&select=id,email,user_metadata`);
+    } catch (dbError) {
+      const errorMsg = dbError instanceof Error ? dbError.message : String(dbError);
+      console.error(`[SSO] queueUserSync: Database error fetching user ${userId}:`, errorMsg);
+      return { queued: false, reason: `Database error: ${errorMsg}` };
+    }
 
     if (!user) {
       console.error(`[SSO] queueUserSync: User ${userId} not found in SSO DB`);
@@ -220,10 +228,17 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     // Fetch user's primary organization
-    const membership = await database.queryOne<{
-      organization_id: string;
-      role: string;
-    }>(`organization_members?user_id=eq.${encodeURIComponent(userId)}&select=organization_id,role&limit=1`);
+    let membership;
+    try {
+      membership = await database.queryOne<{
+        organization_id: string;
+        role: string;
+      }>(`organization_members?user_id=eq.${encodeURIComponent(userId)}&select=organization_id,role&limit=1`);
+    } catch (dbError) {
+      const errorMsg = dbError instanceof Error ? dbError.message : String(dbError);
+      console.error(`[SSO] queueUserSync: Database error fetching membership for ${userId}:`, errorMsg);
+      // Continue without membership - user sync can still proceed
+    }
 
     try {
       // Queue user sync
@@ -239,10 +254,17 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
       // If user has organization, queue that too
       if (membership) {
-        const org = await database.queryOne<{
-          id: string;
-          name: string;
-        }>(`organizations?id=eq.${encodeURIComponent(membership.organization_id)}&select=id,name`);
+        let org;
+        try {
+          org = await database.queryOne<{
+            id: string;
+            name: string;
+          }>(`organizations?id=eq.${encodeURIComponent(membership.organization_id)}&select=id,name`);
+        } catch (dbError) {
+          const errorMsg = dbError instanceof Error ? dbError.message : String(dbError);
+          console.error(`[SSO] queueUserSync: Database error fetching org ${membership.organization_id}:`, errorMsg);
+          // Continue without org sync - user sync already completed
+        }
 
         if (org) {
           await this.env.SYNC_QUEUE.send({
@@ -1324,6 +1346,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
             success: true,
             user_id: user.id,
             temp_password: tempPassword,
+            sync_warning: 'Email queue not bound - invitation not sent'
           };
         }
         
@@ -1377,7 +1400,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     
     try {
       // Generate batch ID
-      const batchId = `BATCH-${new Date().toISOString().split('T')[0]}-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+      const batchId = `BATCH-${new Date().toISOString().split('T')[0]}-${Date.now()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
       
       console.log(`[SSO] Queueing bulk upload batch ${batchId} for org ${data.organization_id}`);
       
@@ -1387,14 +1410,19 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         throw new Error(errorMsg);
       }
       
-      await this.env.LEARNER_ADMISSION_QUEUE.send({
-        type: 'parse-csv',
-        batch_id: batchId,
-        csv_data: data.csv_data,
-        organization_id: data.organization_id,
-        admin_id: data.admin_id,
-        retry_count: 0
-      });
+      try {
+        await this.env.LEARNER_ADMISSION_QUEUE.send({
+          type: 'parse-csv',
+          batch_id: batchId,
+          csv_data: data.csv_data,
+          organization_id: data.organization_id,
+          admin_id: data.admin_id,
+          retry_count: 0
+        });
+      } catch (queueError) {
+        const errorMsg = queueError instanceof Error ? queueError.message : String(queueError);
+        throw new Error(`Failed to queue bulk upload: ${errorMsg}`);
+      }
       
       console.log(`[SSO] Queued parse-csv job for batch ${batchId}`);
       

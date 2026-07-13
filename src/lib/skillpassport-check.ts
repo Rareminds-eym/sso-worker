@@ -68,10 +68,15 @@ export async function checkUserExistsInSkillpassport(
     if (result.exists) {
       userExistsCache.set(userId, { exists: true, timestamp: Date.now() });
       
-      // Limit cache size
+      // Limit cache size - trim to 9000 when exceeds 10000
       if (userExistsCache.size > 10000) {
-        const oldestKey = userExistsCache.keys().next().value;
-        if (oldestKey) userExistsCache.delete(oldestKey);
+        const entriesToDelete = userExistsCache.size - 9000;
+        let deleted = 0;
+        for (const key of userExistsCache.keys()) {
+          if (deleted >= entriesToDelete) break;
+          userExistsCache.delete(key);
+          deleted++;
+        }
       }
     }
     
