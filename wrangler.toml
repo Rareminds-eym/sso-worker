@@ -53,3 +53,23 @@ max_batch_timeout = 5
 queue = "sso-reverse-sync-queue"
 max_batch_size = 10
 max_batch_timeout = 5
+
+# ============================================================================
+# DEMO  →  wrangler deploy --env demo
+# ============================================================================
+[env.demo]
+name = "sso-api-demo"
+
+[env.demo.vars]
+ENVIRONMENT = "demo"
+SUPABASE_URL = "https://mnwtnxcxntwrgjobuftj.supabase.co"
+ALLOWED_ORIGINS = "https://*.rareminds.in,https://*.pages.dev,http://localhost:3000,http://localhost:5173,http://localhost:8788,http://127.0.0.1:8788"
+ALLOWED_APP_URLS = "https://*.rareminds.in,https://*.pages.dev,http://localhost:3000,http://localhost:5173,http://localhost:8788,http://127.0.0.1:8788"
+
+[[env.demo.kv_namespaces]]
+binding = "RATE_LIMIT_KV"
+id = "870a8379eb3c46d1a91b82964213dc06"
+
+[[env.demo.queues.producers]]
+binding = "SYNC_QUEUE"
+queue = "auth-db-sync-queue-demo"

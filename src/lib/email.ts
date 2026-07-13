@@ -19,6 +19,10 @@ const EMAIL_SEND_TIMEOUT_MS = 5_000;
  * Errors are logged but never thrown to avoid blocking the HTTP response.
  */
 export async function sendEmail(env: Env, payload: EmailPayload, ctx?: ExecutionContext): Promise<void> {
+  if (!env.EMAIL_SERVICE) {
+    console.log(JSON.stringify({ msg: "[SSO] Email skipped (no EMAIL_SERVICE binding)", to: payload.to }));
+    return;
+  }
   try {
     const emailPromise = env.EMAIL_SERVICE.sendEmail({
       to: payload.to,

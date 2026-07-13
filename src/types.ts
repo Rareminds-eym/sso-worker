@@ -13,8 +13,8 @@ export interface Env {
   JWT_KID_PREVIOUS?: string;
   ALLOWED_ORIGINS: string;
   RATE_LIMIT_KV: KVNamespace;
-  /** Service binding to the email-worker for sending emails via RPC. */
-  EMAIL_SERVICE: Fetcher & {
+  /** Service binding to the email-worker for sending emails via RPC. Optional — omitted in demo. */
+  EMAIL_SERVICE?: Fetcher & {
     sendEmail(params: any): Promise<any>;
     sendOTP(params: any): Promise<any>;
     verifyOTP(params: any): Promise<any>;
