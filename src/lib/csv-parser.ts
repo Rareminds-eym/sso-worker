@@ -14,6 +14,36 @@ export interface ParsedCSV {
 }
 
 /**
+ * Parse a single CSV line into fields, handling quoted values with commas
+ */
+function parseCSVLine(line: string): string[] {
+  const values: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+
+    if (char === '"') {
+      if (inQuotes && i + 1 < line.length && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === ',' && !inQuotes) {
+      values.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+
+  values.push(current.trim());
+  return values;
+}
+
+/**
  * Parse CSV string into structured data
  * Simple implementation without external libraries
  */
@@ -26,7 +56,7 @@ export function parseCSV(csvText: string): ParsedCSV {
   }
   
   // Parse headers (first line)
-  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+  const headers = parseCSVLine(lines[0]).filter(h => h.length > 0);
   
   if (headers.length === 0) {
     return { headers: [], rows: [], errors: ['CSV headers are missing'] };
@@ -41,8 +71,7 @@ export function parseCSV(csvText: string): ParsedCSV {
     // Skip empty lines
     if (!line) continue;
     
-    // Split by comma, handle quoted values
-    const values = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+    const values = parseCSVLine(line);
     
     if (values.length !== headers.length) {
       errors.push(`Row ${i}: Column count mismatch (expected ${headers.length}, got ${values.length})`);

@@ -195,7 +195,7 @@ export async function performSignup(
         subscription_end_date: string | null;
         product_id: string | null;
         updated_at: string;
-      }>(`subscriptions?user_id=eq.${encodeURIComponent(result.user_id)}&limit=1`);
+      }>(`subscriptions?user_id=eq.${encodeURIComponent(result.user_id)}&order=created_at.desc&limit=1`);
       
       if (subscriptions && subscriptions.length > 0) {
         const sub = subscriptions[0];
@@ -218,7 +218,7 @@ export async function performSignup(
         });
       }
     } catch (err) {
-      console.error(`[SSO] Failed to sync subscription:`, err);
+      console.error(`[SSO] Failed to sync subscription for user ${result.user_id}:`, err);
     }
 
     audit(ctx, env, "signup", {

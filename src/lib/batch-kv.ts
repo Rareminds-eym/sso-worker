@@ -71,7 +71,12 @@ export async function getBatch(
     return null;
   }
   
-  return JSON.parse(data) as BatchMetadata;
+  try {
+    return JSON.parse(data) as BatchMetadata;
+  } catch (err) {
+    console.error(`[batch-kv] Failed to parse batch ${batchId}:`, err);
+    return null;
+  }
 }
 
 /**
@@ -94,13 +99,13 @@ export async function updateBatchProgress(
   }
   
   // Increment counters
-  if (updates.processed_rows_increment) {
+  if (updates.processed_rows_increment !== undefined) {
     metadata.processed_rows += updates.processed_rows_increment;
   }
-  if (updates.success_count_increment) {
+  if (updates.success_count_increment !== undefined) {
     metadata.success_count += updates.success_count_increment;
   }
-  if (updates.failed_count_increment) {
+  if (updates.failed_count_increment !== undefined) {
     metadata.failed_count += updates.failed_count_increment;
   }
   

@@ -25,7 +25,7 @@ import { handleQueueBatch } from "./queue/queue-router";
  * @returns Response
  * @throws Error if timeout occurs or fetch fails
  */
-async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 5000): Promise<Response> {
+  export async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 5000): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   
@@ -1003,7 +1003,13 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     try {
       const database = db(this.env);
-      
+
+      // Check SYNC_QUEUE binding before creating org in DB
+      if (!this.env.SYNC_QUEUE) {
+        console.error('[SSO] SYNC_QUEUE not bound');
+        return { success: false, error: 'SYNC_QUEUE not bound' };
+      }
+
       // Create organization in SSO DB
       const org = await database.mutate<{ id: string }>("organizations", {
         name: data.name,
@@ -1015,11 +1021,6 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       console.log(`[SSO] Created organization ${org.id}: "${data.name}"`);
 
       // Publish to sync queue to create in Skillpassport
-      if (!this.env.SYNC_QUEUE) {
-        console.error('[SSO] SYNC_QUEUE not bound, organization created but not synced');
-        return { success: false, error: 'SYNC_QUEUE not bound' };
-      }
-
       await this.env.SYNC_QUEUE.send({
         type: 'organization.created',
         payload: {
@@ -1049,7 +1050,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
    */
   async updateOrganization(data: {
     id: string;
-    name?: string;
+    name: string;
   }): Promise<{ success: boolean }> {
     if (!data.id) {
       throw new Error("id is required");
@@ -1083,7 +1084,13 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     try {
       const database = db(this.env);
-      
+
+      // Check SYNC_QUEUE binding before updating org in DB
+      if (!this.env.SYNC_QUEUE) {
+        console.error('[SSO] SYNC_QUEUE not bound, organization updated but not synced');
+        return { success: false, error: 'SYNC_QUEUE not bound' };
+      }
+
       // Fetch existing org to merge metadata
       const existing = await database.queryOne<{ metadata: Record<string, unknown> }>(
         `organizations?id=eq.${encodeURIComponent(data.id)}&select=metadata`
@@ -1109,11 +1116,6 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       console.log(`[SSO] Updated organization ${data.id} metadata`);
 
       // Publish organization.updated event to sync to Skillpassport
-      if (!this.env.SYNC_QUEUE) {
-        console.error('[SSO] SYNC_QUEUE not bound, organization updated but not synced');
-        return { success: false, error: 'SYNC_QUEUE not bound' };
-      }
-
       await this.env.SYNC_QUEUE.send({
         type: 'organization.updated',
         payload: {
@@ -1150,7 +1152,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     enrollment_number?: string;
     program_id?: string;
     metadata?: Record<string, unknown>;
-  }): Promise<{ success: boolean; user_id?: string; temp_password?: string; error?: string }> {
+  }): Promise<{ success: boolean; user_id?: string; temp_password?: string; error?: string; sync_warning?: string }> {
     const { validateLearnerData, generateTempPassword, splitName, checkUserExists, getLearnerRole } = await import('./lib/learner-helpers');
     
     // Validate input
@@ -1160,7 +1162,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
     
     const database = db(this.env);
-    const { email, name, organization_id, contact_number, enrollment_number, program_id, metadata } = data;
+    const { name, organization_id, contact_number, enrollment_number, program_id, metadata } = data;
+    const email = data.email.toLowerCase().trim();
     
     try {
       // Check if user already exists
@@ -1310,10 +1313,13 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         console.log(`[SSO] Published membership.created event for learner ${user.id} to sync queue`);
         
         if (!this.env.EMAIL_QUEUE) {
-          const errorMsg = `EMAIL_QUEUE not bound, cannot send invitation for ${user.id}`;
-          console.error(`[SSO] ${errorMsg}`);
+          console.error(`[SSO] EMAIL_QUEUE not bound, cannot send invitation for ${user.id}`);
           console.error(`[SSO] MANUAL ACTION: Send credentials to ${email} - temp password: ${tempPassword}`);
-          throw new Error('EMAIL_QUEUE binding required for learner invitation emails');
+          return {
+            success: true,
+            user_id: user.id,
+            temp_password: tempPassword,
+          };
         }
         
         await this.env.EMAIL_QUEUE.send({
@@ -1327,10 +1333,15 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         
         console.log(`[SSO] Published learner-invitation email job for ${user.id}`);
       } catch (queueError) {
-        // User created successfully, but queue sync failed
-        // Log for manual reconciliation but don't fail the operation
-        console.error(`[SSO] Failed to queue sync events for ${user.id}:`, queueError);
+        const queueErrorMsg = queueError instanceof Error ? queueError.message : String(queueError);
+        console.error(`[SSO] Failed to queue sync events for ${user.id}:`, queueErrorMsg);
         console.error(`[SSO] MANUAL ACTION REQUIRED: User ${user.id} (${email}) created but not synced to Skillpassport`);
+        return {
+          success: true,
+          user_id: user.id,
+          temp_password: tempPassword,
+          sync_warning: 'User created but sync to Skillpassport failed',
+        };
       }
       
       return {

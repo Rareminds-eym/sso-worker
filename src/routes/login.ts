@@ -134,7 +134,7 @@ export async function performLogin(
   ctx.waitUntil(
     (async () => {
       try {
-        const cacheKey = `user-synced:${user.id}`;
+        const cacheKey = `login:user-synced:${user.id}`;
         const cached = await env.RATE_LIMIT_KV.get(cacheKey);
         
         if (cached === 'true') return;

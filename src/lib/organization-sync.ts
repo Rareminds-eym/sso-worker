@@ -34,11 +34,17 @@ export async function ensureOrganizationExists(
   }
   
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
     const response = await fetch(`${env.SKILLPASSPORT_URL}/api/organizations/${organizationId}`, {
       headers: {
         'Authorization': `Bearer ${env.INTERNAL_WEBHOOK_SECRET}`
-      }
+      },
+      signal: controller.signal,
     });
+
+    clearTimeout(timeoutId);
     
     if (!response.ok) {
       console.error(`[SSO] Failed to fetch org from Skillpassport: ${response.status}`);

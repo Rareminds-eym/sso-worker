@@ -32,11 +32,15 @@ export function generateTempPassword(length: number = 12): string {
   crypto.getRandomValues(bytes);
   
   // Convert to base64url and slice to desired length
-  const base64 = btoa(String.fromCharCode(...bytes))
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  const base64 = btoa(binary)
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=/g, '');
-  
+
   return base64.slice(0, length);
 }
 

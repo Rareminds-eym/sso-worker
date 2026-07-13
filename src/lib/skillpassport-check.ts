@@ -94,13 +94,13 @@ export async function checkUserExistsInSkillpassport(
 export async function conditionalSyncPublish(
   env: Env,
   userId: string,
-  publishFn: () => void
+  publishFn: () => void | Promise<void>
 ): Promise<void> {
   const exists = await checkUserExistsInSkillpassport(env, userId);
   
   if (!exists) {
     console.log(`[SSO] User ${userId} not in Skillpassport, publishing sync events`);
-    publishFn();
+    await publishFn();
   } else {
     console.log(`[SSO] User ${userId} already in Skillpassport, skipping sync`);
   }
