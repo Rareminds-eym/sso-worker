@@ -17,6 +17,34 @@ import { handleQueueBatch } from "./queue/queue-router";
 // HTTP route handlers removed - all imports now unused except for types
 // Business logic functions (perform*) are imported dynamically in RPC methods
 
+/**
+ * Fetch with timeout to prevent indefinite hanging
+ * @param url URL to fetch
+ * @param options Fetch options
+ * @param timeoutMs Timeout in milliseconds (default: 5000)
+ * @returns Response
+ * @throws Error if timeout occurs or fetch fails
+ */
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 5000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    return response;
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`Request timeout after ${timeoutMs}ms: ${url}`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 // ─── WorkerEntrypoint ─────────────────────────────────────────
 export class SsoWorker extends WorkerEntrypoint<Env> {
   // ── Scheduled (cron) ──────────────────────────────────────────
@@ -53,7 +81,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
               }
 
               const targetUrl = `${this.env.SKILLPASSPORT_URL}/api/internal/webhooks/payment`;
-              const dispatchResponse = await fetch(targetUrl, {
+              const dispatchResponse = await fetchWithTimeout(targetUrl, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
@@ -61,7 +89,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
                   'X-Webhook-Event': event.event_type
                 },
                 body: JSON.stringify(event.payload)
-              });
+              }, 10000); // 10 second timeout for webhook dispatch
 
               if (!dispatchResponse.ok) {
                 const resBody = await dispatchResponse.text();
@@ -1179,11 +1207,15 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           console.log(`[SSO] Organization ${organization_id} not in SSO DB, syncing from Skillpassport`);
           
           try {
-            const skillpassportResponse = await fetch(`${this.env.SKILLPASSPORT_URL}/api/organizations/${organization_id}`, {
-              headers: {
-                'Authorization': `Bearer ${this.env.INTERNAL_WEBHOOK_SECRET}`
-              }
-            });
+            const skillpassportResponse = await fetchWithTimeout(
+              `${this.env.SKILLPASSPORT_URL}/api/organizations/${organization_id}`,
+              {
+                headers: {
+                  'Authorization': `Bearer ${this.env.INTERNAL_WEBHOOK_SECRET}`
+                }
+              },
+              5000 // 5 second timeout for organization fetch
+            );
             
             if (skillpassportResponse.ok) {
               const orgData = await skillpassportResponse.json() as { name: string; slug?: string; metadata?: Record<string, unknown> };
