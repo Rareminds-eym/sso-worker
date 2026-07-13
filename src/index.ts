@@ -118,8 +118,29 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
   // ── Queue Handler (Asynchronous Events) ─────────────────────
   async queue(batch: MessageBatch): Promise<void> {
-    if (!batch || !Array.isArray(batch.messages)) {
-      throw new Error('Invalid batch: messages array required');
+    if (!batch) {
+      throw new Error('Invalid batch: batch object is null or undefined');
+    }
+    
+    if (!batch.messages) {
+      throw new Error('Invalid batch: messages property is missing');
+    }
+    
+    if (!Array.isArray(batch.messages)) {
+      throw new Error(`Invalid batch: messages must be an array, got ${typeof batch.messages}`);
+    }
+    
+    if (batch.messages.length === 0) {
+      console.log('[SSO] Empty batch received, skipping');
+      return;
+    }
+    
+    // Validate each message has required structure
+    for (let i = 0; i < batch.messages.length; i++) {
+      const msg = batch.messages[i];
+      if (!msg || typeof msg !== 'object') {
+        throw new Error(`Invalid message at index ${i}: not an object`);
+      }
     }
     
     try {
@@ -1245,7 +1266,6 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         
         console.log(`[SSO] Published user.created event for ${user.id} to sync queue`);
         
-        // ponytail: Publish membership.created event to sync organizationId and organization_members
         await this.env.SYNC_QUEUE.send({
           type: 'membership.created',
           payload: {
@@ -1259,29 +1279,23 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         
         console.log(`[SSO] Published membership.created event for learner ${user.id} to sync queue`);
         
-        // Publish invitation email job
         if (!this.env.EMAIL_QUEUE) {
-          console.error(`[SSO] EMAIL_QUEUE not bound, cannot send invitation for ${user.id}`);
+          const errorMsg = `EMAIL_QUEUE not bound, cannot send invitation for ${user.id}`;
+          console.error(`[SSO] ${errorMsg}`);
           console.error(`[SSO] MANUAL ACTION: Send credentials to ${email} - temp password: ${tempPassword}`);
-          // Don't throw - user created successfully, just email delivery failed
-        } else {
-          try {
-            await this.env.EMAIL_QUEUE.send({
-              type: 'learner-invitation',
-              user_id: user.id,
-              email: user.email,
-              name,
-              temp_password: tempPassword,
-              organization_id,
-            });
-            
-            console.log(`[SSO] Published learner-invitation email job for ${user.id}`);
-          } catch (emailError) {
-            console.error(`[SSO] Failed to queue email for ${user.id}:`, emailError);
-            console.error(`[SSO] MANUAL ACTION: Send credentials to ${email} - temp password: ${tempPassword}`);
-            // Don't throw - user created successfully, just email delivery failed
-          }
+          throw new Error('EMAIL_QUEUE binding required for learner invitation emails');
         }
+        
+        await this.env.EMAIL_QUEUE.send({
+          type: 'learner-invitation',
+          user_id: user.id,
+          email: user.email,
+          name,
+          temp_password: tempPassword,
+          organization_id,
+        });
+        
+        console.log(`[SSO] Published learner-invitation email job for ${user.id}`);
       } catch (queueError) {
         // User created successfully, but queue sync failed
         // Log for manual reconciliation but don't fail the operation
@@ -1321,10 +1335,10 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       
       console.log(`[SSO] Queueing bulk upload batch ${batchId} for org ${data.organization_id}`);
       
-      // Publish to learner-admission-queue
       if (!this.env.LEARNER_ADMISSION_QUEUE) {
-        console.error('[SSO] LEARNER_ADMISSION_QUEUE not bound');
-        return { success: false, error: 'LEARNER_ADMISSION_QUEUE not bound' };
+        const errorMsg = 'LEARNER_ADMISSION_QUEUE not bound';
+        console.error(`[SSO] ${errorMsg}`);
+        throw new Error(errorMsg);
       }
       
       await this.env.LEARNER_ADMISSION_QUEUE.send({

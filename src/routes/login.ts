@@ -150,6 +150,12 @@ export async function performLogin(
 
         console.log(`[SSO] User ${user.id} missing, batch querying data for re-sync`);
         
+        // ponytail: Check SYNC_QUEUE binding before proceeding
+        if (!env.SYNC_QUEUE) {
+          console.error('[SSO] SYNC_QUEUE not bound, cannot re-sync user');
+          return;
+        }
+        
         const { publishSyncEvent } = await import('../lib/sync-queue');
         
         // ponytail: Query org + subscription in parallel (not sequential)
