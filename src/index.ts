@@ -34,14 +34,14 @@ import { handleQueueBatch } from "./queue/queue-router";
       ...options,
       signal: controller.signal
     });
+    clearTimeout(timeoutId);
     return response;
   } catch (error) {
+    clearTimeout(timeoutId);
     if (error instanceof Error && error.name === 'AbortError') {
       throw new Error(`Request timeout after ${timeoutMs}ms: ${url}`);
     }
     throw error;
-  } finally {
-    clearTimeout(timeoutId);
   }
 }
 
@@ -1210,15 +1210,20 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           console.log(`[SSO] Organization ${organization_id} not in SSO DB, syncing from Skillpassport`);
           
           try {
-            const skillpassportResponse = await fetchWithTimeout(
-              `${this.env.SKILLPASSPORT_URL}/api/organizations/${organization_id}`,
-              {
-                headers: {
-                  'Authorization': `Bearer ${this.env.INTERNAL_WEBHOOK_SECRET}`
-                }
-              },
-              5000 // 5 second timeout for organization fetch
-            );
+            let skillpassportResponse: Response;
+            try {
+              skillpassportResponse = await fetchWithTimeout(
+                `${this.env.SKILLPASSPORT_URL}/api/organizations/${organization_id}`,
+                {
+                  headers: {
+                    'Authorization': `Bearer ${this.env.INTERNAL_WEBHOOK_SECRET}`
+                  }
+                },
+                5000
+              );
+            } catch (timeoutErr) {
+              throw new Error(`Timeout fetching organization ${organization_id}: ${timeoutErr instanceof Error ? timeoutErr.message : String(timeoutErr)}`);
+            }
             
             if (skillpassportResponse.ok) {
               const orgData = await skillpassportResponse.json() as { name: string; slug?: string; metadata?: Record<string, unknown> };

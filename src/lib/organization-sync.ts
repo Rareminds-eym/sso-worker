@@ -33,18 +33,16 @@ export async function ensureOrganizationExists(
     return null;
   }
   
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 5000);
+  
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
-
     const response = await fetch(`${env.SKILLPASSPORT_URL}/api/organizations/${organizationId}`, {
       headers: {
         'Authorization': `Bearer ${env.INTERNAL_WEBHOOK_SECRET}`
       },
       signal: controller.signal,
     });
-
-    clearTimeout(timeoutId);
     
     if (!response.ok) {
       console.error(`[SSO] Failed to fetch org from Skillpassport: ${response.status}`);
@@ -69,8 +67,14 @@ export async function ensureOrganizationExists(
     return org;
     
   } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    console.error(`[SSO] Error syncing org from Skillpassport:`, errorMsg);
+    if (error instanceof Error && error.name === 'AbortError') {
+      console.error(`[SSO] Timeout fetching organization ${organizationId} from Skillpassport`);
+    } else {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`[SSO] Error syncing org from Skillpassport:`, errorMsg);
+    }
     return null;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
