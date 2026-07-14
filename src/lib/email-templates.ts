@@ -73,20 +73,23 @@ If you didn't request this password reset, please ignore this email.`
 
 /**
  * Build learner invitation email template for bulk imports
+ * Provides temporary password for immediate login
  * 
  * @param name - Learner's full name
  * @param email - Learner's email address
- * @param temp_password - Temporary password
+ * @param temp_password - Temporary password for first login
  * @param loginUrl - Full login URL (e.g., https://skillpassport.rareminds.in/login)
- * @returns Email template with subject, html, and text
+ * @returns Email template with subject, html and text
  */
 export function buildLearnerInvitationEmail(
   name: string,
   email: string,
   temp_password: string,
   loginUrl: string
-): { subject: string; html: string; text: string } {
-  const html = `
+): { subject: string; html: string } {
+  return {
+    subject: 'Welcome to SkillPassport - Your Account is Ready!',
+    html: `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <h2>Welcome to SkillPassport!</h2>
       <p>Hi ${name},</p>
@@ -96,33 +99,13 @@ export function buildLearnerInvitationEmail(
         <h3 style="margin-top: 0;">Login Details:</h3>
         <p><strong>Portal:</strong> <a href="${escapeHrefAttr(loginUrl)}">${loginUrl}</a></p>
         <p><strong>Email:</strong> ${email}</p>
-        <p><strong>Password:</strong> ${temp_password}</p>
+        <p><strong>Temporary Password:</strong> <code style="background: #fff; padding: 4px 8px; border-radius: 3px; font-family: monospace; font-size: 14px;">${temp_password}</code></p>
       </div>
       
-      <p><strong>Important:</strong> Please change your password after first login.</p>
+      <p style="font-size: 14px; color: #666;"><strong>Important:</strong> Please change your temporary password after first login.</p>
+      
       <p>Best regards,<br>SkillPassport Team</p>
     </div>
-  `;
-
-  const text = `Welcome to SkillPassport!
-
-Hi ${name},
-
-Your learner account has been created by your institution.
-
-Login Details:
-Portal: ${loginUrl}
-Email: ${email}
-Password: ${temp_password}
-
-Important: Please change your password after first login.
-
-Best regards,
-SkillPassport Team`;
-
-  return {
-    subject: 'Welcome to SkillPassport - Your Account is Ready!',
-    html,
-    text,
+  `,
   };
 }

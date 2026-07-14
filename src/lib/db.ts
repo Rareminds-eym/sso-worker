@@ -74,8 +74,16 @@ export function db(env: Env): DbClient {
         const text = await res.text();
         throw new Error(`DB mutate failed [${res.status}]: ${text}`);
       }
-      const rows = (await res.json()) as T[];
-      return (Array.isArray(rows) ? rows[0] : rows) as T;
+      const json = await res.json();
+      // ponytail: Runtime guard against unexpected API shape (PostgREST returns array or single object)
+      if (json === null || json === undefined) {
+        throw new Error(`DB mutate returned null/undefined for table ${table}`);
+      }
+      const rows = Array.isArray(json) ? json : [json];
+      if (rows.length === 0) {
+        throw new Error(`DB mutate returned empty result for table ${table}`);
+      }
+      return rows[0] as T;
     } finally {
       clear();
     }

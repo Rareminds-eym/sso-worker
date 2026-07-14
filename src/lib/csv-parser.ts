@@ -40,6 +40,12 @@ function parseCSVLine(line: string): string[] {
   }
 
   values.push(current.trim());
+  
+  // Validate quotes are balanced
+  if (inQuotes) {
+    throw new Error('Malformed CSV: unclosed quote in line');
+  }
+  
   return values;
 }
 
@@ -71,7 +77,13 @@ export function parseCSV(csvText: string): ParsedCSV {
     // Skip empty lines
     if (!line) continue;
     
-    const values = parseCSVLine(line);
+    let values: string[];
+    try {
+      values = parseCSVLine(line);
+    } catch (parseError) {
+      errors.push(`Row ${i}: ${parseError instanceof Error ? parseError.message : 'Parse error'}`);
+      continue;
+    }
     
     if (values.length !== headers.length) {
       errors.push(`Row ${i}: Column count mismatch (expected ${headers.length}, got ${values.length})`);

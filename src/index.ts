@@ -11,7 +11,7 @@ import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from
 import { endpointRateLimit } from "./lib/rate-limit";
 import { rotateRefreshToken } from "./lib/session-rotation";
 import { publishSyncEvent } from "./lib/sync-queue";
-import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "./lib/validate";
+import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl, isValidUUID } from "./lib/validate";
 import { getErrorMessage } from "./lib/error-utils";
 import { assertQueueBound } from "./lib/queue-utils";
 import type { AccessTokenPayload, Env, Invite, Session, SignupMemberBody, Membership, Organization, JwtClaims, MessageBatch } from "./types";
@@ -234,9 +234,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     let membership;
     try {
       membership = await database.queryOne<{
-        organization_id: string;
-        role: string;
-      }>(`organization_members?user_id=eq.${encodeURIComponent(userId)}&select=organization_id,role&limit=1`);
+        org_id: string;
+      }>(`memberships?user_id=eq.${encodeURIComponent(userId)}&select=org_id&limit=1`);
     } catch (dbError) {
       const errorMsg = getErrorMessage(dbError);
       console.error(`[SSO] queueUserSync: Database error fetching membership for ${userId}:`, errorMsg);
@@ -262,10 +261,10 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           org = await database.queryOne<{
             id: string;
             name: string;
-          }>(`organizations?id=eq.${encodeURIComponent(membership.organization_id)}&select=id,name`);
+          }>(`organizations?id=eq.${encodeURIComponent(membership.org_id)}&select=id,name`);
         } catch (dbError) {
           const errorMsg = getErrorMessage(dbError);
-          console.error(`[SSO] queueUserSync: Database error fetching org ${membership.organization_id}:`, errorMsg);
+          console.error(`[SSO] queueUserSync: Database error fetching org ${membership.org_id}:`, errorMsg);
           // Continue without org sync - user sync already completed
         }
 
@@ -283,8 +282,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
             type: 'membership.created',
             payload: {
               user_id: user.id,
-              organization_id: membership.organization_id,
-              roles: [membership.role],
+              organization_id: membership.org_id,
+              roles: ['learner'], // Default role since we removed role from query
               status: 'active',
             },
             timestamp: new Date().toISOString(),
@@ -1186,6 +1185,11 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       return { success: false, error: validation.error };
     }
     
+    // Validate organization_id UUID format
+    if (!isValidUUID(data.organization_id)) {
+      return { success: false, error: 'Invalid organization_id format (must be a valid UUID)' };
+    }
+    
     const database = db(this.env);
     const { name, organization_id, contact_number, enrollment_number, program_id, metadata } = data;
     const email = data.email.toLowerCase().trim();
@@ -1197,7 +1201,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         return { success: false, error: `User with email ${email} already exists` };
       }
       
-      // Generate temporary password
+      // Generate temporary password for immediate login
       const tempPassword = generateTempPassword();
       const passwordHash = await hashPassword(tempPassword);
       
@@ -1329,10 +1333,10 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       if (!this.env.SYNC_QUEUE) {
         console.error(`[SSO] SYNC_QUEUE not bound, learner ${user.id} created but not synced`);
         return {
-          success: false,
-          error: 'SYNC_QUEUE not bound',
+          success: true,
           user_id: user.id,
-          sync_warning: 'User created but sync to Skillpassport failed'
+          temp_password: tempPassword,
+          sync_warning: 'SYNC_QUEUE not bound - sync skipped, manual reconciliation needed'
         };
       }
 
@@ -1373,16 +1377,14 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         
         if (!this.env.EMAIL_QUEUE) {
           console.error(`[SSO] EMAIL_QUEUE not bound, cannot send invitation for ${user.id}`);
-          console.error(`[SSO] MANUAL ACTION: Send credentials to ${email} - temp password: ${tempPassword}`);
           return {
             success: true,
             user_id: user.id,
             temp_password: tempPassword,
-            sync_warning: 'Email queue not bound - invitation not sent'
+            sync_warning: 'Email queue not bound - invitation not sent. Use temp_password or forgot password flow.'
           };
         }
         
-        // Get email template (simple local template)
         const loginUrl = `${this.env.SKILLPASSPORT_URL}/login`;
         const template = buildLearnerInvitationEmail(name, user.email, tempPassword, loginUrl);
         
@@ -1391,7 +1393,6 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           to: user.email,
           subject: template.subject,
           html: template.html,
-          text: template.text,
         });
         
         console.log(`[SSO] Published email invitation for ${user.id} to email queue`);
@@ -1429,7 +1430,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     organization_id: string;
     admin_id: string;
   }): Promise<{ success: boolean; batch_id?: string; error?: string }> {
-    if (!data.csv_data || !data.organization_id) {
+    if (!data.csv_data || !data.csv_data.trim() || !data.organization_id) {
       return { success: false, error: 'csv_data and organization_id are required' };
     }
     

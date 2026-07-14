@@ -1,5 +1,61 @@
 import type { SyncEvent } from './lib/sync-queue';
 
+// ─── EMAIL_SERVICE Types (from email-worker RPC) ───────────────
+export interface EmailServiceSendRequest {
+  to: string | string[];
+  subject: string;
+  html: string;
+  text?: string;
+  from?: string;
+  fromName?: string;
+  replyTo?: string;
+  cc?: string[];
+  bcc?: string[];
+  metadata?: Record<string, any>;
+}
+
+export interface EmailServiceSendResponse {
+  success: boolean;
+  messageId?: string;
+  customMessageId?: string;
+  recipient?: string | string[];
+  timestamp?: string;
+  error?: string;
+  errorCode?: string;
+  errorType?: string;
+  shouldRetry?: boolean;
+}
+
+export interface EmailServiceOTPRequest {
+  mobileNumber: string;
+  countryCode?: string;
+  flowType?: 'SMS' | 'WHATSAPP' | 'RCS';
+}
+
+export interface EmailServiceOTPResponse {
+  success: boolean;
+  verificationId?: string;
+  timeout?: string;
+  message?: string;
+  error?: string;
+  retryAfter?: number;
+}
+
+export interface EmailServiceVerifyRequest {
+  mobileNumber: string;
+  verificationId: string;
+  code: string;
+  countryCode?: string;
+}
+
+export interface EmailServiceVerifyResponse {
+  success: boolean;
+  verified: boolean;
+  message?: string;
+  error?: string;
+  retryAfter?: number;
+}
+
 // ─── Queue Types ───────────────────────────────────────────────
 export interface QueueMessage<T = unknown> {
   readonly body: T;
@@ -27,9 +83,9 @@ export interface Env {
   RATE_LIMIT_KV: KVNamespace;
   /** Service binding to the email-worker for sending emails via RPC. */
   EMAIL_SERVICE: Fetcher & {
-    sendEmail(params: unknown): Promise<unknown>;
-    sendOTP(params: unknown): Promise<unknown>;
-    verifyOTP(params: unknown): Promise<unknown>;
+    sendEmail(params: EmailServiceSendRequest): Promise<EmailServiceSendResponse>;
+    sendOTP(params: EmailServiceOTPRequest): Promise<EmailServiceOTPResponse>;
+    verifyOTP(params: EmailServiceVerifyRequest): Promise<EmailServiceVerifyResponse>;
   };
 
   /** Base URL for the SkillPassport Pages app (e.g. https://skillpassport.rareminds.in) */
