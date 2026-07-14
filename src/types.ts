@@ -11,7 +11,7 @@ export interface EmailServiceSendRequest {
   replyTo?: string;
   cc?: string[];
   bcc?: string[];
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface EmailServiceSendResponse {

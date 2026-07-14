@@ -1201,6 +1201,12 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         return { success: false, error: `User with email ${email} already exists` };
       }
       
+      // Verify learner role exists before creating user (prevents orphaned users)
+      const learnerRoleId = await getLearnerRole(database);
+      if (!learnerRoleId) {
+        return { success: false, error: 'Learner role not found in database' };
+      }
+      
       // Generate temporary password for immediate login
       const tempPassword = generateTempPassword();
       const passwordHash = await hashPassword(tempPassword);
@@ -1234,13 +1240,6 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         const { ensureOrganizationExists } = await import('./lib/organization-sync');
         await ensureOrganizationExists(this.env, organization_id);
         
-        // Get learner role ID
-        const learnerRoleId = await getLearnerRole(database);
-        
-        if (!learnerRoleId) {
-          throw new Error('Learner role not found in database');
-        }
-        
         // Upsert membership (race-safe: check-insert-catch-recheck)
         let membershipId: string | undefined;
         
@@ -1267,8 +1266,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           const errorMsg = (error?.message || String(insertError)).toLowerCase();
           
           const isDuplicateError = 
-            error?.code === '23505' || 
-            error?.code === 23505 ||
+            error?.code === '23505' ||
             errorMsg.includes('duplicate key') || 
             errorMsg.includes('unique constraint');
           
