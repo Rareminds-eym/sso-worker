@@ -43,16 +43,20 @@ export async function checkUserExistsInSkillpassport(
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
-    
     const startTime = Date.now();
-    const response = await fetch(`${env.SKILLPASSPORT_URL}/api/sync/check-user`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId }),
-      signal: controller.signal,
-    });
     
-    clearTimeout(timeoutId);
+    let response: Response;
+    try {
+      response = await fetch(`${env.SKILLPASSPORT_URL}/api/sync/check-user`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+    
     const duration = Date.now() - startTime;
     
     if (!response.ok) {

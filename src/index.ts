@@ -1256,8 +1256,18 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           }
         } catch (insertError) {
           // Duplicate key from concurrent request — re-check
-          const errorMsg = insertError instanceof Error ? insertError.message : String(insertError);
-          if (errorMsg.includes('duplicate') || errorMsg.includes('23505') || errorMsg.includes('unique')) {
+          // ponytail: Check PostgreSQL SQLSTATE 23505 (unique_violation) properly, then fall back to string matching
+          const error = insertError as Error & { code?: string | number };
+          const errorMsg = error?.message || String(insertError);
+          
+          const isDuplicateError = 
+            error?.code === '23505' || 
+            error?.code === 23505 ||
+            errorMsg.toLowerCase().includes('duplicate') || 
+            errorMsg.includes('23505') || 
+            errorMsg.toLowerCase().includes('unique');
+          
+          if (isDuplicateError) {
             console.log(`[SSO] Membership inserted by concurrent request, re-fetching for user ${user.id}`);
             const retryResult = await database.query<{ id: string }>(
               `memberships?user_id=eq.${encodeURIComponent(user.id)}&org_id=eq.${encodeURIComponent(organization_id)}&select=id`
