@@ -12,6 +12,8 @@ import { endpointRateLimit } from "./lib/rate-limit";
 import { rotateRefreshToken } from "./lib/session-rotation";
 import { publishSyncEvent } from "./lib/sync-queue";
 import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "./lib/validate";
+import { getErrorMessage } from "./lib/error-utils";
+import { assertQueueBound } from "./lib/queue-utils";
 import type { AccessTokenPayload, Env, Invite, Session, SignupMemberBody, Membership, Organization, JwtClaims, MessageBatch } from "./types";
 import { handleQueueBatch } from "./queue/queue-router";
 
@@ -218,7 +220,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         user_metadata: Record<string, unknown>;
       }>(`users?id=eq.${encodeURIComponent(userId)}&select=id,email,user_metadata`);
     } catch (dbError) {
-      const errorMsg = dbError instanceof Error ? dbError.message : String(dbError);
+      const errorMsg = getErrorMessage(dbError);
       console.error(`[SSO] queueUserSync: Database error fetching user ${userId}:`, errorMsg);
       return { queued: false, reason: `Database error: ${errorMsg}` };
     }
@@ -236,7 +238,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         role: string;
       }>(`organization_members?user_id=eq.${encodeURIComponent(userId)}&select=organization_id,role&limit=1`);
     } catch (dbError) {
-      const errorMsg = dbError instanceof Error ? dbError.message : String(dbError);
+      const errorMsg = getErrorMessage(dbError);
       console.error(`[SSO] queueUserSync: Database error fetching membership for ${userId}:`, errorMsg);
       // Continue without membership - user sync can still proceed
     }
@@ -262,7 +264,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
             name: string;
           }>(`organizations?id=eq.${encodeURIComponent(membership.organization_id)}&select=id,name`);
         } catch (dbError) {
-          const errorMsg = dbError instanceof Error ? dbError.message : String(dbError);
+          const errorMsg = getErrorMessage(dbError);
           console.error(`[SSO] queueUserSync: Database error fetching org ${membership.organization_id}:`, errorMsg);
           // Continue without org sync - user sync already completed
         }
@@ -293,7 +295,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       console.log(`[SSO] queueUserSync: Queued sync for user ${userId}`);
       return { queued: true, reason: 'User sync queued successfully' };
     } catch (queueError) {
-      const errorMsg = queueError instanceof Error ? queueError.message : String(queueError);
+      const errorMsg = getErrorMessage(queueError);
       console.error(`[SSO] queueUserSync: Failed to queue sync for user ${userId}:`, errorMsg);
       return { queued: false, reason: `Queue error: ${errorMsg}` };
     }
@@ -1060,7 +1062,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
       return { success: true, org_id: org.id };
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getErrorMessage(error);
       console.error(`[SSO] Error creating organization:`, errorMsg);
       return { success: false, error: errorMsg };
     }
@@ -1152,7 +1154,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
       return { success: true };
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getErrorMessage(error);
       console.error(`[SSO] Error updating organization details:`, errorMsg);
       return { success: false, error: errorMsg };
     }
@@ -1256,16 +1258,15 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           }
         } catch (insertError) {
           // Duplicate key from concurrent request — re-check
-          // ponytail: Check PostgreSQL SQLSTATE 23505 (unique_violation) properly, then fall back to string matching
+          // ponytail: Check PostgreSQL SQLSTATE 23505 (unique_violation) properly
           const error = insertError as Error & { code?: string | number };
-          const errorMsg = error?.message || String(insertError);
+          const errorMsg = (error?.message || String(insertError)).toLowerCase();
           
           const isDuplicateError = 
             error?.code === '23505' || 
             error?.code === 23505 ||
-            errorMsg.toLowerCase().includes('duplicate') || 
-            errorMsg.includes('23505') || 
-            errorMsg.toLowerCase().includes('unique');
+            errorMsg.includes('duplicate key') || 
+            errorMsg.includes('unique constraint');
           
           if (isDuplicateError) {
             console.log(`[SSO] Membership inserted by concurrent request, re-fetching for user ${user.id}`);
@@ -1327,7 +1328,12 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       // Publish to auth-db-sync-queue and email queue (with error handling)
       if (!this.env.SYNC_QUEUE) {
         console.error(`[SSO] SYNC_QUEUE not bound, learner ${user.id} created but not synced`);
-        return { success: false, error: 'SYNC_QUEUE not bound' };
+        return {
+          success: false,
+          error: 'SYNC_QUEUE not bound',
+          user_id: user.id,
+          sync_warning: 'User created but sync to Skillpassport failed'
+        };
       }
 
       try {
@@ -1377,7 +1383,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         }
         
         // Get email template (simple local template)
-        const template = buildLearnerInvitationEmail(name, user.email, tempPassword);
+        const loginUrl = `${this.env.SKILLPASSPORT_URL}/login`;
+        const template = buildLearnerInvitationEmail(name, user.email, tempPassword, loginUrl);
         
         await this.env.EMAIL_QUEUE.send({
           type: 'send-email',
@@ -1389,7 +1396,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         
         console.log(`[SSO] Published email invitation for ${user.id} to email queue`);
         } catch (queueError) {
-        const queueErrorMsg = queueError instanceof Error ? queueError.message : String(queueError);
+        const queueErrorMsg = getErrorMessage(queueError);
         console.error(`[SSO] Failed to queue sync events for ${user.id}:`, queueErrorMsg);
         console.error(`[SSO] MANUAL ACTION REQUIRED: User ${user.id} (${email}) created but not synced to Skillpassport`);
         return {
@@ -1407,7 +1414,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       };
       
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getErrorMessage(error);
       console.error(`[SSO] Error creating learner user for ${email}:`, errorMsg);
       return { success: false, error: errorMsg };
     }
@@ -1448,7 +1455,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           retry_count: 0
         });
       } catch (queueError) {
-        const errorMsg = queueError instanceof Error ? queueError.message : String(queueError);
+        const errorMsg = getErrorMessage(queueError);
         throw new Error(`Failed to queue bulk upload: ${errorMsg}`);
       }
       
@@ -1459,7 +1466,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         batch_id: batchId
       };
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getErrorMessage(error);
       console.error(`[SSO] Error queueing bulk upload:`, errorMsg);
       return { success: false, error: errorMsg };
     }

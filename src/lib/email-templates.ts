@@ -77,12 +77,14 @@ If you didn't request this password reset, please ignore this email.`
  * @param name - Learner's full name
  * @param email - Learner's email address
  * @param temp_password - Temporary password
+ * @param loginUrl - Full login URL (e.g., https://skillpassport.rareminds.in/login)
  * @returns Email template with subject, html, and text
  */
 export function buildLearnerInvitationEmail(
   name: string,
   email: string,
-  temp_password: string
+  temp_password: string,
+  loginUrl: string
 ): { subject: string; html: string; text: string } {
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -92,7 +94,7 @@ export function buildLearnerInvitationEmail(
       
       <div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0;">
         <h3 style="margin-top: 0;">Login Details:</h3>
-        <p><strong>Portal:</strong> <a href="https://skillpassport.rareminds.in/login">https://skillpassport.rareminds.in/login</a></p>
+        <p><strong>Portal:</strong> <a href="${escapeHrefAttr(loginUrl)}">${loginUrl}</a></p>
         <p><strong>Email:</strong> ${email}</p>
         <p><strong>Password:</strong> ${temp_password}</p>
       </div>
@@ -109,7 +111,7 @@ Hi ${name},
 Your learner account has been created by your institution.
 
 Login Details:
-Portal: https://skillpassport.rareminds.in/login
+Portal: ${loginUrl}
 Email: ${email}
 Password: ${temp_password}
 

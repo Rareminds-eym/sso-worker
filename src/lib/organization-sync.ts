@@ -5,6 +5,7 @@
 
 import { db } from './db';
 import type { Env } from '../types';
+import { getErrorMessage } from './error-utils';
 
 /**
  * Ensure organization exists in SSO DB (race-safe)
@@ -62,7 +63,7 @@ export async function ensureOrganizationExists(
     if (error instanceof Error && error.name === 'AbortError') {
       console.error(`[SSO] Timeout fetching organization ${organizationId} from Skillpassport`);
     } else {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getErrorMessage(error);
       console.error(`[SSO] Error syncing org from Skillpassport:`, errorMsg);
     }
     return null;
