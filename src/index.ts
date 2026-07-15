@@ -202,7 +202,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     });
 
     publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'subscription.created', {
-      id: (subscription as any).id,
+      id: (subscription as { id: string }).id,
       user_id: data.user_id,
       organization_id: data.organization_id || null,
       plan_id: data.plan_id,
@@ -264,7 +264,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     });
 
     publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'subscription.created', {
-      id: (subscription as any).id,
+      id: (subscription as { id: string }).id,
       user_id: data.user_id,
       organization_id: null,
       plan_id: freemiumPlan.id,
@@ -1161,7 +1161,6 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         // Per-token TTL expiry.
         throw new Error("Session expired");
 
-      case "invalid":
       default:
         // Unknown or missing refresh token.
         throw new Error("Invalid refresh token");
@@ -1261,7 +1260,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       const mid = row.membership_id;
       const roleName = (row as any).role_id?.name ?? (row as any).name;
       if (!roleMap.has(mid)) roleMap.set(mid, []);
-      if (roleName) roleMap.get(mid)!.push(roleName);
+      if (roleName) roleMap.get(mid)?.push(roleName);
     }
 
     return {
@@ -1310,8 +1309,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     // Revoke old session and create new one
-    let familyId = crypto.randomUUID();
-    let familyCreatedAt = new Date().toISOString();
+    const familyId = crypto.randomUUID();
+    const familyCreatedAt = new Date().toISOString();
 
     // Get RBAC claims for the target org
     const claims = await database.rpc<JwtClaims>("get_jwt_claims", {

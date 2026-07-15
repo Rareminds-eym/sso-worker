@@ -151,7 +151,7 @@ export async function performSignup(
         const template = generateVerificationEmailTemplate(verifyUrl);
         ctx.waitUntil(sendEmail(env, { to: email, subject: template.subject, html: template.html, text: template.text }, ctx));
       }
-    } catch (emailErr) {
+    } catch {
       emailSent = false;
     }
 
