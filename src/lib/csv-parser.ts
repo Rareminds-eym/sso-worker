@@ -116,7 +116,7 @@ export function validateCSVRow(row: CSVRow, rowNumber: number): { valid: boolean
   }
   
   // Optional: Validate email format
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const emailRegex = /^[^\s@]+@[^\s@]{2,}\.[^\s@]{2,}$/;
   if (!emailRegex.test(row.email)) {
     return { valid: false, error: `Row ${rowNumber}: Invalid email format` };
   }

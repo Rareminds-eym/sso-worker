@@ -83,7 +83,13 @@ export function db(env: Env): DbClient {
       if (rows.length === 0) {
         throw new Error(`DB mutate returned empty result for table ${table}`);
       }
-      return rows[0] as T;
+      const row = rows[0];
+      if (typeof row !== 'object' || row === null) {
+        throw new Error(
+          `DB mutate returned unexpected type for ${table}: expected object, got ${typeof row}`,
+        );
+      }
+      return row as T;
     } finally {
       clear();
     }

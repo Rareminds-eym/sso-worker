@@ -201,6 +201,24 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       purchased_by: data.purchased_by || null,
     });
 
+    publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'subscription.created', {
+      id: (subscription as any).id,
+      user_id: data.user_id,
+      organization_id: data.organization_id || null,
+      plan_id: data.plan_id,
+      plan_code: data.plan_code,
+      plan_type: data.plan_type || data.plan_code,
+      plan_amount: data.plan_amount || 0,
+      billing_cycle: billingCycle,
+      features: data.features || [],
+      status: 'active',
+      subscription_start_date: now.toISOString(),
+      subscription_end_date: billingCycle === 'lifetime' ? null : endDate.toISOString(),
+      is_organization_subscription: data.is_organization_subscription || false,
+      product_id: null,
+      updated_at: now.toISOString(),
+    });
+
     return subscription as Record<string, unknown>;
   }
 
@@ -243,6 +261,24 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       auto_renew: false,
       subscription_start_date: new Date().toISOString(),
       subscription_end_date: null,
+    });
+
+    publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'subscription.created', {
+      id: (subscription as any).id,
+      user_id: data.user_id,
+      organization_id: null,
+      plan_id: freemiumPlan.id,
+      plan_code: 'freemium',
+      plan_type: 'Freemium',
+      plan_amount: 0,
+      billing_cycle: 'lifetime',
+      features: freemiumPlan.base_features || [],
+      status: 'active',
+      subscription_start_date: new Date().toISOString(),
+      subscription_end_date: null,
+      is_organization_subscription: false,
+      product_id: null,
+      updated_at: new Date().toISOString(),
     });
 
     return subscription as Record<string, unknown>;
@@ -800,6 +836,9 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   }
 
   async getBulkUploadStatus(batchId: string): Promise<BatchMetadata | null> {
+    if (!batchId) {
+      throw new Error('batchId is required');
+    }
     try {
       const result = await getBatch(this.env, batchId);
       return result;
@@ -811,7 +850,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
   // ── Auth RPC Methods ──────────────────────────────────────────
 
-  async getJWKS(): Promise<{ keys: any[] }> {
+  async getJWKS(): Promise<{ keys: Record<string, unknown>[] }> {
     const keys = [await getPublicJWK(this.env)];
     if (this.env.JWT_PUBLIC_KEY_PREVIOUS && this.env.JWT_KID_PREVIOUS) {
       try {
@@ -1206,7 +1245,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       )
       : [];
 
-    const orgMap = new Map(orgs.map((o: any) => [o.id, o]));
+    const orgMap = new Map(orgs.map((o: Organization) => [o.id, o]));
 
     // Fetch roles for each membership via join table
     const membershipIds = memberships.map((m) => m.id);
