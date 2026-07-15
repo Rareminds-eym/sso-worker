@@ -151,7 +151,8 @@ export async function performSignup(
         const template = generateVerificationEmailTemplate(verifyUrl);
         ctx.waitUntil(sendEmail(env, { to: email, subject: template.subject, html: template.html, text: template.text }, ctx));
       }
-    } catch {
+    } catch (err) {
+      console.warn('[SSO] Email verification sending failed:', err);
       emailSent = false;
     }
 

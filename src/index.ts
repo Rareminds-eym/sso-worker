@@ -842,8 +842,9 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     try {
       const result = await getBatch(this.env, batchId);
       return result;
-    } catch (err: any) {
-      console.error(`[SSO] getBulkUploadStatus error for ${batchId}:`, err?.message || err);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[SSO] getBulkUploadStatus error for ${batchId}:`, msg);
       return null;
     }
   }

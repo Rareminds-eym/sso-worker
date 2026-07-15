@@ -90,7 +90,15 @@ export function buildLearnerInvitationEmail(
   return {
     subject: 'Welcome to SkillPassport - Your Account is Ready!',
     html: `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Welcome to SkillPassport</title>
+        </head>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+    <div style="max-width: 600px; margin: 0 auto;">
       <h2>Welcome to SkillPassport!</h2>
       <p>Hi ${name},</p>
       <p>Your learner account has been created by your institution.</p>
@@ -106,6 +114,8 @@ export function buildLearnerInvitationEmail(
       
       <p>Best regards,<br>SkillPassport Team</p>
     </div>
+        </body>
+      </html>
   `,
     text: `Welcome to SkillPassport!
 
