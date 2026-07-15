@@ -210,7 +210,6 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     features: unknown[];
     full_name: string;
     email: string;
-    phone?: string;
     razorpay_order_id?: string;
     razorpay_payment_id?: string;
     organization_id?: string;
@@ -239,7 +238,6 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       features: data.features || [],
       full_name: data.full_name || "",
       email: data.email,
-      phone: data.phone || null,
       status: "active",
       auto_renew: billingCycle !== "lifetime",
       subscription_start_date: now.toISOString(),
