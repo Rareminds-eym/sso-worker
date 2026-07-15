@@ -86,7 +86,7 @@ export function buildLearnerInvitationEmail(
   email: string,
   temp_password: string,
   loginUrl: string
-): { subject: string; html: string } {
+): { subject: string; html: string; text: string } {
   return {
     subject: 'Welcome to SkillPassport - Your Account is Ready!',
     html: `
@@ -107,5 +107,20 @@ export function buildLearnerInvitationEmail(
       <p>Best regards,<br>SkillPassport Team</p>
     </div>
   `,
+    text: `Welcome to SkillPassport!
+
+Hi ${name},
+
+Your learner account has been created by your institution.
+
+Login Details:
+Portal: ${loginUrl}
+Email: ${email}
+Temporary Password: ${temp_password}
+
+Important: Please change your temporary password after first login.
+
+Best regards,
+SkillPassport Team`,
   };
 }

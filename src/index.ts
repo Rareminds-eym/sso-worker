@@ -5,48 +5,21 @@ import { addMonths, parseDurationMonths } from "./lib/date";
 import { db } from "./lib/db";
 import { inviteEmail, sendEmail } from "./lib/email";
 import { checkEmailThrottle } from "./lib/email-throttle";
-import { buildLearnerInvitationEmail } from "./lib/email-templates";
 import { generateRefreshToken, hashPassword, hashToken } from "./lib/hash";
 import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "./lib/jwt";
 import { endpointRateLimit } from "./lib/rate-limit";
 import { rotateRefreshToken } from "./lib/session-rotation";
 import { publishSyncEvent } from "./lib/sync-queue";
-import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl, isValidUUID } from "./lib/validate";
-import { getErrorMessage } from "./lib/error-utils";
-import { assertQueueBound } from "./lib/queue-utils";
+import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "./lib/validate";
+import { fetchWithTimeout } from "./lib/fetch-timeout";
+import { getBatch, type BatchMetadata } from "./lib/batch-kv";
 import type { AccessTokenPayload, Env, Invite, Session, SignupMemberBody, Membership, Organization, JwtClaims, MessageBatch } from "./types";
 import { handleQueueBatch } from "./queue/queue-router";
 
-// HTTP route handlers removed - all imports now unused except for types
-// Business logic functions (perform*) are imported dynamically in RPC methods
-
-/**
- * Fetch with timeout to prevent indefinite hanging
- * @param url URL to fetch
- * @param options Fetch options
- * @param timeoutMs Timeout in milliseconds (default: 5000)
- * @returns Response
- * @throws Error if timeout occurs or fetch fails
- */
-  export async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 5000): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  
-  try {
-    const response = await fetch(url, {
-      ...options,
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-    return response;
-  } catch (error) {
-    clearTimeout(timeoutId);
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`Request timeout after ${timeoutMs}ms: ${url}`);
-    }
-    throw error;
-  }
-}
+import { performQueueUserSync } from "./routes/user-sync";
+import { performCreateOrganization, performUpdateOrganization, performUpdateOrganizationDetails } from "./routes/organization";
+import { performCreateLearnerUser, performQueueBulkLearnerUpload } from "./routes/learner-admission";
+import { performCreateMember, performCreateMembership, performUpdateMembershipStatus, performAssignMembershipRole } from "./routes/membership";
 
 // ─── WorkerEntrypoint ─────────────────────────────────────────
 export class SsoWorker extends WorkerEntrypoint<Env> {
@@ -120,27 +93,6 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
   }
 
-  // ── Fetch handler (RPC-only mode) ────────────────────────────
-  // HTTP routes disabled - all access via RPC service binding only
-  async fetch(req: Request): Promise<Response> {
-    return new Response(JSON.stringify({
-      error: "HTTP access disabled",
-      message: "This service is only accessible via RPC service binding (env.SSO_SERVICE)",
-      rpc_methods: [
-        "signup", "signupMember", "login", "refreshSession", "logoutSession",
-        "switchOrg", "getMe", "listOrgs", "requestVerification", "verifyEmail",
-        "forgotPassword", "resetPassword", "changePassword", "adminResetPassword",
-        "deleteAccount", "listAddonCatalog", "getAddonByFeatureKey", "listBundles",
-        "createSubscription", "getUserSubscription", "recordTransaction",
-        "createInvite", "acceptInvite", "cancelInvite", "resendInvite",
-        "updateOrganization", "getUserByEmail", "createMembership", "and more..."
-      ]
-    }), {
-      status: 403,
-      headers: { "Content-Type": "application/json" }
-    });
-  }
-
   // ══════════════════════════════════════════════════════════════
   // RPC METHODS — callable via service binding only
   // ══════════════════════════════════════════════════════════════
@@ -185,119 +137,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   }
 
 
-  /**
-   * Checks if a user exists in Skillpassport and only creates queue
-   * messages if the user is missing.
-   * 
-   * Use case: Called after successful login to ensure user data is synced
-   */
   async queueUserSync(userId: string): Promise<{ queued: boolean; reason: string }> {
-    if (!userId) {
-      throw new Error('userId is required');
-    }
-
-    if (!this.env.SYNC_QUEUE) {
-      console.error('[SSO] SYNC_QUEUE not bound');
-      return { queued: false, reason: 'SYNC_QUEUE not bound' };
-    }
-
-    const { checkUserExistsInSkillpassport } = await import('./lib/skillpassport-check');
-    const exists = await checkUserExistsInSkillpassport(this.env, userId);
-
-    if (exists) {
-      console.log(`[SSO] queueUserSync: User ${userId} already exists in Skillpassport`);
-      return { queued: false, reason: 'User already synced' };
-    }
-
-    // User doesn't exist, fetch their data from SSO DB and queue sync
-    const database = db(this.env);
-    
-    let user;
-    try {
-      user = await database.queryOne<{
-        id: string;
-        email: string;
-        user_metadata: Record<string, unknown>;
-      }>(`users?id=eq.${encodeURIComponent(userId)}&select=id,email,user_metadata`);
-    } catch (dbError) {
-      const errorMsg = getErrorMessage(dbError);
-      console.error(`[SSO] queueUserSync: Database error fetching user ${userId}:`, errorMsg);
-      return { queued: false, reason: `Database error: ${errorMsg}` };
-    }
-
-    if (!user) {
-      console.error(`[SSO] queueUserSync: User ${userId} not found in SSO DB`);
-      return { queued: false, reason: 'User not found in SSO database' };
-    }
-
-    // Fetch user's primary organization
-    let membership;
-    try {
-      membership = await database.queryOne<{
-        org_id: string;
-      }>(`memberships?user_id=eq.${encodeURIComponent(userId)}&select=org_id&limit=1`);
-    } catch (dbError) {
-      const errorMsg = getErrorMessage(dbError);
-      console.error(`[SSO] queueUserSync: Database error fetching membership for ${userId}:`, errorMsg);
-      // Continue without membership - user sync can still proceed
-    }
-
-    try {
-      // Queue user sync
-      await this.env.SYNC_QUEUE.send({
-        type: 'user.created',
-        payload: {
-          id: user.id,
-          email: user.email,
-          user_metadata: user.user_metadata || {},
-        },
-        timestamp: new Date().toISOString(),
-      });
-
-      // If user has organization, queue that too
-      if (membership) {
-        let org;
-        try {
-          org = await database.queryOne<{
-            id: string;
-            name: string;
-          }>(`organizations?id=eq.${encodeURIComponent(membership.org_id)}&select=id,name`);
-        } catch (dbError) {
-          const errorMsg = getErrorMessage(dbError);
-          console.error(`[SSO] queueUserSync: Database error fetching org ${membership.org_id}:`, errorMsg);
-          // Continue without org sync - user sync already completed
-        }
-
-        if (org) {
-          await this.env.SYNC_QUEUE.send({
-            type: 'organization.created',
-            payload: {
-              id: org.id,
-              name: org.name,
-            },
-            timestamp: new Date().toISOString(),
-          });
-
-          await this.env.SYNC_QUEUE.send({
-            type: 'membership.created',
-            payload: {
-              user_id: user.id,
-              organization_id: membership.org_id,
-              roles: ['learner'], // Default role since we removed role from query
-              status: 'active',
-            },
-            timestamp: new Date().toISOString(),
-          });
-        }
-      }
-
-      console.log(`[SSO] queueUserSync: Queued sync for user ${userId}`);
-      return { queued: true, reason: 'User sync queued successfully' };
-    } catch (queueError) {
-      const errorMsg = getErrorMessage(queueError);
-      console.error(`[SSO] queueUserSync: Failed to queue sync for user ${userId}:`, errorMsg);
-      return { queued: false, reason: `Queue error: ${errorMsg}` };
-    }
+    return performQueueUserSync(this.env, userId);
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -426,68 +267,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     role: string;
     org_id: string;
   }): Promise<{ user_id: string; org_id: string; membership_id: string }> {
-    if (!data.email || !data.password || !data.role || !data.org_id) {
-      throw new Error("email, password, role, and org_id are required");
-    }
-
-    const email = data.email.toLowerCase().trim();
-    const password_hash = await hashPassword(data.password);
-    const database = db(this.env);
-
-    let result: { user_id: string; org_id: string; membership_id: string };
-    try {
-      result = await database.rpc<{ user_id: string; org_id: string; membership_id: string }>(
-        "signup_member",
-        {
-          p_email: email,
-          p_password_hash: password_hash,
-          p_role: data.role,
-          p_org_id: data.org_id,
-        },
-      );
-    } catch (err: any) {
-      if (err?.message?.includes("duplicate") || err?.message?.includes("23505")) {
-        throw new Error(`A user with email ${email} already exists`);
-      }
-      throw err;
-    }
-
-    // Admin-created members are trusted — auto-verify their email so they can log
-    // in immediately without an email-verification step.
-    await database.update("users", { id: `eq.${encodeURIComponent(result.user_id)}` }, { is_email_verified: true });
-
-    // Emit sync events — await directly (RPC method, no ctx.waitUntil)
-    if (!this.env.SYNC_QUEUE) {
-      console.error('[SSO] SYNC_QUEUE not bound, member created but not synced');
-    } else {
-      try {
-        await this.env.SYNC_QUEUE.send({
-          type: 'user.created',
-          payload: {
-            id: result.user_id,
-            email,
-            user_metadata: {
-              role: data.role, // Include role for Skillpassport sync
-            },
-          },
-          timestamp: new Date().toISOString(),
-        });
-        await this.env.SYNC_QUEUE.send({
-          type: 'membership.created',
-          payload: {
-            user_id: result.user_id,
-            organization_id: data.org_id,
-            roles: [data.role],
-            status: 'active',
-          },
-          timestamp: new Date().toISOString(),
-        });
-      } catch (e) {
-        console.error('[SSO] Failed to emit sync events:', e);
-      }
-    }
-
-    return result;
+    return performCreateMember(this.env, data);
   }
 
   async getUserSubscription(userId: string): Promise<{
@@ -955,219 +735,50 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     org_id: string;
     status: string;
   }): Promise<{ id: string; status: string }> {
-    if (!data.user_id || !data.org_id || !data.status) {
-      throw new Error("user_id, org_id, and status are required");
-    }
-    const database = db(this.env);
-    const membership = await database.mutate<{ id: string; status: string }>("memberships", {
-      user_id: data.user_id,
-      org_id: data.org_id,
-      status: data.status,
-    });
-    return { id: membership.id, status: membership.status };
+    return performCreateMembership(this.env, data);
   }
 
   async updateMembershipStatus(data: {
     membership_id: string;
     status: string;
   }): Promise<{ success: boolean }> {
-    if (!data.membership_id || !data.status) {
-      throw new Error("membership_id and status are required");
-    }
-    const database = db(this.env);
-    await database.update(
-      "memberships",
-      { id: `eq.${encodeURIComponent(data.membership_id)}` },
-      { status: data.status },
-    );
-    return { success: true };
+    return performUpdateMembershipStatus(this.env, data);
   }
 
   async assignMembershipRole(data: {
     membership_id: string;
     role_id: string;
   }): Promise<{ success: boolean }> {
-    if (!data.membership_id || !data.role_id) {
-      throw new Error("membership_id and role_id are required");
-    }
-    const database = db(this.env);
-    const existing = await database.query<{ id: string }>(
-      `membership_roles?membership_id=eq.${encodeURIComponent(data.membership_id)}&role_id=eq.${encodeURIComponent(data.role_id)}&select=id`,
-    );
-    if (existing.length > 0) return { success: true };
-    await database.mutate("membership_roles", {
-      membership_id: data.membership_id,
-      role_id: data.role_id,
-    });
-    return { success: true };
+    return performAssignMembershipRole(this.env, data);
   }
 
   // ── Organization RPC Methods ──────────────────────────────────
 
-  /**
-   * Create organization in SSO database (source of truth)
-   * Called by Skillpassport when admin creates a new organization
-   * Publishes to sync queue to create in Skillpassport
-   */
   async createOrganization(data: {
     name: string;
     slug: string;
     created_by: string;
     metadata?: Record<string, unknown>;
   }): Promise<{ success: boolean; org_id?: string; error?: string }> {
-    if (!data.name) {
-      return { success: false, error: 'name is required' };
-    }
-    if (!data.slug) {
-      return { success: false, error: 'slug is required' };
-    }
-    if (!data.created_by) {
-      return { success: false, error: 'created_by is required' };
-    }
-
-    try {
-      const database = db(this.env);
-
-      // Check SYNC_QUEUE binding before creating org in DB
-      if (!this.env.SYNC_QUEUE) {
-        console.error('[SSO] SYNC_QUEUE not bound');
-        return { success: false, error: 'SYNC_QUEUE not bound' };
-      }
-
-      // Create organization in SSO DB
-      const org = await database.mutate<{ id: string }>("organizations", {
-        name: data.name,
-        slug: data.slug,
-        created_by: data.created_by,
-        metadata: data.metadata || {}
-      });
-
-      console.log(`[SSO] Created organization ${org.id}: "${data.name}"`);
-
-      // Publish to sync queue to create in Skillpassport
-      await this.env.SYNC_QUEUE.send({
-        type: 'organization.created',
-        payload: {
-          id: org.id,
-          name: data.name,
-          slug: data.slug,
-          created_by: data.created_by,
-          metadata: data.metadata || {}
-        },
-        timestamp: new Date().toISOString(),
-      });
-
-      console.log(`[SSO] Published organization.created event for ${org.id} to sync queue`);
-
-      return { success: true, org_id: org.id };
-    } catch (error) {
-      const errorMsg = getErrorMessage(error);
-      console.error(`[SSO] Error creating organization:`, errorMsg);
-      return { success: false, error: errorMsg };
-    }
+    return performCreateOrganization(this.env, data);
   }
 
-  /**
-   * Update organization name in SSO database (auth DB)
-   * This is called by Skillpassport when org settings are updated
-   * to keep the auth DB in sync with app DB
-   */
   async updateOrganization(data: {
     id: string;
     name: string;
   }): Promise<{ success: boolean }> {
-    if (!data.id) {
-      throw new Error("id is required");
-    }
-    if (!data.name) {
-      throw new Error("name is required");
-    }
-
-    const database = db(this.env);
-    await database.update(
-      "organizations",
-      { id: `eq.${encodeURIComponent(data.id)}` },
-      { name: data.name },
-    );
-
-    console.log(`[SSO] Updated organization ${data.id} name to "${data.name}"`);
-    return { success: true };
+    return performUpdateOrganization(this.env, data);
   }
 
-  /**
-   * Update organization metadata in SSO database
-   * Called by /organization-setup to add full details to signup-created org
-   */
   async updateOrganizationDetails(data: {
     id: string;
     metadata: Record<string, unknown>;
   }): Promise<{ success: boolean; error?: string }> {
-    if (!data.id) {
-      return { success: false, error: 'id is required' };
-    }
-
-    try {
-      const database = db(this.env);
-
-      // Check SYNC_QUEUE binding before updating org in DB
-      if (!this.env.SYNC_QUEUE) {
-        console.error('[SSO] SYNC_QUEUE not bound, organization updated but not synced');
-        return { success: false, error: 'SYNC_QUEUE not bound' };
-      }
-
-      // Fetch existing org to merge metadata
-      const existing = await database.queryOne<{ metadata: Record<string, unknown> }>(
-        `organizations?id=eq.${encodeURIComponent(data.id)}&select=metadata`
-      );
-      
-      if (!existing) {
-        return { success: false, error: `Organization ${data.id} not found` };
-      }
-      
-      // Merge metadata
-      const updatedMetadata = {
-        ...(existing.metadata || {}),
-        ...data.metadata
-      };
-      
-      // Update org
-      await database.update(
-        "organizations",
-        { id: `eq.${encodeURIComponent(data.id)}` },
-        { metadata: updatedMetadata }
-      );
-
-      console.log(`[SSO] Updated organization ${data.id} metadata`);
-
-      // Publish organization.updated event to sync to Skillpassport
-      await this.env.SYNC_QUEUE.send({
-        type: 'organization.updated',
-        payload: {
-          id: data.id,
-          metadata: updatedMetadata
-        },
-        timestamp: new Date().toISOString(),
-      });
-
-      console.log(`[SSO] Published organization.updated event for ${data.id}`);
-
-      return { success: true };
-    } catch (error) {
-      const errorMsg = getErrorMessage(error);
-      console.error(`[SSO] Error updating organization details:`, errorMsg);
-      return { success: false, error: errorMsg };
-    }
+    return performUpdateOrganizationDetails(this.env, data);
   }
 
   // ── Learner Admission RPC Methods ─────────────────────────────
 
-  /**
-   * Create learner user account (for bulk admission or manual entry)
-   * Creates user in SSO DB, syncs to Skillpassport via queue, sends invitation email
-   * 
-   * @param data Learner user data
-   * @returns { success, user_id, temp_password }
-   */
   async createLearnerUser(data: {
     email: string;
     name: string;
@@ -1177,297 +788,24 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     program_id?: string;
     metadata?: Record<string, unknown>;
   }): Promise<{ success: boolean; user_id?: string; temp_password?: string; error?: string; sync_warning?: string }> {
-    const { validateLearnerData, generateTempPassword, splitName, checkUserExists, getLearnerRole } = await import('./lib/learner-helpers');
-    
-    // Validate input
-    const validation = validateLearnerData(data);
-    if (!validation.valid) {
-      return { success: false, error: validation.error };
-    }
-    
-    // Validate organization_id UUID format
-    if (!isValidUUID(data.organization_id)) {
-      return { success: false, error: 'Invalid organization_id format (must be a valid UUID)' };
-    }
-    
-    const database = db(this.env);
-    const { name, organization_id, contact_number, enrollment_number, program_id, metadata } = data;
-    const email = data.email.toLowerCase().trim();
-    
-    try {
-      // Check if user already exists
-      const exists = await checkUserExists(database, email);
-      if (exists) {
-        return { success: false, error: `User with email ${email} already exists` };
-      }
-      
-      // Verify learner role exists before creating user (prevents orphaned users)
-      const learnerRoleId = await getLearnerRole(database);
-      if (!learnerRoleId) {
-        return { success: false, error: 'Learner role not found in database' };
-      }
-      
-      // Generate temporary password for immediate login
-      const tempPassword = generateTempPassword();
-      const passwordHash = await hashPassword(tempPassword);
-      
-      // Split name
-      const { first_name, last_name } = splitName(name);
-      
-      // Create user in SSO DB
-      const user = await database.mutate<{ id: string; email: string }>("users", {
-        email,
-        password_hash: passwordHash,
-        user_metadata: {
-          first_name,
-          last_name,
-          contact_number,
-          enrollment_number,
-          program_id,
-          role: 'learner',
-          ...metadata
-        },
-        is_email_verified: true, // ✅ Learners are auto-verified (admin-created accounts)
-      });
-      
-      console.log(`[SSO] Created learner user ${user.id} for ${email}`);
-      
-      // ✅ CREATE MEMBERSHIP AND ROLE for learner in SSO DB
-      // Use the organization_id passed from frontend (college/school that created the learner)
-      let membershipCreated = false;
-      try {
-        // ponytail: race-safe org upsert — concurrent inserts both succeed, one returns existing row
-        const { ensureOrganizationExists } = await import('./lib/organization-sync');
-        await ensureOrganizationExists(this.env, organization_id);
-        
-        // Upsert membership (race-safe: check-insert-catch-recheck)
-        let membershipId: string | undefined;
-        
-        try {
-          const membershipResult = await database.query<{ id: string }>(
-            `memberships?user_id=eq.${encodeURIComponent(user.id)}&org_id=eq.${encodeURIComponent(organization_id)}&select=id`
-          );
-          
-          if (membershipResult.length > 0) {
-            membershipId = membershipResult[0].id;
-            console.log(`[SSO] Membership already exists: ${membershipId}`);
-          } else {
-            const membership = await database.mutate<{ id: string }>("memberships", {
-              user_id: user.id,
-              org_id: organization_id,
-              status: 'active'
-            });
-            membershipId = membership.id;
-          }
-        } catch (insertError) {
-          // Duplicate key from concurrent request — re-check
-          // ponytail: Check PostgreSQL SQLSTATE 23505 (unique_violation) properly
-          const error = insertError as Error & { code?: string | number };
-          const errorMsg = (error?.message || String(insertError)).toLowerCase();
-          
-          const isDuplicateError = 
-            error?.code === '23505' ||
-            errorMsg.includes('duplicate key') || 
-            errorMsg.includes('unique constraint');
-          
-          if (isDuplicateError) {
-            console.log(`[SSO] Membership inserted by concurrent request, re-fetching for user ${user.id}`);
-            const retryResult = await database.query<{ id: string }>(
-              `memberships?user_id=eq.${encodeURIComponent(user.id)}&org_id=eq.${encodeURIComponent(organization_id)}&select=id`
-            );
-            if (retryResult.length > 0) {
-              membershipId = retryResult[0].id;
-            } else {
-              throw new Error('Membership lost after concurrent insert detected');
-            }
-          } else {
-            throw insertError;
-          }
-        }
-        
-        if (!membershipId) {
-          throw new Error('Failed to create or retrieve membership');
-        }
-        
-        // Upsert membership_role (race-safe: check first)
-        const roleResult = await database.query<{ id: string }>(
-          `membership_roles?membership_id=eq.${encodeURIComponent(membershipId)}&role_id=eq.${encodeURIComponent(learnerRoleId)}&select=id`
-        );
-        
-        if (roleResult.length === 0) {
-          try {
-            await database.mutate("membership_roles", {
-              membership_id: membershipId,
-              role_id: learnerRoleId
-            });
-          } catch (roleInsertError) {
-            // Duplicate from concurrent request is OK
-            const errorMsg = roleInsertError instanceof Error ? roleInsertError.message : String(roleInsertError);
-            if (!errorMsg.includes('duplicate') && !errorMsg.includes('23505') && !errorMsg.includes('unique')) {
-              throw roleInsertError;
-            }
-          }
-        }
-        
-        console.log(`[SSO] Membership setup complete for learner ${user.id} in org ${organization_id}`);
-        membershipCreated = true;
-      } catch (membershipError) {
-        console.error(`[SSO] Failed to create membership for learner ${user.id}:`, membershipError);
-        // Don't fail user creation, but track that membership failed
-        membershipCreated = false;
-      }
-      
-      // CRITICAL: If membership creation failed, return error immediately
-      // Don't sync to Skillpassport or send invitation email
-      if (!membershipCreated) {
-        return {
-          success: false,
-          error: `User created in SSO but membership setup failed for organization ${organization_id}`,
-          user_id: user.id,
-        };
-      }
-      
-      // Publish to auth-db-sync-queue and email queue (with error handling)
-      if (!this.env.SYNC_QUEUE) {
-        console.error(`[SSO] SYNC_QUEUE not bound, learner ${user.id} created but not synced`);
-        return {
-          success: true,
-          user_id: user.id,
-          temp_password: tempPassword,
-          sync_warning: 'SYNC_QUEUE not bound - sync skipped, manual reconciliation needed'
-        };
-      }
-
-      try {
-        await this.env.SYNC_QUEUE.send({
-          type: 'user.created',
-          payload: {
-            id: user.id,
-            email: user.email,
-            is_email_verified: true, // ✅ Include verification status for sync
-            user_metadata: {
-              first_name,
-              last_name,
-              contact_number,
-              enrollment_number,
-              program_id,
-              role: 'learner',
-            },
-          },
-          timestamp: new Date().toISOString(),
-        });
-        
-        console.log(`[SSO] Published user.created event for ${user.id} to sync queue`);
-        
-        // Membership was verified successful above - always publish membership.created
-        await this.env.SYNC_QUEUE.send({
-          type: 'membership.created',
-          payload: {
-            user_id: user.id,
-            organization_id,
-            roles: ['learner'],
-            status: 'active',
-          },
-          timestamp: new Date().toISOString(),
-        });
-        
-        console.log(`[SSO] Published membership.created event for learner ${user.id} to sync queue`);
-        
-        if (!this.env.EMAIL_QUEUE) {
-          console.error(`[SSO] EMAIL_QUEUE not bound, cannot send invitation for ${user.id}`);
-          return {
-            success: true,
-            user_id: user.id,
-            temp_password: tempPassword,
-            sync_warning: 'Email queue not bound - invitation not sent. Use temp_password or forgot password flow.'
-          };
-        }
-        
-        const loginUrl = `${this.env.SKILLPASSPORT_URL}/login`;
-        const template = buildLearnerInvitationEmail(name, user.email, tempPassword, loginUrl);
-        
-        await this.env.EMAIL_QUEUE.send({
-          type: 'send-email',
-          to: user.email,
-          subject: template.subject,
-          html: template.html,
-        });
-        
-        console.log(`[SSO] Published email invitation for ${user.id} to email queue`);
-        } catch (queueError) {
-        const queueErrorMsg = getErrorMessage(queueError);
-        console.error(`[SSO] Failed to queue sync events for ${user.id}:`, queueErrorMsg);
-        console.error(`[SSO] MANUAL ACTION REQUIRED: User ${user.id} (${email}) created but not synced to Skillpassport`);
-        return {
-          success: true,
-          user_id: user.id,
-          temp_password: tempPassword,
-          sync_warning: 'User created but sync to Skillpassport failed',
-        };
-      }
-      
-      return {
-        success: true,
-        user_id: user.id,
-        temp_password: tempPassword,
-      };
-      
-    } catch (error) {
-      const errorMsg = getErrorMessage(error);
-      console.error(`[SSO] Error creating learner user for ${email}:`, errorMsg);
-      return { success: false, error: errorMsg };
-    }
+    return performCreateLearnerUser(this.env, data);
   }
 
-  /**
-   * Queue bulk learner upload (RPC method)
-   * Called by Skillpassport to initiate bulk CSV processing
-   */
   async queueBulkLearnerUpload(data: {
     csv_data: string;
     organization_id: string;
     admin_id: string;
   }): Promise<{ success: boolean; batch_id?: string; error?: string }> {
-    if (!data.csv_data || !data.csv_data.trim() || !data.organization_id) {
-      return { success: false, error: 'csv_data and organization_id are required' };
-    }
-    
+    return performQueueBulkLearnerUpload(this.env, data);
+  }
+
+  async getBulkUploadStatus(batchId: string): Promise<BatchMetadata | null> {
     try {
-      // Generate batch ID
-      const batchId = `BATCH-${new Date().toISOString().split('T')[0]}-${Date.now()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
-      
-      console.log(`[SSO] Queueing bulk upload batch ${batchId} for org ${data.organization_id}`);
-      
-      if (!this.env.LEARNER_ADMISSION_QUEUE) {
-        const errorMsg = 'LEARNER_ADMISSION_QUEUE not bound';
-        console.error(`[SSO] ${errorMsg}`);
-        throw new Error(errorMsg);
-      }
-      
-      try {
-        await this.env.LEARNER_ADMISSION_QUEUE.send({
-          type: 'parse-csv',
-          batch_id: batchId,
-          csv_data: data.csv_data,
-          organization_id: data.organization_id,
-          admin_id: data.admin_id,
-          retry_count: 0
-        });
-      } catch (queueError) {
-        const errorMsg = getErrorMessage(queueError);
-        throw new Error(`Failed to queue bulk upload: ${errorMsg}`);
-      }
-      
-      console.log(`[SSO] Queued parse-csv job for batch ${batchId}`);
-      
-      return {
-        success: true,
-        batch_id: batchId
-      };
-    } catch (error) {
-      const errorMsg = getErrorMessage(error);
-      console.error(`[SSO] Error queueing bulk upload:`, errorMsg);
-      return { success: false, error: errorMsg };
+      const result = await getBatch(this.env, batchId);
+      return result;
+    } catch (err: any) {
+      console.error(`[SSO] getBulkUploadStatus error for ${batchId}:`, err?.message || err);
+      return null;
     }
   }
 
