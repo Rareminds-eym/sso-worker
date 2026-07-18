@@ -90,7 +90,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
   // ── Fetch handler (RPC-only mode) ────────────────────────────
   // HTTP routes disabled - all access via RPC service binding only
-  async fetch(req: Request): Promise<Response> {
+  async fetch(_req: Request): Promise<Response> {
     return new Response(JSON.stringify({
       error: "HTTP access disabled",
       message: "This service is only accessible via RPC service binding (env.SSO_SERVICE)",
@@ -1197,7 +1197,6 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         // Per-token TTL expiry.
         throw new Error("Session expired");
 
-      case "invalid":
       default:
         // Unknown or missing refresh token.
         throw new Error("Invalid refresh token");
@@ -1296,8 +1295,12 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     for (const row of roleRows) {
       const mid = row.membership_id;
       const roleName = (row as any).role_id?.name ?? (row as any).name;
-      if (!roleMap.has(mid)) roleMap.set(mid, []);
-      if (roleName) roleMap.get(mid)!.push(roleName);
+      let roles = roleMap.get(mid);
+      if (!roles) {
+        roles = [];
+        roleMap.set(mid, roles);
+      }
+      if (roleName) roles.push(roleName);
     }
 
     return {
@@ -1346,8 +1349,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     // Revoke old session and create new one
-    let familyId = crypto.randomUUID();
-    let familyCreatedAt = new Date().toISOString();
+    const familyId = crypto.randomUUID();
+    const familyCreatedAt = new Date().toISOString();
 
     // Get RBAC claims for the target org
     const claims = await database.rpc<JwtClaims>("get_jwt_claims", {
