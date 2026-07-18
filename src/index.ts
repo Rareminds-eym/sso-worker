@@ -16,6 +16,21 @@ import type { AccessTokenPayload, Env, Invite, Session } from "./types";
 // HTTP route handlers removed - all imports now unused except for types
 // Business logic functions (perform*) are imported dynamically in RPC methods
 
+type EventRow = {
+  id: string;
+  event_id: string;
+  event_type: string;
+  status: string;
+  processed_at: string | null;
+  error_message: string | null;
+  retry_count: number | null;
+  payload: unknown;
+  user_id: string | null;
+  subscription_id: string | null;
+  razorpay_payment_id: string | null;
+  created_at: string | null;
+};
+
 // ─── WorkerEntrypoint ─────────────────────────────────────────
 export class SsoWorker extends WorkerEntrypoint<Env> {
   // ── Scheduled (cron) ──────────────────────────────────────────
@@ -34,12 +49,13 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       const result = await database.rpc<{ count: number }[]>("expire_old_subscriptions");
       const expired = Array.isArray(result) ? result[0]?.count ?? 0 : 0;
       if (expired > 0) console.log(`[SSO] Expired ${expired} subscription(s)`);
-    } catch (err: any) {
-      console.error(`[SSO] Failed to expire subscriptions: ${err?.message}`);
+    } catch (err: unknown) {
+      const errMessage = err instanceof Error ? err.message : String(err);
+      console.error(`[SSO] Failed to expire subscriptions: ${errMessage}`);
     }
 
     try {
-      const pendingEvents = await database.query<Record<string, any>>(
+      const pendingEvents = await database.query<EventRow>(
         "events?status=eq.received&order=created_at.asc&limit=10"
       );
       if (pendingEvents && pendingEvents.length > 0) {
@@ -74,17 +90,19 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
               processed_at: new Date().toISOString()
             });
             console.log(`[SSO] Processed webhook event ${event.event_id} of type ${event.event_type}`);
-          } catch (processErr: any) {
+          } catch (processErr: unknown) {
+            const processErrMessage = processErr instanceof Error ? processErr.message : String(processErr);
             await database.update("events", { id: `eq.${encodeURIComponent(event.id)}` }, {
               status: "failed",
-              error_message: processErr?.message || "Unknown error",
+              error_message: processErrMessage || "Unknown error",
               retry_count: (event.retry_count || 0) + 1
             });
           }
         }
       }
-    } catch (err: any) {
-      console.error(`[SSO] Failed to process webhook events: ${err?.message}`);
+    } catch (err: unknown) {
+      const errMessage = err instanceof Error ? err.message : String(err);
+      console.error(`[SSO] Failed to process webhook events: ${errMessage}`);
     }
   }
 
@@ -134,8 +152,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           if (first_name !== undefined || last_name !== undefined) {
             try {
               // Note: using db(this.env) which wraps Postgres REST. 
-              const user = await database.queryOne(`users?id=eq.${encodeURIComponent(body.user_id)}&select=user_metadata`);
-              const currentMetadata = (user as any)?.user_metadata || {};
+              const user = await database.queryOne<{ user_metadata?: Record<string, unknown> }>(`users?id=eq.${encodeURIComponent(body.user_id)}&select=user_metadata`);
+              const currentMetadata = user?.user_metadata || {};
 
               const newMetadata = { ...currentMetadata };
               if (first_name !== undefined) newMetadata.first_name = first_name;
@@ -337,8 +355,9 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           p_org_id: data.org_id,
         },
       );
-    } catch (err: any) {
-      if (err?.message?.includes("duplicate") || err?.message?.includes("23505")) {
+    } catch (err: unknown) {
+      const errMessage = err instanceof Error ? err.message : String(err);
+      if (errMessage.includes("duplicate") || errMessage.includes("23505")) {
         throw new Error(`A user with email ${email} already exists`);
       }
       throw err;
@@ -565,16 +584,15 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     let productId = data.product_id;
     if (!productId && data.subscription_id) {
-      const sub = await database.queryOne(
+      const subRow = await database.queryOne<{ product_id: string | null; plan_id: string | null }>(
         `subscriptions?id=eq.${encodeURIComponent(data.subscription_id)}&select=product_id,plan_id`,
       );
-      const subRow = sub as any;
-      productId = subRow?.product_id || null;
+      productId = subRow?.product_id || undefined;
       if (!productId && subRow?.plan_id) {
-        const plan = await database.queryOne(
+        const plan = await database.queryOne<{ product_id: string | null }>(
           `plans?id=eq.${encodeURIComponent(subRow.plan_id)}&select=product_id`,
         );
-        productId = (plan as any)?.product_id || null;
+        productId = plan?.product_id || undefined;
       }
     }
 
@@ -918,7 +936,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       const result = await performSignup(
         this.env,
         this.ctx,
-        params as any,
+        params,
         params.ip,
         params.ua
       );
@@ -935,10 +953,11 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         org: result.org,
         email_sent: result.email_sent
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const errMessage = err instanceof Error ? err.message : String(err);
       return {
         success: false,
-        error: err?.message || 'Signup failed',
+        error: errMessage || 'Signup failed',
         status: 500
       };
     }
@@ -953,7 +972,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     email: string;
     redirect_url?: string;
     org_id?: string;
-  }): Promise<any> {
+  }): Promise<{ message?: string; already_verified?: boolean }> {
     const { performRequestVerification } = await import('./routes/verify-email');
     const result = await performRequestVerification(
       this.env,
@@ -976,7 +995,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     token: string;
     ip?: string;
     ua?: string;
-  }): Promise<any> {
+  }): Promise<{ success: false; error: string } | { success: true; verified?: boolean }> {
     const { performVerifyEmail } = await import('./routes/verify-email');
     const result = await performVerifyEmail(
       this.env,
@@ -1002,7 +1021,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     org_id?: string;
     ip?: string;
     ua?: string;
-  }): Promise<any> {
+  }): Promise<{ success: true; deleted?: boolean }> {
     const { performDeleteAccount } = await import('./routes/delete-account');
     const result = await performDeleteAccount(
       this.env,
@@ -1033,7 +1052,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     org_id?: string;
     ip?: string;
     ua?: string;
-  }): Promise<any> {
+  }): Promise<{ success: true; message?: string }> {
     const { performChangePassword } = await import('./routes/change-password');
     const result = await performChangePassword(
       this.env,
@@ -1067,7 +1086,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     new_password: string;
     ip?: string;
     ua?: string;
-  }): Promise<any> {
+  }): Promise<{ success: true; message?: string }> {
     const { performAdminResetPassword } = await import('./routes/change-password');
     const result = await performAdminResetPassword(
       this.env,
@@ -1257,7 +1276,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     };
   }
 
-  async listOrgs(accessToken: string): Promise<{ organizations: Array<any> }> {
+  async listOrgs(accessToken: string): Promise<{ organizations: Array<{ org_id: string; roles: string[]; name: string | null; slug: string | null; is_active: boolean }> }> {
     if (!accessToken) throw new Error("No access token provided");
 
     let payload: AccessTokenPayload;
@@ -1281,12 +1300,12 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       )
       : [];
 
-    const orgMap = new Map(orgs.map((o: any) => [o.id, o]));
+    const orgMap = new Map(orgs.map((o) => [o.id, o]));
 
     // Fetch roles for each membership via join table
     const membershipIds = memberships.map((m) => m.id);
     const roleRows = membershipIds.length
-      ? await database.query<{ membership_id: string; name: string }>(
+      ? await database.query<{ membership_id: string; role_id: { name: string } | null }>(
         `membership_roles?membership_id=in.(${membershipIds.map(id => encodeURIComponent(id)).join(",")})&select=membership_id,role_id(name)`,
       )
       : [];
@@ -1295,7 +1314,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const roleMap = new Map<string, string[]>();
     for (const row of roleRows) {
       const mid = row.membership_id;
-      const roleName = (row as any).role_id?.name ?? (row as any).name;
+      const roleName = row.role_id?.name;
       let roles = roleMap.get(mid);
       if (!roles) {
         roles = [];
@@ -1427,7 +1446,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return { success: true, message: result.message };
   }
 
-  async resetPassword(params: { token?: string; password?: string }, ip?: string, ua?: string): Promise<any> {
+  async resetPassword(params: { token?: string; password?: string }, ip?: string, ua?: string): Promise<{ success: false; error: string } | { success: true; reset?: boolean }> {
     const { performResetPassword } = await import("./routes/password-reset");
     const result = await performResetPassword(
       this.env,
@@ -1664,9 +1683,10 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           membership_id: membershipId,
           role_id: role.id,
         });
-      } catch (err: any) {
+      } catch (err: unknown) {
         // Ignore duplicate — role already assigned
-        if (!err?.message?.includes("23505") && !err?.message?.includes("duplicate")) {
+        const errMessage = err instanceof Error ? err.message : String(err);
+        if (!errMessage.includes("23505") && !errMessage.includes("duplicate")) {
           throw err;
         }
       }
