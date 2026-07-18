@@ -90,7 +90,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
   // ── Fetch handler (RPC-only mode) ────────────────────────────
   // HTTP routes disabled - all access via RPC service binding only
-  async fetch(_req: Request): Promise<Response> {
+  async fetch(): Promise<Response> {
     return new Response(JSON.stringify({
       error: "HTTP access disabled",
       message: "This service is only accessible via RPC service binding (env.SSO_SERVICE)",
@@ -1197,6 +1197,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         // Per-token TTL expiry.
         throw new Error("Session expired");
 
+      case "invalid":
       default:
         // Unknown or missing refresh token.
         throw new Error("Invalid refresh token");
