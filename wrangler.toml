@@ -5,6 +5,8 @@ compatibility_flags = ["nodejs_compat"]
 
 [dev]
 port = 8787
+host = "127.0.0.1"
+inspector_port = 9227
 
 [observability]
 enabled = true
@@ -22,8 +24,8 @@ crons = ["0 3 * * *"]
 [vars]
 ENVIRONMENT = "production"
 SUPABASE_URL = "https://quvdgaydpctuspzeqknc.supabase.co"
-ALLOWED_ORIGINS = "http://localhost:3000,http://localhost:5173,http://localhost:8788,https://*.rareminds.in,https://*.pages.dev,http://127.0.0.1:8788"
-ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:5173,http://localhost:8788,http://127.0.0.1:8788,https://skillpassport.rareminds.in,https://*.rareminds.in,https://*.pages.dev"
+ALLOWED_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://localhost:8788,http://localhost:8789,https://*.rareminds.in,https://*.pages.dev,http://127.0.0.1:8788,http://127.0.0.1:8789"
+ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:3000/,http://localhost:3000/auth/callback,http://127.0.0.1:3000,http://127.0.0.1:3000/auth/callback,http://localhost:5173,http://localhost:8788,http://localhost:8789,http://127.0.0.1:8788,http://127.0.0.1:8789,https://skillpassport.rareminds.in,https://*.rareminds.in,https://*.pages.dev"
 
 # Secrets (set via `wrangler secret put`):
 # SUPABASE_SERVICE_ROLE_KEY
@@ -34,6 +36,14 @@ ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:5173,http://localhost
 [[kv_namespaces]]
 binding = "RATE_LIMIT_KV"
 id = "6f54bab45fd840678dde620cd1518705"
+
+[[durable_objects.bindings]]
+name = "AUTH_CODE_STORE"
+class_name = "AuthorizationCodeStore"
+
+[[migrations]]
+tag = "v1_authorization_code_store"
+new_sqlite_classes = ["AuthorizationCodeStore"]
 
 [[services]]
 binding = "EMAIL_SERVICE"

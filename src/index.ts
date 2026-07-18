@@ -7,11 +7,29 @@ import { inviteEmail, sendEmail } from "./lib/email";
 import { checkEmailThrottle } from "./lib/email-throttle";
 import { generateRefreshToken, hashPassword, hashToken } from "./lib/hash";
 import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "./lib/jwt";
+import { signLteAccessToken } from "./lib/app-token";
 import { endpointRateLimit } from "./lib/rate-limit";
 import { rotateRefreshToken } from "./lib/session-rotation";
 import { publishSyncEvent } from "./lib/sync-queue";
+import {
+  assertAllowedRedirectUri,
+  assertTargetApp,
+  createAuthorizationCode,
+  getAuthorizationCodeStub,
+  hashAuthorizationValue,
+} from "./lib/authorization-code";
+import { requireLteEntitlement } from "./lib/lte-entitlement";
+import { getLteSubscriptionSnapshot } from "./lib/subscription-snapshot";
 import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "./lib/validate";
-import type { AccessTokenPayload, Env, Invite, Session } from "./types";
+import type { AccessTokenPayload, Env, Invite, JwtClaims, Membership, Organization, Session, SignupMemberBody } from "./types";
+import type {
+  ExchangeAuthorizationCodeRequest,
+  ExchangeAuthorizationCodeResponse,
+  GenerateAuthorizationCodeRequest,
+  GenerateAuthorizationCodeResponse,
+} from "./types/sso-code";
+
+export { AuthorizationCodeStore } from "./durable-objects/AuthorizationCodeStore";
 
 // HTTP route handlers removed - all imports now unused except for types
 // Business logic functions (perform*) are imported dynamically in RPC methods
@@ -1259,6 +1277,165 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     };
   }
 
+  async generateAuthorizationCode(
+    params: GenerateAuthorizationCodeRequest,
+  ): Promise<GenerateAuthorizationCodeResponse> {
+    if (!params.accessToken) {
+      throw new Error("No access token provided");
+    }
+
+    assertTargetApp(params.targetApp);
+    assertAllowedRedirectUri(params.redirectUri, this.env);
+
+    let payload: AccessTokenPayload;
+    try {
+      payload = await verifyAccessToken(params.accessToken, this.env);
+    } catch {
+      throw new Error("Invalid or expired access token");
+    }
+
+    await requireLteEntitlement(this.env, payload);
+
+    const generated = await createAuthorizationCode(params.redirectUri);
+    const stub = getAuthorizationCodeStub(this.env, generated.codeHash);
+    const now = Date.now();
+
+    await stub.store({
+      codeHash: generated.codeHash,
+      stateHash: generated.stateHash,
+      userId: payload.sub,
+      orgId: payload.org_id,
+      targetApp: "lte",
+      redirectUri: params.redirectUri,
+      expiresAt: Date.parse(generated.expiresAt),
+      createdAt: now,
+    });
+
+    audit(this.ctx, this.env, "authorization_code.generated", {
+      user_id: payload.sub,
+      org_id: payload.org_id,
+      ip_address: params.ip,
+      user_agent: params.ua,
+      metadata: { target_app: "lte", redirect_uri: params.redirectUri },
+    });
+
+    return {
+      code: generated.code,
+      state: generated.state,
+      redirectUrl: generated.redirectUrl,
+      codeExpiresAt: generated.expiresAt,
+    };
+  }
+
+  async exchangeAuthorizationCode(
+    params: ExchangeAuthorizationCodeRequest,
+  ): Promise<ExchangeAuthorizationCodeResponse> {
+    if (!params.code || !params.state) {
+      throw new Error("Authorization code and state are required");
+    }
+
+    assertTargetApp(params.targetApp);
+    assertAllowedRedirectUri(params.redirectUri, this.env);
+
+    const [codeHash, stateHash] = await Promise.all([
+      hashAuthorizationValue(params.code),
+      hashAuthorizationValue(params.state),
+    ]);
+    const stub = getAuthorizationCodeStub(this.env, codeHash);
+    const consumeResult = await stub.consume({
+      codeHash,
+      stateHash,
+      redirectUri: params.redirectUri,
+      now: Date.now(),
+    });
+
+    if (!consumeResult.success) {
+      audit(this.ctx, this.env, "authorization_code.exchange_failed", {
+        ip_address: params.ip,
+        user_agent: params.ua,
+        metadata: { target_app: "lte", reason: consumeResult.reason },
+      });
+      throw new Error(`Authorization code exchange failed: ${consumeResult.reason}`);
+    }
+
+    const record = consumeResult.record;
+    if (record.targetApp !== "lte") {
+      throw new Error("Authorization code target app mismatch");
+    }
+
+    const entitlement = await requireLteEntitlement(this.env, {
+      sub: record.userId,
+      email: "",
+      org_id: record.orgId,
+      roles: [],
+      products: [],
+      membership_status: "active",
+      is_email_verified: false,
+      user_metadata: {},
+    });
+
+    const refreshToken = generateRefreshToken();
+    const refreshHash = await hashToken(refreshToken);
+    const sessionId = crypto.randomUUID();
+    const now = new Date().toISOString();
+
+    await db(this.env).mutate("sessions", {
+      id: sessionId,
+      user_id: record.userId,
+      org_id: record.orgId,
+      refresh_token_hash: refreshHash,
+      user_agent: params.ua,
+      ip_address: params.ip,
+      revoked: false,
+      expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+      family_id: sessionId,
+      family_created_at: now,
+      device_info: { app: "lte" },
+    });
+
+    const claims: JwtClaims = entitlement.claims;
+    const lteProducts = claims.products.includes("lte") ? claims.products : [...claims.products, "lte"];
+    const accessToken = await signLteAccessToken(
+      {
+        sub: record.userId,
+        email: entitlement.user.email,
+        org_id: record.orgId,
+        roles: claims.roles,
+        products: lteProducts,
+        membership_status: claims.membership_status,
+        is_email_verified: entitlement.user.is_email_verified,
+        user_metadata: entitlement.user.user_metadata ?? {},
+      },
+      this.env,
+    );
+
+    const subscription = await getLteSubscriptionSnapshot(this.env, record.userId);
+
+    audit(this.ctx, this.env, "authorization_code.exchanged", {
+      user_id: record.userId,
+      org_id: record.orgId,
+      ip_address: params.ip,
+      user_agent: params.ua,
+      metadata: { target_app: "lte", session_id: sessionId },
+    });
+
+    return {
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      user: {
+        sub: record.userId,
+        email: entitlement.user.email,
+        org_id: record.orgId,
+        roles: claims.roles,
+        products: lteProducts,
+        membership_status: claims.membership_status,
+        is_email_verified: entitlement.user.is_email_verified,
+        user_metadata: entitlement.user.user_metadata ?? {},
+      },
+      subscription,
+    };
+  }
+
   async listOrgs(accessToken: string): Promise<{ organizations: Array<any> }> {
     if (!accessToken) throw new Error("No access token provided");
 
@@ -1408,7 +1585,11 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     };
   }
 
-  async forgotPassword(params: { email?: string; redirect_url?: string }, ip?: string, ua?: string): Promise<{ message?: string }> {
+  async forgotPassword(
+    params: { email?: string; redirect_url?: string },
+    ip?: string,
+    ua?: string,
+  ): Promise<{ success: boolean; message?: string; error?: string }> {
     const { performForgotPassword } = await import("./routes/password-reset");
     const result = await performForgotPassword(
       this.env,

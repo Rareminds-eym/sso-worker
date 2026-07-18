@@ -57,6 +57,7 @@ UQIDAQAB
   JWT_KID: 'test-key-1',
   ALLOWED_ORIGINS: 'http://localhost:3000',
   RATE_LIMIT_KV: {} as KVNamespace,
+  AUTH_CODE_STORE: {} as unknown as Env["AUTH_CODE_STORE"],
   EMAIL_SERVICE: {
     fetch: async () => new Response(),
     sendEmail: async () => ({ success: true }),

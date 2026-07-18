@@ -1,4 +1,5 @@
 import type { SyncEvent } from './lib/sync-queue';
+import type { AuthorizationCodeStore } from './durable-objects/AuthorizationCodeStore';
 
 // ─── Environment ───────────────────────────────────────────────
 export interface Env {
@@ -13,6 +14,8 @@ export interface Env {
   JWT_KID_PREVIOUS?: string;
   ALLOWED_ORIGINS: string;
   RATE_LIMIT_KV: KVNamespace;
+  /** Durable Object namespace for one-time cross-app authorization codes. */
+  AUTH_CODE_STORE: DurableObjectNamespace<AuthorizationCodeStore>;
   /** Service binding to the email-worker for sending emails via RPC. */
   EMAIL_SERVICE: Fetcher & {
     sendEmail(params: any): Promise<any>;
