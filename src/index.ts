@@ -152,7 +152,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           if (first_name !== undefined || last_name !== undefined) {
             try {
               // Note: using db(this.env) which wraps Postgres REST.
-              const user = await database.queryOne<{ user_metadata?: Record<string, unknown> }>(`users?id=eq.${encodeURIComponent(body.user_id)}&select=user_metadata`);
+              const user = await database.queryOne<{ user_metadata: Record<string, unknown> | null }>(`users?id=eq.${encodeURIComponent(body.user_id)}&select=user_metadata`);
               if (!user) {
                 console.warn(`[SSO] Skipping user_metadata sync: user ${body.user_id} not found`);
                 message.ack();
@@ -1631,7 +1631,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       throw new Error("Invite has expired");
     }
 
-    let user = await database.queryOne<{ id: string; email: string; is_email_verified: boolean; user_metadata?: Record<string, unknown> }>(
+    let user = await database.queryOne<{ id: string; email: string; is_email_verified: boolean; user_metadata: Record<string, unknown> | null }>(
       `users?email=eq.${encodeURIComponent(invite.email)}&select=*`,
     );
 
