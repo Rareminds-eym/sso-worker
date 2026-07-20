@@ -11,7 +11,7 @@ import { endpointRateLimit } from "./lib/rate-limit";
 import { rotateRefreshToken } from "./lib/session-rotation";
 import { publishSyncEvent } from "./lib/sync-queue";
 import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "./lib/validate";
-import type { AccessTokenPayload, Env, Invite, Session } from "./types";
+import type { AccessTokenPayload, Env, Invite, Organization, Session } from "./types";
 
 // HTTP route handlers removed - all imports now unused except for types
 // Business logic functions (perform*) are imported dynamically in RPC methods
@@ -1217,8 +1217,11 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         throw new Error("Session expired");
 
       case "invalid":
+        // Missing session row, unresolvable token, or user deleted mid-rotation.
+        throw new Error("Invalid refresh token");
+
       default:
-        // Unknown or missing refresh token.
+        // Unknown outcome kind not explicitly handled above.
         throw new Error("Invalid refresh token");
     }
   }
