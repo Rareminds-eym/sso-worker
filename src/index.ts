@@ -587,12 +587,12 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       const subRow = await database.queryOne<{ product_id: string | null; plan_id: string | null }>(
         `subscriptions?id=eq.${encodeURIComponent(data.subscription_id)}&select=product_id,plan_id`,
       );
-      productId = subRow?.product_id || undefined;
+      productId = subRow?.product_id ?? undefined;
       if (!productId && subRow?.plan_id) {
         const plan = await database.queryOne<{ product_id: string | null }>(
           `plans?id=eq.${encodeURIComponent(subRow.plan_id)}&select=product_id`,
         );
-        productId = plan?.product_id || undefined;
+        productId = plan?.product_id ?? undefined;
       }
     }
 
@@ -1220,9 +1220,12 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         // Missing session row, unresolvable token, or user deleted mid-rotation.
         throw new Error("Invalid refresh token");
 
-      default:
-        // Unknown outcome kind not explicitly handled above.
+      default: {
+        // Compile-time guard: if RotationOutcome ever gains a new "kind", this
+        // line fails to typecheck until it's handled explicitly above.
+        const _exhaustive: never = outcome;
         throw new Error("Invalid refresh token");
+      }
     }
   }
 
