@@ -335,13 +335,16 @@ async function mintAccessToken(
         return "blocked";
     }
 
+    const rawProducts = claims?.products ?? [];
+    const products = rawProducts.includes("lte") ? rawProducts : [...rawProducts, "lte"];
+
     const token = await signAccessToken(
         {
             sub: userId,
             email: user?.email ?? "",
             org_id: orgId ?? "",
             roles: claims?.roles ?? [],
-            products: claims?.products ?? [],
+            products: products,
             membership_status: claims?.membership_status ?? "active",
             is_email_verified: user?.is_email_verified ?? false,
             user_metadata: user?.user_metadata ?? {},

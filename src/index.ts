@@ -1274,6 +1274,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       products: payload.products,
       membership_status: payload.membership_status,
       is_email_verified: payload.is_email_verified,
+      user_metadata: payload.user_metadata ?? {},
     };
   }
 
@@ -1433,6 +1434,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         user_metadata: entitlement.user.user_metadata ?? {},
       },
       subscription,
+      expires_in: 900,
     };
   }
 
@@ -1651,16 +1653,17 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const tokenHash = await hashToken(refreshToken);
 
     const session = await database.queryOne<Session>(
-      `sessions?refresh_token_hash=eq.${encodeURIComponent(tokenHash)}&select=user_id,org_id`,
+      `sessions?refresh_token_hash=eq.${encodeURIComponent(tokenHash)}&select=user_id,org_id,family_id`,
     );
 
     if (session) {
+      // Global SSO logout: revoke all sessions for this user across all apps
       await database.update(
         "sessions",
-        { refresh_token_hash: `eq.${encodeURIComponent(tokenHash)}` },
+        { user_id: `eq.${encodeURIComponent(session.user_id)}` },
         { revoked: true },
       ).catch((err) => {
-        console.warn("[SSO] Session revocation failed on logout:", err);
+        console.warn("[SSO] User sessions revocation failed on logout:", err);
       });
 
       audit(this.ctx, this.env, "logout", {
@@ -1668,6 +1671,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         org_id: session.org_id,
         ip_address: ip || null,
         user_agent: ua || null,
+        metadata: { global_logout: true, family_id: session.family_id },
       });
     }
 
@@ -1833,8 +1837,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     // Assign roles from invite via join table
     const inviteRoles = invite.role?.length ? invite.role : ["member"];
-   const roleRows = await database.query<{ id: string; name: string }>(
-  `roles?name=in.(${inviteRoles.map(r => encodeURIComponent(r)).join(",")})&select=id,name`,
+    const roleRows = await database.query<{ id: string; name: string }>(
+      `roles?name=in.(${inviteRoles.map(r => encodeURIComponent(r)).join(",")})&select=id,name`,
     );
 
     for (const role of roleRows) {
@@ -2056,5 +2060,6 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     };
   }
 }
+
 
 export default SsoWorker;

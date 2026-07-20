@@ -61,4 +61,5 @@ export interface ExchangeAuthorizationCodeResponse {
   refresh_token: string;
   user: LteUserClaims;
   subscription: LteSubscriptionSnapshot | null;
+  expires_in: number;
 }

@@ -50,6 +50,7 @@ export async function getLteSubscriptionSnapshot(
   let selectedSubscription: SubscriptionRow | null = null;
   let selectedPlan: PlanRow | null = null;
 
+  // First, try to find an LTE-specific subscription
   for (const subscription of subscriptions) {
     const plan = subscription.plan_id
       ? await database.queryOne<PlanRow>(
@@ -65,6 +66,18 @@ export async function getLteSubscriptionSnapshot(
       selectedSubscription = subscription;
       selectedPlan = plan;
       break;
+    }
+  }
+
+  // If no LTE-specific subscription found, but user has LTE access,
+  // use their most recent active subscription (this function is only called
+  // after LTE entitlement has been verified)
+  if (!selectedSubscription && subscriptions.length > 0) {
+    selectedSubscription = subscriptions[0]; // Most recent by created_at desc
+    if (selectedSubscription.plan_id) {
+      selectedPlan = await database.queryOne<PlanRow>(
+        `plans?id=eq.${encodeURIComponent(selectedSubscription.plan_id)}&select=id,name,plan_code,product_id,base_features&limit=1`,
+      );
     }
   }
 

@@ -153,6 +153,8 @@ export interface Session {
   rotated_from: string | null;
   last_used_at: string | null;
   device_info: Record<string, unknown> | null;
+  family_id: string | null;
+  family_created_at: string | null;
 }
 
 export interface Invite {
