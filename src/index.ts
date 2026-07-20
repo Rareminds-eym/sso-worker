@@ -151,9 +151,14 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
           if (first_name !== undefined || last_name !== undefined) {
             try {
-              // Note: using db(this.env) which wraps Postgres REST. 
+              // Note: using db(this.env) which wraps Postgres REST.
               const user = await database.queryOne<{ user_metadata?: Record<string, unknown> }>(`users?id=eq.${encodeURIComponent(body.user_id)}&select=user_metadata`);
-              const currentMetadata = user?.user_metadata || {};
+              if (!user) {
+                console.warn(`[SSO] Skipping user_metadata sync: user ${body.user_id} not found`);
+                message.ack();
+                continue;
+              }
+              const currentMetadata = user.user_metadata || {};
 
               const newMetadata = { ...currentMetadata };
               if (first_name !== undefined) newMetadata.first_name = first_name;
@@ -1282,7 +1287,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     };
   }
 
-  async listOrgs(accessToken: string): Promise<{ organizations: Array<{ org_id: string; roles: string[]; name: string | null; slug: string | null; is_active: boolean }> }> {
+  async listOrgs(accessToken: string): Promise<any> {
     if (!accessToken) throw new Error("No access token provided");
 
     let payload: AccessTokenPayload;
