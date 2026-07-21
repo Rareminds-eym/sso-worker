@@ -4,9 +4,14 @@ export type SyncEventType =
   | 'user.email_verified'
   | 'user.deleted'
   | 'organization.created'
+  | 'organization.updated'
   | 'membership.created'
   | 'membership.role_changed'
-  | 'membership.removed';
+  | 'membership.removed'
+  | 'subscription.created'
+  | 'subscription.updated'
+  | 'subscription.cancelled'
+  | 'subscription.expired';
 
 export interface SyncEvent {
   type: SyncEventType;
@@ -25,6 +30,10 @@ export function publishSyncEvent(
       type,
       payload,
       timestamp: new Date().toISOString(),
+    }).catch((err) => {
+      // ponytail: Log queue errors so they're not silently swallowed
+      // waitUntil doesn't propagate errors, so explicit catch is needed
+      console.error(`[SYNC_QUEUE] Failed to publish ${type}:`, err);
     }),
   );
 }
