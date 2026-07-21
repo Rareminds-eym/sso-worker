@@ -13,7 +13,7 @@ import { publishSyncEvent } from "./lib/sync-queue";
 import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "./lib/validate";
 import { fetchWithTimeout } from "./lib/fetch-timeout";
 import { getBatch, type BatchMetadata } from "./lib/batch-kv";
-import type { AccessTokenPayload, Env, Invite, Session, SignupMemberBody, Membership, Organization, JwtClaims, MessageBatch } from "./types";
+import type { AccessTokenPayload, Env, Invite, Session, SignupMemberBody, Membership, JwtClaims, MessageBatch } from "./types";
 import { handleQueueBatch } from "./queue/queue-router";
 
 import { performQueueUserSync } from "./routes/user-sync";
@@ -1253,12 +1253,12 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     const orgIds = memberships.map((m) => m.org_id);
     const orgs = orgIds.length
-      ? await database.query<Organization>(
+      ? await database.query<any>(
         `organizations?id=in.(${orgIds.map(id => encodeURIComponent(id)).join(",")})&select=*`,
       )
       : [];
 
-    const orgMap = new Map(orgs.map((o: Organization) => [o.id, o]));
+    const orgMap = new Map(orgs.map((o) => [o.id, o]));
 
     // Fetch roles for each membership via join table
     const membershipIds = memberships.map((m) => m.id);
@@ -1271,14 +1271,15 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     // PostgREST returns nested objects for FK selects — flatten
     const roleMap = new Map<string, string[]>();
     for (const row of roleRows) {
+      if (!row.role_id) continue;
+
       const mid = row.membership_id;
-      const roleName = row.role_id?.name;
       let roles = roleMap.get(mid);
       if (!roles) {
         roles = [];
         roleMap.set(mid, roles);
       }
-      if (roleName) roles.push(roleName);
+      roles.push(row.role_id.name);
     }
 
     return {
@@ -1643,8 +1644,15 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         });
       } catch (err: unknown) {
         // Ignore duplicate — role already assigned
-        const errMessage = err instanceof Error ? err.message : String(err);
-        if (!errMessage.includes("23505") && !errMessage.includes("duplicate")) {
+        let errMessage: string;
+        if (err instanceof Error) {
+          errMessage = err.message;
+        } else {
+          errMessage = String(err);
+        }
+
+        const isDuplicate = errMessage.includes("23505") || errMessage.includes("duplicate");
+        if (!isDuplicate) {
           throw err;
         }
       }
