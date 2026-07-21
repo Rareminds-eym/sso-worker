@@ -9,7 +9,7 @@ import { sendBatchToQueue } from "../lib/queue-utils";
 import type { Env, QueueMessage } from "../types";
 import { createUser } from "./handlers/create-user";
 
-interface LearnerBatchMessage {
+export interface LearnerBatchMessage {
 	batch_id: string;
 	batch_index: number;
 	learners: LearnerBatchItem[];

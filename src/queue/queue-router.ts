@@ -6,7 +6,9 @@
 
 import { db } from "../lib/db";
 import type { Env, MessageBatch, QueueMessage } from "../types";
+import type { CsvParseMessage } from "./csv-parser-handler";
 import { handleParseCsvQueue } from "./csv-parser-handler";
+import type { LearnerBatchMessage } from "./learner-batch-handler";
 import { handleCreateLearnerBatch } from "./learner-batch-handler";
 
 interface QueueMessageBody {
@@ -38,13 +40,21 @@ export async function routeQueueMessage(
 
 	// CSV Parsing Handler
 	if (body.type === "parse-csv") {
-		await handleParseCsvQueue(env, body as any, message as any);
+		await handleParseCsvQueue(
+			env,
+			body as unknown as CsvParseMessage,
+			message as unknown as QueueMessage<CsvParseMessage>,
+		);
 		return true;
 	}
 
 	// Batch Creation Handler (20 learners at once)
 	if (body.type === "create-learner-batch") {
-		await handleCreateLearnerBatch(env, body as any, message as any);
+		await handleCreateLearnerBatch(
+			env,
+			body as unknown as LearnerBatchMessage,
+			message as unknown as QueueMessage<LearnerBatchMessage>,
+		);
 		return true;
 	}
 

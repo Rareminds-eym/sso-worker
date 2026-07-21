@@ -35,10 +35,11 @@ export async function performCreateMember(
 			p_role: data.role,
 			p_org_id: data.org_id,
 		});
-	} catch (err: any) {
+	} catch (err: unknown) {
+		const errorMessage = err instanceof Error ? err.message : String(err);
 		if (
-			err?.message?.includes("duplicate") ||
-			err?.message?.includes("23505")
+			errorMessage.includes("duplicate") ||
+			errorMessage.includes("23505")
 		) {
 			throw new Error(`A user with email ${email} already exists`);
 		}
@@ -57,30 +58,37 @@ export async function performCreateMember(
 	if (!env.SYNC_QUEUE) {
 		console.error("[SSO] SYNC_QUEUE not bound, member created but not synced");
 	} else {
+		const syncUserPayload = {
+			type: "user.created" as const,
+			payload: {
+				id: result.user_id,
+				email,
+				user_metadata: {
+					role: data.role,
+				},
+			},
+			timestamp: new Date().toISOString(),
+		};
+		const syncMembershipPayload = {
+			type: "membership.created" as const,
+			payload: {
+				user_id: result.user_id,
+				organization_id: data.org_id,
+				roles: [data.role],
+				status: "active",
+			},
+			timestamp: new Date().toISOString(),
+		};
+
 		try {
-			await env.SYNC_QUEUE.send({
-				type: "user.created",
-				payload: {
-					id: result.user_id,
-					email,
-					user_metadata: {
-						role: data.role, // Include role for Skillpassport sync
-					},
-				},
-				timestamp: new Date().toISOString(),
-			});
-			await env.SYNC_QUEUE.send({
-				type: "membership.created",
-				payload: {
-					user_id: result.user_id,
-					organization_id: data.org_id,
-					roles: [data.role],
-					status: "active",
-				},
-				timestamp: new Date().toISOString(),
-			});
+			await env.SYNC_QUEUE.send(syncUserPayload);
 		} catch (e) {
-			console.error("[SSO] Failed to emit sync events:", e);
+			console.error("[SSO] Failed to emit user.created sync event:", e);
+		}
+		try {
+			await env.SYNC_QUEUE.send(syncMembershipPayload);
+		} catch (e) {
+			console.error("[SSO] Failed to emit membership.created sync event:", e);
 		}
 	}
 

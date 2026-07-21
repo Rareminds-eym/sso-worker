@@ -9,7 +9,7 @@ import { hashPassword } from "../lib/hash";
 import type { LearnerBatchItem } from "../lib/learner-types";
 import type { Env, QueueMessage } from "../types";
 
-interface CsvParseMessage {
+export interface CsvParseMessage {
 	batch_id: string;
 	csv_data: string;
 	organization_id: string;
@@ -70,6 +70,23 @@ export async function handleParseCsvQueue(
 
 		// PRE-HASH all passwords in parallel (do it ONCE here, not in each queue job!)
 		const { generateTempPassword } = await import("../lib/learner-helpers");
+
+		type HashResult =
+			| { rowNumber: number; error: string; email: string }
+			| {
+					rowNumber: number;
+					email: string;
+					passwordHash: string;
+					tempPassword: string;
+					learnerData: {
+						email: string;
+						name: string;
+						contact_number?: string;
+						enrollment_number?: string;
+						program_id?: string;
+						metadata?: Record<string, unknown>;
+					};
+			  };
 		const hashPromises = rows.map(async (row, i) => {
 			const rowNumber = i + 1;
 			const validation = validateCSVRow(row, rowNumber);
@@ -96,7 +113,7 @@ export async function handleParseCsvQueue(
 			};
 		});
 
-		const results: any[] = await Promise.all(hashPromises);
+		const results: HashResult[] = await Promise.all(hashPromises);
 
 		// Collect messages and errors
 		const LEARNER_BATCH_SIZE = 20; // Process 20 learners per queue message
