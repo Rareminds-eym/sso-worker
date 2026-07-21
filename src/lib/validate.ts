@@ -161,3 +161,12 @@ export function validatePassword(password: unknown): Response | null {
   
   return null;
 }
+
+/**
+ * Validate UUID format (RFC 4122).
+ * Returns true if valid UUID, false otherwise.
+ */
+export function isValidUUID(uuid: string): boolean {
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return UUID_RE.test(uuid);
+}
