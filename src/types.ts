@@ -34,9 +34,6 @@ export interface Env {
 
   /** Comma-separated allowlist of base URLs for email links, e.g. "https://skillpassport.rareminds.in,https://courses.rareminds.in". */
   ALLOWED_APP_URLS: string;
-
-  /** Optional registrable parent domain for refresh_token cookie (e.g., ".rareminds.in"). When unset, cookie is host-only. */
-  REFRESH_COOKIE_DOMAIN?: string;
 }
 
 // ─── Route Configuration ───────────────────────────────────────

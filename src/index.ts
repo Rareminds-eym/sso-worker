@@ -9,7 +9,7 @@ import { generateRefreshToken, hashPassword, hashToken } from "./lib/hash";
 import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "./lib/jwt";
 import { signLteAccessToken } from "./lib/app-token";
 import { endpointRateLimit } from "./lib/rate-limit";
-import { rotateRefreshToken } from "./lib/session-rotation";
+import { mintAccessToken, rotateRefreshToken } from "./lib/session-rotation";
 import { publishSyncEvent } from "./lib/sync-queue";
 import {
   assertAllowedRedirectUri,
@@ -1256,6 +1256,79 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     });
 
     return { valid: true, roles: claims?.roles ?? [] };
+  }
+
+  async authenticateSharedSession(
+    refreshToken: string,
+    targetApp: string,
+    ip?: string,
+    ua?: string,
+  ): Promise<{ success: boolean; access_token?: string; refresh_token?: string; error?: string }> {
+    if (!refreshToken) {
+      return { success: false, error: "No refresh token provided" };
+    }
+
+    const database = db(this.env);
+    let activeToken = refreshToken;
+    let tokenHash = await hashToken(activeToken);
+
+    let session = await database.queryOne<Session>(
+      `sessions?refresh_token_hash=eq.${encodeURIComponent(tokenHash)}&select=id,user_id,org_id,expires_at,revoked,family_id`,
+    );
+
+    // If no direct session or session is revoked, check if token was rotated within KV grace window
+    if ((!session || session.revoked) && this.env.RATE_LIMIT_KV) {
+      try {
+        const replacementToken = await this.env.RATE_LIMIT_KV.get(`grace:${tokenHash}`);
+        if (replacementToken) {
+          const replacementHash = await hashToken(replacementToken);
+          const activeSession = await database.queryOne<Session>(
+            `sessions?refresh_token_hash=eq.${encodeURIComponent(replacementHash)}&revoked=eq.false&select=id,user_id,org_id,expires_at,revoked,family_id`,
+          );
+          if (activeSession) {
+            session = activeSession;
+            activeToken = replacementToken;
+          }
+        }
+      } catch (kvErr) {
+        console.warn("[SSO] KV grace resolution failed:", kvErr);
+      }
+    }
+
+    // Fallback: If session was marked revoked, resolve latest unrevoked session in family
+    if ((!session || session.revoked) && session?.family_id) {
+      const activeSession = await database.queryOne<Session>(
+        `sessions?family_id=eq.${encodeURIComponent(session.family_id)}&revoked=eq.false&order=created_at.desc&limit=1&select=id,user_id,org_id,expires_at,revoked,family_id`,
+      );
+      if (activeSession) {
+        session = activeSession;
+      }
+    }
+
+    if (!session || session.revoked) {
+      console.log("[SSO] Shared session is invalid or revoked for app:", targetApp);
+      return { success: false, error: "Invalid or revoked session" };
+    }
+
+    if (new Date(session.expires_at) < new Date()) {
+      return { success: false, error: "Session expired" };
+    }
+
+    const result = await mintAccessToken(database, this.env, session.user_id, session.org_id);
+
+    if (result === "blocked") return { success: false, error: "Account is blocked" };
+    if (result === "not_found") return { success: false, error: "User not found" };
+
+    const payload = await verifyAccessToken(result.token, this.env);
+    if (!payload.products.includes(targetApp) && targetApp !== "sso") {
+      return { success: false, error: `Access denied for product: ${targetApp}` };
+    }
+
+    return {
+      success: true,
+      access_token: result.token,
+      refresh_token: activeToken,
+    };
   }
 
   async getMe(accessToken: string): Promise<Record<string, unknown>> {

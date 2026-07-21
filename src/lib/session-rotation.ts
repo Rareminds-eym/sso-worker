@@ -311,7 +311,7 @@ async function resolveFamilyOrgId(
  * verification status and RBAC claims, mirroring the existing inline rotation
  * logic in `routes/refresh.ts` and `index.ts::refreshSession`.
  */
-async function mintAccessToken(
+export async function mintAccessToken(
     database: DbClient,
     env: Env,
     userId: string,
