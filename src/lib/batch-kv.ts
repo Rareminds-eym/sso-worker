@@ -66,7 +66,6 @@ export async function getBatch(
   if (!data) {
     return null;
   }
-   
   try {
     return JSON.parse(data) as BatchMetadata;
   } catch (err) {

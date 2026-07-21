@@ -3,6 +3,14 @@ import { db } from "../lib/db";
 import { buildLearnerInvitationEmail } from "../lib/email-templates";
 import { getErrorMessage } from "../lib/error-utils";
 import { hashPassword } from "../lib/hash";
+import {
+	validateLearnerData,
+	generateTempPassword,
+	splitName,
+	checkUserExists,
+	getLearnerRole,
+} from "../lib/learner-helpers";
+import { ensureOrganizationExists } from "../lib/organization-sync";
 import { isValidUUID } from "../lib/validate";
 import type { Env } from "../types";
 
@@ -32,14 +40,6 @@ export async function performCreateLearnerUser(
 	error?: string;
 	sync_warning?: string;
 }> {
-	const {
-		validateLearnerData,
-		generateTempPassword,
-		splitName,
-		checkUserExists,
-		getLearnerRole,
-	} = await import("../lib/learner-helpers");
-
 	// Validate input
 	const validation = validateLearnerData(data);
 	if (!validation.valid) {
@@ -110,9 +110,6 @@ export async function performCreateLearnerUser(
 		let membershipCreated = false;
 		try {
 			// Race-safe org upsert — concurrent inserts both succeed, one returns existing row
-			const { ensureOrganizationExists } = await import(
-				"../lib/organization-sync"
-			);
 			await ensureOrganizationExists(env, organization_id);
 
 			// Upsert membership (race-safe: check-insert-catch-recheck)

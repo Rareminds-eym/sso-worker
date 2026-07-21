@@ -1,5 +1,6 @@
 import { db } from "../lib/db";
 import { getErrorMessage } from "../lib/error-utils";
+import { checkUserExistsInSkillpassport } from "../lib/skillpassport-check";
 import type { Env } from "../types";
 
 /**
@@ -21,9 +22,6 @@ export async function performQueueUserSync(
 		return { queued: false, reason: "SYNC_QUEUE not bound" };
 	}
 
-	const { checkUserExistsInSkillpassport } = await import(
-		"../lib/skillpassport-check"
-	);
 	const exists = await checkUserExistsInSkillpassport(env, userId);
 
 	if (exists) {

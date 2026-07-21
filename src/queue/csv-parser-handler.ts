@@ -1,4 +1,4 @@
-import { getBatch, markBatchFailed, saveBatch } from "../lib/batch-kv";
+import { getBatch, markBatchFailed, recordRowError, saveBatch } from "../lib/batch-kv";
 import {
 	mapCSVRowToLearnerData,
 	parseCSV,
@@ -7,6 +7,7 @@ import {
 import { getErrorMessage } from "../lib/error-utils";
 import { hashPassword } from "../lib/hash";
 import type { LearnerBatchItem } from "../lib/learner-types";
+import { generateTempPassword } from "../lib/learner-helpers";
 import type { Env, QueueMessage } from "../types";
 
 export interface CsvParseMessage {
@@ -69,7 +70,6 @@ export async function handleParseCsvQueue(
 		}> = [];
 
 		// PRE-HASH all passwords in parallel (do it ONCE here, not in each queue job!)
-		const { generateTempPassword } = await import("../lib/learner-helpers");
 
 		type HashResult =
 			| { rowNumber: number; error: string; email: string }
@@ -149,6 +149,11 @@ export async function handleParseCsvQueue(
 		// Add remaining learners as final batch
 		if (currentBatch.length > 0) {
 			learnerBatches.push(currentBatch);
+		}
+
+		// Record validation errors in batch metadata so the frontend can surface them
+		for (const record of errorRecords) {
+			await recordRowError(env, batch_id, record.rowNumber, record.email, record.error);
 		}
 
 		// Send batched queue messages (one message per 20 learners)

@@ -123,8 +123,11 @@ async function handleUserMetadataSync(
 	body: QueueMessageBody,
 	message: QueueMessage<QueueMessageBody>,
 ): Promise<void> {
-	const { first_name, last_name } =
-		(body.payload as Record<string, unknown>) || {};
+	const payload =
+		typeof body.payload === "object" && body.payload !== null
+			? (body.payload as Record<string, unknown>)
+			: {};
+	const { first_name, last_name } = payload;
 
 	if (first_name !== undefined || last_name !== undefined) {
 		try {
