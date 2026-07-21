@@ -101,31 +101,11 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
   // ── Queue Handler (Asynchronous Events) ─────────────────────
   async queue(batch: MessageBatch): Promise<void> {
-    if (!batch) {
-      throw new Error('Invalid batch: batch object is null or undefined');
-    }
-    
-    if (!batch.messages) {
-      throw new Error('Invalid batch: messages property is missing');
-    }
-    
-    if (!Array.isArray(batch.messages)) {
-      throw new Error(`Invalid batch: messages must be an array, got ${typeof batch.messages}`);
-    }
-    
     if (batch.messages.length === 0) {
       console.log('[SSO] Empty batch received, skipping');
       return;
     }
-    
-    // Validate each message has required structure
-    for (let i = 0; i < batch.messages.length; i++) {
-      const msg = batch.messages[i];
-      if (!msg || typeof msg !== 'object') {
-        throw new Error(`Invalid message at index ${i}: not an object`);
-      }
-    }
-    
+
     try {
       await handleQueueBatch(this.env, batch);
     } catch (err) {

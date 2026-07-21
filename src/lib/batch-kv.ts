@@ -49,11 +49,7 @@ export async function createBatch(
     errors: []
   };
   
-  await env.RATE_LIMIT_KV.put(
-    `${BATCH_KV_PREFIX}${batchId}`,
-    JSON.stringify(metadata),
-    { expirationTtl: BATCH_TTL_SECONDS }
-  );
+  await saveBatch(env, metadata);
   
   console.log(`[batch-kv] Created batch ${batchId} with ${totalRows} rows`);
 }
@@ -70,13 +66,28 @@ export async function getBatch(
   if (!data) {
     return null;
   }
-  
   try {
     return JSON.parse(data) as BatchMetadata;
   } catch (err) {
     console.error(`[batch-kv] Failed to parse batch ${batchId}:`, err);
     return null;
   }
+}
+
+/**
+ * Save batch metadata to KV (single source of truth for key prefix + TTL).
+ * Use this instead of reaching into RATE_LIMIT_KV directly so the prefix and
+ * TTL stay consistent with the rest of this module.
+ */
+export async function saveBatch(
+  env: Env,
+  metadata: BatchMetadata
+): Promise<void> {
+  await env.RATE_LIMIT_KV.put(
+    `${BATCH_KV_PREFIX}${metadata.batch_id}`,
+    JSON.stringify(metadata),
+    { expirationTtl: BATCH_TTL_SECONDS }
+  );
 }
 
 /**
@@ -109,17 +120,12 @@ export async function updateBatchProgress(
     metadata.failed_count += updates.failed_count_increment;
   }
   
-  // Check if batch is complete
-  if (metadata.processed_rows >= metadata.total_rows) {
-    metadata.status = 'completed';
-    metadata.completed_at = new Date().toISOString();
-  }
-  
-  await env.RATE_LIMIT_KV.put(
-    `${BATCH_KV_PREFIX}${batchId}`,
-    JSON.stringify(metadata),
-    { expirationTtl: BATCH_TTL_SECONDS }
-  );
+	if (metadata.processed_rows >= metadata.total_rows) {
+		metadata.status = 'completed';
+		metadata.completed_at = new Date().toISOString();
+	}
+
+	await saveBatch(env, metadata);
 }
 
 /**
@@ -145,11 +151,7 @@ export async function recordRowError(
     error: errorMessage
   });
   
-  await env.RATE_LIMIT_KV.put(
-    `${BATCH_KV_PREFIX}${batchId}`,
-    JSON.stringify(metadata),
-    { expirationTtl: BATCH_TTL_SECONDS }
-  );
+  await saveBatch(env, metadata);
   
   console.log(`[batch-kv] Recorded error for batch ${batchId} row ${rowNumber}: ${errorMessage}`);
 }
@@ -176,9 +178,5 @@ export async function markBatchFailed(
     error: errorMessage
   });
   
-  await env.RATE_LIMIT_KV.put(
-    `${BATCH_KV_PREFIX}${batchId}`,
-    JSON.stringify(metadata),
-    { expirationTtl: BATCH_TTL_SECONDS }
-  );
+  await saveBatch(env, metadata);
 }
