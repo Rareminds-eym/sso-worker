@@ -18,6 +18,27 @@ interface QueueMessageBody {
 	[key: string]: unknown;
 }
 
+function isCsvParseMessage(
+	body: QueueMessageBody,
+): body is QueueMessageBody & CsvParseMessage {
+	return (
+		typeof body.batch_id === "string" &&
+		typeof body.csv_data === "string" &&
+		typeof body.organization_id === "string"
+	);
+}
+
+function isLearnerBatchMessage(
+	body: QueueMessageBody,
+): body is QueueMessageBody & LearnerBatchMessage {
+	return (
+		typeof body.batch_id === "string" &&
+		typeof body.batch_index === "number" &&
+		Array.isArray(body.learners) &&
+		typeof body.organization_id === "string"
+	);
+}
+
 /**
  * Route queue messages to appropriate handlers
  * Returns true if message was handled, false otherwise
@@ -40,9 +61,14 @@ export async function routeQueueMessage(
 
 	// CSV Parsing Handler
 	if (body.type === "parse-csv") {
+		if (!isCsvParseMessage(body)) {
+			console.warn("[SSO] Invalid parse-csv message body:", body);
+			message.ack();
+			return true;
+		}
 		await handleParseCsvQueue(
 			env,
-			body as unknown as CsvParseMessage,
+			body,
 			message as unknown as QueueMessage<CsvParseMessage>,
 		);
 		return true;
@@ -50,9 +76,14 @@ export async function routeQueueMessage(
 
 	// Batch Creation Handler (20 learners at once)
 	if (body.type === "create-learner-batch") {
+		if (!isLearnerBatchMessage(body)) {
+			console.warn("[SSO] Invalid create-learner-batch message body:", body);
+			message.ack();
+			return true;
+		}
 		await handleCreateLearnerBatch(
 			env,
-			body as unknown as LearnerBatchMessage,
+			body,
 			message as unknown as QueueMessage<LearnerBatchMessage>,
 		);
 		return true;
