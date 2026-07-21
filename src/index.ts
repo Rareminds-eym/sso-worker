@@ -45,14 +45,19 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     try {
-      const pendingEvents = await database.query<EventRow>(
+      const pendingEvents = await database.query<Record<string, unknown>>(
         "events?status=eq.received&order=created_at.asc&limit=10"
       );
       if (pendingEvents && pendingEvents.length > 0) {
         for (const event of pendingEvents) {
-          await database.update("events", { id: `eq.${encodeURIComponent(event.id)}` }, { status: "processing" });
+          const eventId = event.id as string;
+          const eventType = event.event_type as string;
+          const eventPublicId = event.event_id as string;
+          const eventRetryCount = event.retry_count as number | null;
+
+          await database.update("events", { id: `eq.${encodeURIComponent(eventId)}` }, { status: "processing" });
           try {
-            if (event.event_type === 'payment.captured' || event.event_type === 'order.paid') {
+            if (eventType === 'payment.captured' || eventType === 'order.paid') {
               if (!this.env.SKILLPASSPORT_URL || !this.env.INTERNAL_WEBHOOK_SECRET) {
                 throw new Error("SKILLPASSPORT URL or INTERNAL_WEBHOOK_SECRET not configured. Cannot dispatch webhook.");
               }
@@ -63,7 +68,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
                 headers: {
                   'Content-Type': 'application/json',
                   'Authorization': `Bearer ${this.env.INTERNAL_WEBHOOK_SECRET}`,
-                  'X-Webhook-Event': event.event_type
+                  'X-Webhook-Event': eventType
                 },
                 body: JSON.stringify(event.payload)
               }, 10000); // 10 second timeout for webhook dispatch
@@ -75,17 +80,17 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
             }
 
             // Mark as completed since fulfillment succeeded (or event type was ignored)
-            await database.update("events", { id: `eq.${encodeURIComponent(event.id)}` }, {
+            await database.update("events", { id: `eq.${encodeURIComponent(eventId)}` }, {
               status: "completed",
               processed_at: new Date().toISOString()
             });
-            console.log(`[SSO] Processed webhook event ${event.event_id} of type ${event.event_type}`);
+            console.log(`[SSO] Processed webhook event ${eventPublicId} of type ${eventType}`);
           } catch (processErr: unknown) {
             const processErrMessage = processErr instanceof Error ? processErr.message : String(processErr);
-            await database.update("events", { id: `eq.${encodeURIComponent(event.id)}` }, {
+            await database.update("events", { id: `eq.${encodeURIComponent(eventId)}` }, {
               status: "failed",
               error_message: processErrMessage || "Unknown error",
-              retry_count: (event.retry_count || 0) + 1
+              retry_count: (eventRetryCount || 0) + 1
             });
           }
         }
