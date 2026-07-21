@@ -11,25 +11,15 @@ import { endpointRateLimit } from "./lib/rate-limit";
 import { rotateRefreshToken } from "./lib/session-rotation";
 import { publishSyncEvent } from "./lib/sync-queue";
 import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "./lib/validate";
-import type { AccessTokenPayload, Env, Invite, Organization, Session } from "./types";
+import { fetchWithTimeout } from "./lib/fetch-timeout";
+import { getBatch, type BatchMetadata } from "./lib/batch-kv";
+import type { AccessTokenPayload, Env, Invite, Session, SignupMemberBody, Membership, Organization, JwtClaims, MessageBatch } from "./types";
+import { handleQueueBatch } from "./queue/queue-router";
 
-// HTTP route handlers removed - all imports now unused except for types
-// Business logic functions (perform*) are imported dynamically in RPC methods
-
-type EventRow = {
-  id: string;
-  event_id: string;
-  event_type: string;
-  status: string;
-  processed_at: string | null;
-  error_message: string | null;
-  retry_count: number | null;
-  payload: unknown;
-  user_id: string | null;
-  subscription_id: string | null;
-  razorpay_payment_id: string | null;
-  created_at: string | null;
-};
+import { performQueueUserSync } from "./routes/user-sync";
+import { performCreateOrganization, performUpdateOrganization, performUpdateOrganizationDetails } from "./routes/organization";
+import { performCreateLearnerUser, performQueueBulkLearnerUpload } from "./routes/learner-admission";
+import { performCreateMember, performCreateMembership, performUpdateMembershipStatus, performAssignMembershipRole } from "./routes/membership";
 
 // ─── WorkerEntrypoint ─────────────────────────────────────────
 export class SsoWorker extends WorkerEntrypoint<Env> {
@@ -68,7 +58,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
               }
 
               const targetUrl = `${this.env.SKILLPASSPORT_URL}/api/internal/webhooks/payment`;
-              const dispatchResponse = await fetch(targetUrl, {
+              const dispatchResponse = await fetchWithTimeout(targetUrl, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
@@ -76,7 +66,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
                   'X-Webhook-Event': event.event_type
                 },
                 body: JSON.stringify(event.payload)
-              });
+              }, 10000); // 10 second timeout for webhook dispatch
 
               if (!dispatchResponse.ok) {
                 const resBody = await dispatchResponse.text();
@@ -106,26 +96,6 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
   }
 
-  // ── Fetch handler (RPC-only mode) ────────────────────────────
-  // HTTP routes disabled - all access via RPC service binding only
-  async fetch(): Promise<Response> {
-    return new Response(JSON.stringify({
-      error: "HTTP access disabled",
-      message: "This service is only accessible via RPC service binding (env.SSO_SERVICE)",
-      rpc_methods: [
-        "signup", "signupMember", "login", "refreshSession", "logoutSession",
-        "switchOrg", "getMe", "listOrgs", "requestVerification", "verifyEmail",
-        "forgotPassword", "resetPassword", "changePassword", "adminResetPassword",
-        "deleteAccount", "listAddonCatalog", "getAddonByFeatureKey", "listBundles",
-        "createSubscription", "getUserSubscription", "recordTransaction",
-        "createInvite", "acceptInvite", "cancelInvite", "resendInvite", "and more..."
-      ]
-    }), {
-      status: 403,
-      headers: { "Content-Type": "application/json" }
-    });
-  }
-
   // ══════════════════════════════════════════════════════════════
   // RPC METHODS — callable via service binding only
   // ══════════════════════════════════════════════════════════════
@@ -133,95 +103,52 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   // ── Subscription Management ─────────────────────────────────
 
   // ── Queue Handler (Asynchronous Events) ─────────────────────
-  async queue(batch: any): Promise<void> {
-    const database = db(this.env);
-
-    for (const message of batch.messages) {
-      try {
-        const body = message.body;
-        if (!body.event_id || !body.event_type || !body.payload) {
-          console.warn("[SSO] Skipping invalid queue message", body);
-          message.ack();
-          continue;
-        }
-
-        // Intercept Reverse Sync Events
-        if (body.event_type === 'user_metadata.updated' && body.user_id) {
-          const { first_name, last_name } = body.payload;
-
-          if (first_name !== undefined || last_name !== undefined) {
-            try {
-              // Note: using db(this.env) which wraps Postgres REST.
-              const user = await database.queryOne<{ user_metadata: Record<string, unknown> | null }>(`users?id=eq.${encodeURIComponent(body.user_id)}&select=user_metadata`);
-              if (!user) {
-                console.warn(`[SSO] Skipping user_metadata sync: user ${body.user_id} not found`);
-                message.ack();
-                continue;
-              }
-              const currentMetadata = user.user_metadata || {};
-
-              const newMetadata = { ...currentMetadata };
-              if (first_name !== undefined) newMetadata.first_name = first_name;
-              if (last_name !== undefined) newMetadata.last_name = last_name;
-
-              await database.update('users', { id: `eq.${encodeURIComponent(body.user_id)}` }, { user_metadata: newMetadata });
-              console.log(`[SSO] Bidirectional sync complete: updated user_metadata for user ${body.user_id}`);
-
-              // Broadcast to all forward consumers (e.g. App 1, App 2) so they stay in sync
-              if (this.env.SYNC_QUEUE) {
-                const userObj = await database.queryOne<{ id: string, email: string }>(`users?id=eq.${encodeURIComponent(body.user_id)}&select=id,email`);
-                if (userObj) {
-                  await this.env.SYNC_QUEUE.send({
-                    type: 'user.updated',
-                    payload: {
-                      id: userObj.id,
-                      email: userObj.email,
-                      user_metadata: newMetadata
-                    },
-                    timestamp: new Date().toISOString()
-                  });
-                }
-              } else {
-                console.warn(`[SSO] SYNC_QUEUE not bound, cannot broadcast user.updated for ${body.user_id}`);
-              }
-            } catch (updateErr) {
-              console.error(`[SSO] Failed to update user_metadata for ${body.user_id}:`, updateErr);
-              message.retry();
-              continue;
-            }
-          }
-
-          message.ack();
-          continue;
-        }
-
-        // Idempotency check
-        const existing = await database.queryOne(
-          `events?event_id=eq.${encodeURIComponent(body.event_id)}`,
-        );
-        if (existing) {
-          console.log(`[SSO] Event ${body.event_id} already processed`);
-          message.ack();
-          continue;
-        }
-
-        await database.mutate("events", {
-          event_id: body.event_id,
-          event_type: body.event_type,
-          status: "received",
-          payload: body.payload,
-          user_id: body.user_id || null,
-          subscription_id: body.subscription_id || null,
-          razorpay_payment_id: body.razorpay_payment_id || null,
-        });
-
-        message.ack();
-      } catch (err) {
-        console.error("[SSO] Failed to process queue message:", err);
-        message.retry();
+  async queue(batch: MessageBatch): Promise<void> {
+    if (!batch) {
+      throw new Error('Invalid batch: batch object is null or undefined');
+    }
+    
+    if (!batch.messages) {
+      throw new Error('Invalid batch: messages property is missing');
+    }
+    
+    if (!Array.isArray(batch.messages)) {
+      throw new Error(`Invalid batch: messages must be an array, got ${typeof batch.messages}`);
+    }
+    
+    if (batch.messages.length === 0) {
+      console.log('[SSO] Empty batch received, skipping');
+      return;
+    }
+    
+    // Validate each message has required structure
+    for (let i = 0; i < batch.messages.length; i++) {
+      const msg = batch.messages[i];
+      if (!msg || typeof msg !== 'object') {
+        throw new Error(`Invalid message at index ${i}: not an object`);
       }
     }
+    
+    try {
+      await handleQueueBatch(this.env, batch);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error('[SSO] Queue batch processing failed:', errorMsg);
+      // Re-throw to trigger batch-level retry by Cloudflare Queues
+      throw err;
+    }
   }
+
+
+  async queueUserSync(userId: string): Promise<{ queued: boolean; reason: string }> {
+    return performQueueUserSync(this.env, userId);
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // RPC METHODS — callable via service binding only
+  // ══════════════════════════════════════════════════════════════
+
+  // ── Subscription Management ─────────────────────────────────
 
   async createSubscription(data: {
     user_id: string;
@@ -275,6 +202,24 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       purchased_by: data.purchased_by || null,
     });
 
+    publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'subscription.created', {
+      id: (subscription as { id: string }).id,
+      user_id: data.user_id,
+      organization_id: data.organization_id || null,
+      plan_id: data.plan_id,
+      plan_code: data.plan_code,
+      plan_type: data.plan_type || data.plan_code,
+      plan_amount: data.plan_amount || 0,
+      billing_cycle: billingCycle,
+      features: data.features || [],
+      status: 'active',
+      subscription_start_date: now.toISOString(),
+      subscription_end_date: billingCycle === 'lifetime' ? null : endDate.toISOString(),
+      is_organization_subscription: data.is_organization_subscription || false,
+      product_id: null,
+      updated_at: now.toISOString(),
+    });
+
     return subscription as Record<string, unknown>;
   }
 
@@ -319,6 +264,24 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       subscription_end_date: null,
     });
 
+    publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'subscription.created', {
+      id: (subscription as { id: string }).id,
+      user_id: data.user_id,
+      organization_id: null,
+      plan_id: freemiumPlan.id,
+      plan_code: 'freemium',
+      plan_type: 'Freemium',
+      plan_amount: 0,
+      billing_cycle: 'lifetime',
+      features: freemiumPlan.base_features || [],
+      status: 'active',
+      subscription_start_date: new Date().toISOString(),
+      subscription_end_date: null,
+      is_organization_subscription: false,
+      product_id: null,
+      updated_at: new Date().toISOString(),
+    });
+
     return subscription as Record<string, unknown>;
   }
 
@@ -341,59 +304,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     role: string;
     org_id: string;
   }): Promise<{ user_id: string; org_id: string; membership_id: string }> {
-    if (!data.email || !data.password || !data.role || !data.org_id) {
-      throw new Error("email, password, role, and org_id are required");
-    }
-
-    const email = data.email.toLowerCase().trim();
-    const password_hash = await hashPassword(data.password);
-    const database = db(this.env);
-
-    let result: { user_id: string; org_id: string; membership_id: string };
-    try {
-      result = await database.rpc<{ user_id: string; org_id: string; membership_id: string }>(
-        "signup_member",
-        {
-          p_email: email,
-          p_password_hash: password_hash,
-          p_role: data.role,
-          p_org_id: data.org_id,
-        },
-      );
-    } catch (err: unknown) {
-      const errMessage = err instanceof Error ? err.message : String(err);
-      if (errMessage.includes("duplicate") || errMessage.includes("23505")) {
-        throw new Error(`A user with email ${email} already exists`);
-      }
-      throw err;
-    }
-
-    // Admin-created members are trusted — auto-verify their email so they can log
-    // in immediately without an email-verification step.
-    await database.update("users", { id: `eq.${encodeURIComponent(result.user_id)}` }, { is_email_verified: true });
-
-    // Emit sync events — await directly (RPC method, no ctx.waitUntil)
-    try {
-      await this.env.SYNC_QUEUE.send({
-        type: 'user.created',
-        payload: { id: result.user_id, email },
-        timestamp: new Date().toISOString(),
-      });
-      await this.env.SYNC_QUEUE.send({
-        type: 'membership.created',
-        payload: {
-          user_id: result.user_id,
-          organization_id: data.org_id,
-          roles: [data.role],
-          status: 'active',
-        },
-        timestamp: new Date().toISOString(),
-      });
-    } catch (e) {
-      console.error('[SSO] Failed to emit sync events:', e);
-    }
-
-    return result;
+    return performCreateMember(this.env, data);
   }
 
   async getUserSubscription(userId: string): Promise<{
@@ -860,56 +771,87 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     org_id: string;
     status: string;
   }): Promise<{ id: string; status: string }> {
-    if (!data.user_id || !data.org_id || !data.status) {
-      throw new Error("user_id, org_id, and status are required");
-    }
-    const database = db(this.env);
-    const membership = await database.mutate<{ id: string; status: string }>("memberships", {
-      user_id: data.user_id,
-      org_id: data.org_id,
-      status: data.status,
-    });
-    return { id: membership.id, status: membership.status };
+    return performCreateMembership(this.env, data);
   }
 
   async updateMembershipStatus(data: {
     membership_id: string;
     status: string;
   }): Promise<{ success: boolean }> {
-    if (!data.membership_id || !data.status) {
-      throw new Error("membership_id and status are required");
-    }
-    const database = db(this.env);
-    await database.update(
-      "memberships",
-      { id: `eq.${encodeURIComponent(data.membership_id)}` },
-      { status: data.status },
-    );
-    return { success: true };
+    return performUpdateMembershipStatus(this.env, data);
   }
 
   async assignMembershipRole(data: {
     membership_id: string;
     role_id: string;
   }): Promise<{ success: boolean }> {
-    if (!data.membership_id || !data.role_id) {
-      throw new Error("membership_id and role_id are required");
+    return performAssignMembershipRole(this.env, data);
+  }
+
+  // ── Organization RPC Methods ──────────────────────────────────
+
+  async createOrganization(data: {
+    name: string;
+    slug: string;
+    created_by: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<{ success: boolean; org_id?: string; error?: string }> {
+    return performCreateOrganization(this.env, data);
+  }
+
+  async updateOrganization(data: {
+    id: string;
+    name: string;
+  }): Promise<{ success: boolean }> {
+    return performUpdateOrganization(this.env, data);
+  }
+
+  async updateOrganizationDetails(data: {
+    id: string;
+    metadata: Record<string, unknown>;
+  }): Promise<{ success: boolean; error?: string }> {
+    return performUpdateOrganizationDetails(this.env, data);
+  }
+
+  // ── Learner Admission RPC Methods ─────────────────────────────
+
+  async createLearnerUser(data: {
+    email: string;
+    name: string;
+    organization_id: string;
+    contact_number?: string;
+    enrollment_number?: string;
+    program_id?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<{ success: boolean; user_id?: string; temp_password?: string; error?: string; sync_warning?: string }> {
+    return performCreateLearnerUser(this.env, data);
+  }
+
+  async queueBulkLearnerUpload(data: {
+    csv_data: string;
+    organization_id: string;
+    admin_id: string;
+  }): Promise<{ success: boolean; batch_id?: string; error?: string }> {
+    return performQueueBulkLearnerUpload(this.env, data);
+  }
+
+  async getBulkUploadStatus(batchId: string): Promise<BatchMetadata | null> {
+    if (!batchId) {
+      throw new Error('batchId is required');
     }
-    const database = db(this.env);
-    const existing = await database.query<{ id: string }>(
-      `membership_roles?membership_id=eq.${encodeURIComponent(data.membership_id)}&role_id=eq.${encodeURIComponent(data.role_id)}&select=id`,
-    );
-    if (existing.length > 0) return { success: true };
-    await database.mutate("membership_roles", {
-      membership_id: data.membership_id,
-      role_id: data.role_id,
-    });
-    return { success: true };
+    try {
+      const result = await getBatch(this.env, batchId);
+      return result;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[SSO] getBulkUploadStatus error for ${batchId}:`, msg);
+      return null;
+    }
   }
 
   // ── Auth RPC Methods ──────────────────────────────────────────
 
-  async getJWKS(): Promise<{ keys: any[] }> {
+  async getJWKS(): Promise<{ keys: Record<string, unknown>[] }> {
     const keys = [await getPublicJWK(this.env)];
     if (this.env.JWT_PUBLIC_KEY_PREVIOUS && this.env.JWT_KID_PREVIOUS) {
       try {
@@ -1311,7 +1253,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       )
       : [];
 
-    const orgMap = new Map(orgs.map((o) => [o.id, o]));
+    const orgMap = new Map(orgs.map((o: Organization) => [o.id, o]));
 
     // Fetch roles for each membership via join table
     const membershipIds = memberships.map((m) => m.id);
@@ -1440,7 +1382,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     };
   }
 
-  async forgotPassword(params: { email?: string; redirect_url?: string }, ip?: string, ua?: string): Promise<{ message?: string }> {
+  async forgotPassword(params: { email?: string; redirect_url?: string }, ip?: string, ua?: string): Promise<{ success: boolean; error?: string; message?: string }> {
     const { performForgotPassword } = await import("./routes/password-reset");
     const result = await performForgotPassword(
       this.env,
