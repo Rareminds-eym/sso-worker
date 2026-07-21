@@ -1670,7 +1670,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         products: claims?.products ?? [],
         membership_status: (claims?.membership_status ?? "active") as "active" | "inactive" | "suspended" | "expired",
         is_email_verified: user.is_email_verified,
-        user_metadata: user.user_metadata ?? {},
+        // user_metadata is nullable at the DB level; default to an empty object
+        user_metadata: user.user_metadata !== null ? user.user_metadata : {},
       },
       this.env,
     );
