@@ -13,7 +13,7 @@ import { publishSyncEvent } from "./lib/sync-queue";
 import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "./lib/validate";
 import { fetchWithTimeout } from "./lib/fetch-timeout";
 import { getBatch, type BatchMetadata } from "./lib/batch-kv";
-import type { AccessTokenPayload, Env, Invite, Session, SignupMemberBody, Membership, JwtClaims, MessageBatch } from "./types";
+import type { AccessTokenPayload, Env, Invite, Session, SignupMemberBody, Membership, Organization, JwtClaims, MessageBatch } from "./types";
 import { handleQueueBatch } from "./queue/queue-router";
 
 import { performQueueUserSync } from "./routes/user-sync";
@@ -95,9 +95,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           }
         }
       }
-    } catch (err: unknown) {
-      const errMessage = err instanceof Error ? err.message : String(err);
-      console.error(`[SSO] Failed to process webhook events: ${errMessage}`);
+    } catch (err: any) {
+      console.error(`[SSO] Failed to process webhook events: ${err?.message}`);
     }
   }
 
@@ -109,31 +108,11 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
   // ── Queue Handler (Asynchronous Events) ─────────────────────
   async queue(batch: MessageBatch): Promise<void> {
-    if (!batch) {
-      throw new Error('Invalid batch: batch object is null or undefined');
-    }
-    
-    if (!batch.messages) {
-      throw new Error('Invalid batch: messages property is missing');
-    }
-    
-    if (!Array.isArray(batch.messages)) {
-      throw new Error(`Invalid batch: messages must be an array, got ${typeof batch.messages}`);
-    }
-    
     if (batch.messages.length === 0) {
       console.log('[SSO] Empty batch received, skipping');
       return;
     }
-    
-    // Validate each message has required structure
-    for (let i = 0; i < batch.messages.length; i++) {
-      const msg = batch.messages[i];
-      if (!msg || typeof msg !== 'object') {
-        throw new Error(`Invalid message at index ${i}: not an object`);
-      }
-    }
-    
+
     try {
       await handleQueueBatch(this.env, batch);
     } catch (err) {
@@ -1258,7 +1237,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       )
       : [];
 
-    const orgMap = new Map(orgs.map((o) => [o.id, o]));
+    const orgMap = new Map(orgs.map((o: Organization) => [o.id, o]));
 
     // Fetch roles for each membership via join table
     const membershipIds = memberships.map((m) => m.id);
