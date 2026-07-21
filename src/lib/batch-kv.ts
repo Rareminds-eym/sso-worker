@@ -70,13 +70,29 @@ export async function getBatch(
   if (!data) {
     return null;
   }
-  
+   
   try {
     return JSON.parse(data) as BatchMetadata;
   } catch (err) {
     console.error(`[batch-kv] Failed to parse batch ${batchId}:`, err);
     return null;
   }
+}
+
+/**
+ * Save batch metadata to KV (single source of truth for key prefix + TTL).
+ * Use this instead of reaching into RATE_LIMIT_KV directly so the prefix and
+ * TTL stay consistent with the rest of this module.
+ */
+export async function saveBatch(
+  env: Env,
+  metadata: BatchMetadata
+): Promise<void> {
+  await env.RATE_LIMIT_KV.put(
+    `${BATCH_KV_PREFIX}${metadata.batch_id}`,
+    JSON.stringify(metadata),
+    { expirationTtl: BATCH_TTL_SECONDS }
+  );
 }
 
 /**
