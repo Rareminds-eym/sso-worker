@@ -7,6 +7,7 @@ import { checkEmailThrottle } from "../lib/email-throttle";
 import { generateRefreshToken, hashPassword, hashToken } from "../lib/hash";
 import { signAccessToken } from "../lib/jwt";
 import { endpointRateLimit } from "../lib/rate-limit";
+import { error, json, setAuthCookies } from "../lib/response";
 import { publishSyncEvent } from "../lib/sync-queue";
 import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "../lib/validate";
 import type { Env, JwtClaims, SignupBody } from "../types";
@@ -18,6 +19,7 @@ const EMAIL_SEND_TIMEOUT_MS = 5_000;
  * Called by: SsoWorker.signup() RPC method, signup() HTTP handler
  */
 export async function performSignup(
+  req: Request,
   env: Env,
   ctx: ExecutionContext,
 ): Promise<Response> {
@@ -166,7 +168,7 @@ export async function performSignup(
       org_id: result.org_id,
       refresh_token_hash: refreshHash,
       user_agent: ua ?? null,
-      ip_address: ipAddr,
+      ip_address: ip,
       revoked: false,
       expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
       family_id: sessionId,
