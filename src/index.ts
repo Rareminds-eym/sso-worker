@@ -95,8 +95,9 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           }
         }
       }
-    } catch (err: any) {
-      console.error(`[SSO] Failed to process webhook events: ${err?.message}`);
+    } catch (err: unknown) {
+      const errMessage = err instanceof Error ? err.message : String(err);
+      console.error(`[SSO] Failed to process webhook events: ${errMessage}`);
     }
   }
 
@@ -1232,12 +1233,12 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     const orgIds = memberships.map((m) => m.org_id);
     const orgs = orgIds.length
-      ? await database.query<any>(
+      ? await database.query<Organization>(
         `organizations?id=in.(${orgIds.map(id => encodeURIComponent(id)).join(",")})&select=*`,
       )
       : [];
 
-    const orgMap = new Map(orgs.map((o: Organization) => [o.id, o]));
+    const orgMap = new Map(orgs.map((o) => [o.id, o]));
 
     // Fetch roles for each membership via join table
     const membershipIds = memberships.map((m) => m.id);
@@ -1367,7 +1368,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     };
   }
 
-  async forgotPassword(params: { email?: string; redirect_url?: string }, ip?: string, ua?: string): Promise<{ success: boolean; error?: string; message?: string }> {
+  async forgotPassword(params: { email?: string; redirect_url?: string }, ip?: string, ua?: string): Promise<{ success: true; message: string } | { success: false; error: string }> {
     const { performForgotPassword } = await import("./routes/password-reset");
     const result = await performForgotPassword(
       this.env,
@@ -1381,10 +1382,10 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       return { success: false, error: result.error };
     }
 
-    return { success: true, message: result.message };
+    return { success: true, message: result.message ?? "If an account exists, a reset email has been sent." };
   }
 
-  async resetPassword(params: { token?: string; password?: string }, ip?: string, ua?: string): Promise<{ success: false; error: string } | { success: true; reset?: boolean }> {
+  async resetPassword(params: { token?: string; password?: string }, ip?: string, ua?: string): Promise<{ success: false; error: string } | { success: true; reset: boolean }> {
     const { performResetPassword } = await import("./routes/password-reset");
     const result = await performResetPassword(
       this.env,
@@ -1398,7 +1399,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       return { success: false, error: result.error };
     }
 
-    return { success: true, reset: result.reset };
+    return { success: true, reset: result.reset ?? true };
   }
 
   async listAddonCatalog(params?: { category?: string; role?: string; product?: string }): Promise<any> {
@@ -1623,13 +1624,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         });
       } catch (err: unknown) {
         // Ignore duplicate — role already assigned
-        let errMessage: string;
-        if (err instanceof Error) {
-          errMessage = err.message;
-        } else {
-          errMessage = String(err);
-        }
-
+        const errMessage = err instanceof Error ? err.message : String(err);
         const isDuplicate = errMessage.includes("23505") || errMessage.includes("duplicate");
         if (!isDuplicate) {
           throw err;
