@@ -227,37 +227,173 @@ SET
   "role_id" = EXCLUDED."role_id";
 
 -- ------------------------------------------------------------
--- 8. VERIFICATION
+-- 8. SCHOOL PROFESSIONAL PLAN
 -- ------------------------------------------------------------
-SELECT
-  usr."id" AS admin_user_id,
-  usr."email",
-  usr."is_email_verified",
-  usr."is_blocked"
-FROM "public"."users" AS usr
-WHERE usr."email" = 'admin@cambridgeschool.edu.in';
+INSERT INTO "public"."plans"
+  ("id", "plan_code", "name", "business_type", "applicable_entities", "pricing_matrix", "base_features", "entity_config", "display_order", "is_active", "created_at", "updated_at", "product_id")
+VALUES
+  ('a0000000-0000-4000-8000-000000000013', 'school_enterprise', 'School Enterprise', 'b2b', ARRAY['school'], '{"school": {"yearly": 29999, "currency": "INR"}}', '["up_to_1000_learners", "career_assessment_reports", "class_wise_analytics", "student_capability_wheel", "counsellor_dashboard", "parent_report_exports"]', '{"school": {"tagline": "Enterprise-grade school deployment", "duration": "yearly", "ideal_for": "Large schools and school groups needing custom rollout", "max_users": null, "description": "Enterprise school plan with custom learner volume, multi-branch support, advanced analytics, reports, onboarding, and priority support.", "positioning": "Enterprise plan for school groups", "display_name": "School Enterprise", "storage_limit": "50GB", "is_recommended": false}}', 13, true, NOW(), NOW(), '912d5049-e195-46e9-a319-49e3502bf7e7')
+ON CONFLICT ("id") DO UPDATE
+SET
+  "plan_code" = EXCLUDED."plan_code",
+  "name" = EXCLUDED."name",
+  "business_type" = EXCLUDED."business_type",
+  "applicable_entities" = EXCLUDED."applicable_entities",
+  "pricing_matrix" = EXCLUDED."pricing_matrix",
+  "base_features" = EXCLUDED."base_features",
+  "entity_config" = EXCLUDED."entity_config",
+  "display_order" = EXCLUDED."display_order",
+  "is_active" = EXCLUDED."is_active",
+  "updated_at" = NOW(),
+  "product_id" = EXCLUDED."product_id";
 
-SELECT
-  mem."id" AS admin_membership_id,
-  mem."user_id",
-  mem."org_id",
-  mem."status"
-FROM "public"."memberships" AS mem
-WHERE mem."id" = '8c8f6c10-8e7a-4f66-9a20-a75cd6fd80b2';
+-- ------------------------------------------------------------
+-- 9. SCHOOL ADMIN SUBSCRIPTION
+-- ------------------------------------------------------------
+INSERT INTO "public"."subscriptions"
+  ("id", "user_id", "plan_id", "organization_id", "full_name", "email", "phone", "plan_code", "plan_type", "plan_amount", "billing_cycle", "features", "status", "razorpay_subscription_id", "razorpay_customer_id", "razorpay_payment_id", "razorpay_order_id", "auto_renew", "receipt_url", "subscription_start_date", "subscription_end_date", "cancelled_at", "paused_at", "paused_until", "last_webhook_at", "cancellation_reason", "cancellation_feedback", "cancelled_by", "is_organization_subscription", "organization_type", "purchased_by", "seat_count", "is_bulk_purchase", "metadata", "created_at", "updated_at", "product_id")
+VALUES
+  ('8c8f6c10-8e7a-4f66-9a20-a75cd6fd80c1',
+   (SELECT "id" FROM "public"."users" WHERE "email" = 'admin@cambridgeschool.edu.in' LIMIT 1),
+   'a0000000-0000-4000-8000-000000000013',
+   '8c8f6c10-8e7a-4f66-9a20-a75cd6fd8001',
+   'Cambridge School Admin',
+   'admin@cambridgeschool.edu.in',
+   '+91-80-12345678',
+   'school_enterprise',
+   'School Enterprise',
+   '29999.00',
+   'yearly',
+   '["up_to_1000_learners", "career_assessment_reports", "class_wise_analytics", "student_capability_wheel", "counsellor_dashboard", "parent_report_exports"]',
+   'active',
+   NULL,
+   NULL,
+   NULL,
+   NULL,
+   false,
+   NULL,
+   '2026-07-21 02:15:15.752+00',
+   '2027-07-21 02:15:15.752+00',
+   NULL,
+   NULL,
+   NULL,
+   NULL,
+   NULL,
+   NULL,
+   NULL,
+   true,
+   'school',
+   (SELECT "id" FROM "public"."users" WHERE "email" = 'admin@cambridgeschool.edu.in' LIMIT 1),
+   46,
+   true,
+   '{"school_name": "Cambridge School", "board": "CBSE", "city": "Bengaluru", "state": "Karnataka", "country": "India", "student_count": 46, "sections": ["A", "B", "C"], "grade": "8"}'::jsonb,
+   '2026-07-21 02:14:19.393005+00',
+   '2026-07-21 02:14:19.393005+00',
+   '912d5049-e195-46e9-a319-49e3502bf7e7')
+ON CONFLICT ("id") DO UPDATE
+SET
+  "user_id" = EXCLUDED."user_id",
+  "plan_id" = EXCLUDED."plan_id",
+  "organization_id" = EXCLUDED."organization_id",
+  "plan_code" = EXCLUDED."plan_code",
+  "plan_type" = EXCLUDED."plan_type",
+  "plan_amount" = EXCLUDED."plan_amount",
+  "status" = 'active',
+  "subscription_start_date" = EXCLUDED."subscription_start_date",
+  "subscription_end_date" = EXCLUDED."subscription_end_date",
+  "updated_at" = NOW();
 
-SELECT
-  mr."id" AS admin_membership_role_id,
-  mr."membership_id",
-  mr."role_id"
-FROM "public"."membership_roles" AS mr
-WHERE mr."id" = '8c8f6c10-8e7a-4f66-9a20-a75cd6fd80b3';
+-- ------------------------------------------------------------
+-- 10. FREEMIUM PLAN FOR STUDENTS
+-- ------------------------------------------------------------
+INSERT INTO "public"."plans"
+  ("id", "plan_code", "name", "business_type", "applicable_entities", "pricing_matrix", "base_features", "entity_config", "display_order", "is_active", "created_at", "updated_at", "product_id")
+VALUES
+  ('ef4a94ac-17b7-4a35-b47a-3a031f049b31', 'freemium', 'Discover', 'b2c', ARRAY['all'], '{"all": {"yearly": 0, "monthly": 0, "currency": "INR"}}', '["learner_profile_creation", "marketplace_explore", "sample_career_paths", "limited_dashboard_access", "1_basic_assessment", "basic_opportunity_view"]', '{"all": {"tagline": "Start free and explore career possibilities", "duration": "lifetime", "ideal_for": "Learners exploring the platform", "max_users": 1, "description": "Free learner plan with profile creation, limited dashboard access, and one basic assessment.", "positioning": "Free discovery plan for learners", "display_name": "Discover", "storage_limit": "0GB", "is_recommended": false}}', 0, true, NOW(), NOW(), '912d5049-e195-46e9-a319-49e3502bf7e7')
+ON CONFLICT ("id") DO UPDATE
+SET
+  "plan_code" = EXCLUDED."plan_code",
+  "name" = EXCLUDED."name",
+  "business_type" = EXCLUDED."business_type",
+  "applicable_entities" = EXCLUDED."applicable_entities",
+  "pricing_matrix" = EXCLUDED."pricing_matrix",
+  "base_features" = EXCLUDED."base_features",
+  "entity_config" = EXCLUDED."entity_config",
+  "display_order" = EXCLUDED."display_order",
+  "is_active" = EXCLUDED."is_active",
+  "updated_at" = NOW(),
+  "product_id" = EXCLUDED."product_id";
 
--- ============================================================
--- SEED DATA SUMMARY
--- ============================================================
--- Organization: Cambridge School (CBSE, Bengaluru)
--- Students: 46 (Grade 8, Sections A, B, C)
--- Student Password: Cambridge@123
--- School Admin: admin@cambridgeschool.edu.in
--- Admin Password: CambridgeAdmin@123
--- ============================================================
+-- ------------------------------------------------------------
+-- 10b. PREMIUM PLAN FOR STUDENTS (Career Accelerator)
+-- ------------------------------------------------------------
+INSERT INTO "public"."plans"
+  ("id", "plan_code", "name", "business_type", "applicable_entities", "pricing_matrix", "base_features", "entity_config", "display_order", "is_active", "created_at", "updated_at", "product_id")
+VALUES
+  ('8460ee67-18ff-4c2e-ac57-7e1f87dc8316', 'premium', 'Career Accelerator', 'b2c', ARRAY['all'], '{"all": {"yearly": 999, "monthly": 99, "currency": "INR"}}', '["dashboard_access", "profile_creation", "marketplace_access", "view_pricing", "opportunities_access", "courses_listing_access", "advanced_analytics", "career_path_recommendations", "resume_builder", "linkedin_optimization", "mock_interviews", "skill_assessments"]', '{"all": {"tagline": "Accelerate your career growth", "duration": "yearly", "ideal_for": "Students serious about career development", "max_users": 1, "description": "Premium features for career-focused learners", "positioning": "Unlock your full potential with premium career tools", "display_name": "Career Accelerator", "storage_limit": "5GB", "is_recommended": true}}', 1, true, NOW(), NOW(), '912d5049-e195-46e9-a319-49e3502bf7e7')
+ON CONFLICT ("id") DO UPDATE
+SET
+  "plan_code" = EXCLUDED."plan_code",
+  "name" = EXCLUDED."name",
+  "business_type" = EXCLUDED."business_type",
+  "applicable_entities" = EXCLUDED."applicable_entities",
+  "pricing_matrix" = EXCLUDED."pricing_matrix",
+  "base_features" = EXCLUDED."base_features",
+  "entity_config" = EXCLUDED."entity_config",
+  "display_order" = EXCLUDED."display_order",
+  "is_active" = EXCLUDED."is_active",
+  "updated_at" = NOW(),
+  "product_id" = EXCLUDED."product_id";
+
+-- ------------------------------------------------------------
+-- 11. R AMRUTHA STUDENT SUBSCRIPTION (Premium - Career Accelerator)
+-- ------------------------------------------------------------
+INSERT INTO "public"."subscriptions"
+  ("id", "user_id", "plan_id", "organization_id", "full_name", "email", "phone", "plan_code", "plan_type", "plan_amount", "billing_cycle", "features", "status", "razorpay_subscription_id", "razorpay_customer_id", "razorpay_payment_id", "razorpay_order_id", "auto_renew", "receipt_url", "subscription_start_date", "subscription_end_date", "cancelled_at", "paused_at", "paused_until", "last_webhook_at", "cancellation_reason", "cancellation_feedback", "cancelled_by", "is_organization_subscription", "organization_type", "purchased_by", "seat_count", "is_bulk_purchase", "metadata", "created_at", "updated_at", "product_id")
+VALUES
+  ('8c8f6c10-8e7a-4f66-9a20-a75cd6fd80d1',
+   '8c8f6c10-8e7a-4f66-9a20-a75cd6fd8002',
+   '8460ee67-18ff-4c2e-ac57-7e1f87dc8316',
+   '8c8f6c10-8e7a-4f66-9a20-a75cd6fd8001',
+   'R Amrutha',
+   'amrutha.grade8@cambridgeschool.edu.in',
+   NULL,
+   'premium',
+   'Career Accelerator',
+   '999.00',
+   'yearly',
+   '["learner_profile_creation", "marketplace_explore", "sample_career_paths", "limited_dashboard_access", "1_basic_assessment", "basic_opportunity_view"]',
+   'active',
+   NULL,
+   NULL,
+   NULL,
+   NULL,
+   false,
+   NULL,
+   '2026-07-21 03:49:39.534+00',
+   '2027-07-21 03:49:39.534+00',
+   NULL,
+   NULL,
+   NULL,
+   NULL,
+   NULL,
+   NULL,
+   NULL,
+   false,
+   'school',
+   (SELECT "id" FROM "public"."users" WHERE "email" = 'admin@cambridgeschool.edu.in' LIMIT 1),
+   1,
+   false,
+   '{"school_name": "Cambridge School", "board": "CBSE", "grade": "8", "section": "A", "learner_type": "School", "assigned_by": "school_admin"}'::jsonb,
+   '2026-07-21 02:17:05.002458+00',
+   '2026-07-21 02:17:05.002458+00',
+   '912d5049-e195-46e9-a319-49e3502bf7e7')
+ON CONFLICT ("id") DO UPDATE
+SET
+  "user_id" = EXCLUDED."user_id",
+  "plan_id" = EXCLUDED."plan_id",
+  "organization_id" = EXCLUDED."organization_id",
+  "features" = EXCLUDED."features",
+  "status" = 'active',
+  "subscription_start_date" = EXCLUDED."subscription_start_date",
+  "updated_at" = NOW();
