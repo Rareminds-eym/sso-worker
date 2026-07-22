@@ -161,7 +161,10 @@ export async function performSignup(
     publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.created', {
       id: result.user_id,
       email,
-      user_metadata: body.user_metadata ?? {},
+      user_metadata: {
+        ...(body.user_metadata ?? {}),
+        role: body.role,
+      },
     });
     publishSyncEvent(env.SYNC_QUEUE, ctx, 'organization.created', {
       id: result.org_id,

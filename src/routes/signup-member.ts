@@ -185,7 +185,10 @@ async function signupMemberImpl(
     publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.created', {
       id: result.user_id,
       email,
-      user_metadata: params.user_metadata ?? {},
+      user_metadata: {
+        ...(params.user_metadata ?? {}),
+        role: params.role,
+      },
     });
     if (result.org_id) {
       publishSyncEvent(env.SYNC_QUEUE, ctx, 'membership.created', {

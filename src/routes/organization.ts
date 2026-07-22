@@ -97,6 +97,21 @@ export async function performUpdateOrganization(
 	);
 
 	console.log(`[SSO] Updated organization ${data.id} name to "${data.name}"`);
+
+	try {
+		await env.SYNC_QUEUE.send({
+			type: 'organization.updated',
+			payload: {
+				id: data.id,
+				name: data.name,
+			},
+			timestamp: new Date().toISOString(),
+		});
+		console.log(`[SSO] Published organization.updated for ${data.id}`);
+	} catch (e) {
+		console.error(`[SSO] Failed to publish organization.updated for ${data.id}:`, e);
+	}
+
 	return { success: true };
 }
 
