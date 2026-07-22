@@ -7,14 +7,42 @@ import { inviteEmail, sendEmail } from "./lib/email";
 import { checkEmailThrottle } from "./lib/email-throttle";
 import { generateRefreshToken, hashPassword, hashToken } from "./lib/hash";
 import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "./lib/jwt";
+import { signLteAccessToken } from "./lib/app-token";
 import { endpointRateLimit } from "./lib/rate-limit";
-import { rotateRefreshToken } from "./lib/session-rotation";
+import { mintAccessToken, rotateRefreshToken } from "./lib/session-rotation";
 import { publishSyncEvent } from "./lib/sync-queue";
+import {
+  assertAllowedRedirectUri,
+  assertTargetApp,
+  createAuthorizationCode,
+  getAuthorizationCodeStub,
+  hashAuthorizationValue,
+} from "./lib/authorization-code";
+import { requireLteEntitlement } from "./lib/lte-entitlement";
+import { getLteSubscriptionSnapshot } from "./lib/subscription-snapshot";
 import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "./lib/validate";
 import { fetchWithTimeout } from "./lib/fetch-timeout";
 import { getBatch, type BatchMetadata } from "./lib/batch-kv";
-import type { AccessTokenPayload, Env, Invite, Session, SignupMemberBody, Membership, Organization, JwtClaims, MessageBatch } from "./types";
 import { handleQueueBatch } from "./queue/queue-router";
+import type {
+  AccessTokenPayload,
+  Env,
+  Invite,
+  JwtClaims,
+  Membership,
+  MessageBatch,
+  Organization,
+  Session,
+  SignupMemberBody,
+} from "./types";
+import type {
+  ExchangeAuthorizationCodeRequest,
+  ExchangeAuthorizationCodeResponse,
+  GenerateAuthorizationCodeRequest,
+  GenerateAuthorizationCodeResponse,
+} from "./types/sso-code";
+
+export { AuthorizationCodeStore } from "./durable-objects/AuthorizationCodeStore";
 
 import { performQueueUserSync } from "./routes/user-sync";
 import { performCreateOrganization, performUpdateOrganization, performUpdateOrganizationDetails } from "./routes/organization";
@@ -1195,6 +1223,83 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return { valid: true, roles: claims?.roles ?? [] };
   }
 
+  async authenticateSharedSession(
+    refreshToken: string,
+    targetApp: string,
+    _ip?: string,
+    _ua?: string,
+  ): Promise<{ success: boolean; access_token?: string; refresh_token?: string; error?: string }> {
+    if (!refreshToken) {
+      return { success: false, error: "No refresh token provided" };
+    }
+
+    const database = db(this.env);
+    let activeToken = refreshToken;
+    const tokenHash = await hashToken(activeToken);
+
+    let session = await database.queryOne<Session>(
+      `sessions?refresh_token_hash=eq.${encodeURIComponent(tokenHash)}&select=id,user_id,org_id,expires_at,revoked,family_id`,
+    );
+
+    // If no direct session or session is revoked, check if token was rotated within KV grace window
+    if ((!session || session.revoked) && this.env.RATE_LIMIT_KV) {
+      try {
+        const replacementToken = await this.env.RATE_LIMIT_KV.get(`grace:${tokenHash}`);
+        if (replacementToken) {
+          const replacementHash = await hashToken(replacementToken);
+          const activeSession = await database.queryOne<Session>(
+            `sessions?refresh_token_hash=eq.${encodeURIComponent(replacementHash)}&revoked=eq.false&select=id,user_id,org_id,expires_at,revoked,family_id`,
+          );
+          if (activeSession) {
+            session = activeSession;
+            activeToken = replacementToken;
+          }
+        }
+      } catch (kvErr) {
+        console.warn("[SSO] KV grace resolution failed:", kvErr);
+      }
+    }
+
+    // Fallback: If session was marked revoked, resolve latest unrevoked session in family
+    if (session?.revoked && session.family_id) {
+      const activeSession = await database.queryOne<Session>(
+        `sessions?family_id=eq.${encodeURIComponent(session.family_id)}&revoked=eq.false&order=created_at.desc&limit=1&select=id,user_id,org_id,expires_at,revoked,family_id`,
+      );
+      if (activeSession) {
+        session = activeSession;
+      }
+    }
+
+    if (!session || session.revoked) {
+      console.log("[SSO] Shared session is invalid or revoked for app:", targetApp);
+      return { success: false, error: "Invalid or revoked session" };
+    }
+
+    if (new Date(session.expires_at) < new Date()) {
+      return { success: false, error: "Session expired" };
+    }
+
+    const result = await mintAccessToken(database, this.env, session.user_id, session.org_id);
+
+    if (result === "blocked") return { success: false, error: "Account is blocked" };
+    if (result === "not_found") return { success: false, error: "User not found" };
+    if (!result || typeof result !== "object") {
+      return { success: false, error: "Failed to mint access token" };
+    }
+
+    const payload = await verifyAccessToken(result.token, this.env);
+    if (!payload.products.includes(targetApp) && targetApp !== "sso") {
+      return { success: false, error: `Access denied for product: ${targetApp}` };
+    }
+
+    // Always include user_metadata so app clients can normalize a stable user shape.
+    return {
+      success: true,
+      access_token: result.token,
+      refresh_token: activeToken,
+    };
+  }
+
   async getMe(accessToken: string): Promise<Record<string, unknown>> {
     if (!accessToken) throw new Error("No access token provided");
     let payload: AccessTokenPayload;
@@ -1211,6 +1316,183 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       products: payload.products,
       membership_status: payload.membership_status,
       is_email_verified: payload.is_email_verified,
+      user_metadata: payload.user_metadata ?? {},
+    };
+  }
+
+  async generateAuthorizationCode(
+    params: GenerateAuthorizationCodeRequest,
+  ): Promise<GenerateAuthorizationCodeResponse> {
+    if (!params.accessToken) {
+      throw new Error("No access token provided");
+    }
+
+    assertTargetApp(params.targetApp);
+    assertAllowedRedirectUri(params.redirectUri, this.env);
+
+    let payload: AccessTokenPayload;
+    try {
+      payload = await verifyAccessToken(params.accessToken, this.env);
+    } catch {
+      throw new Error("Invalid or expired access token");
+    }
+
+    await requireLteEntitlement(this.env, payload);
+
+    const generated = await createAuthorizationCode(params.redirectUri);
+    const stub = getAuthorizationCodeStub(this.env, generated.codeHash);
+    const now = Date.now();
+
+    try {
+      await stub.store({
+        codeHash: generated.codeHash,
+        stateHash: generated.stateHash,
+        userId: payload.sub,
+        orgId: payload.org_id,
+        targetApp: params.targetApp,
+        redirectUri: params.redirectUri,
+        expiresAt: Date.parse(generated.expiresAt),
+        createdAt: now,
+      });
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error("[SSO] Failed to store authorization code:", errMsg);
+      throw new Error(`Failed to store authorization code: ${errMsg}`);
+    }
+
+    audit(this.ctx, this.env, "authorization_code.generated", {
+      user_id: payload.sub,
+      org_id: payload.org_id,
+      ip_address: params.ip,
+      user_agent: params.ua,
+      metadata: { target_app: params.targetApp, redirect_uri: params.redirectUri },
+    });
+
+    return {
+      code: generated.code,
+      state: generated.state,
+      redirectUrl: generated.redirectUrl,
+      codeExpiresAt: generated.expiresAt,
+    };
+  }
+
+  async exchangeAuthorizationCode(
+    params: ExchangeAuthorizationCodeRequest,
+  ): Promise<ExchangeAuthorizationCodeResponse> {
+    if (!params.code || !params.state) {
+      throw new Error("Authorization code and state are required");
+    }
+
+    assertTargetApp(params.targetApp);
+    assertAllowedRedirectUri(params.redirectUri, this.env);
+
+    const [codeHash, stateHash] = await Promise.all([
+      hashAuthorizationValue(params.code),
+      hashAuthorizationValue(params.state),
+    ]);
+    const stub = getAuthorizationCodeStub(this.env, codeHash);
+    let consumeResult;
+    try {
+      consumeResult = await stub.consume({
+        codeHash,
+        stateHash,
+        redirectUri: params.redirectUri,
+        now: Date.now(),
+      });
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error("[SSO] Failed to consume authorization code:", errMsg);
+      throw new Error(`Failed to consume authorization code: ${errMsg}`);
+    }
+
+    if (!consumeResult.success) {
+      const reason = consumeResult.reason || "unknown";
+      audit(this.ctx, this.env, "authorization_code.exchange_failed", {
+        ip_address: params.ip,
+        user_agent: params.ua,
+        metadata: { target_app: params.targetApp, reason },
+      });
+      throw new Error(`Authorization code exchange failed: ${reason}`);
+    }
+
+    const record = consumeResult.record;
+    if (record.targetApp !== params.targetApp) {
+      throw new Error("Authorization code target app mismatch");
+    }
+
+    const entitlement = await requireLteEntitlement(this.env, {
+      sub: record.userId,
+      org_id: record.orgId,
+    });
+    if (!entitlement) {
+      throw new Error("Failed to resolve LTE entitlement");
+    }
+
+    const refreshToken = generateRefreshToken();
+    const refreshHash = await hashToken(refreshToken);
+    const sessionId = crypto.randomUUID();
+    const now = new Date().toISOString();
+
+    await db(this.env).mutate("sessions", {
+      id: sessionId,
+      user_id: record.userId,
+      org_id: record.orgId,
+      refresh_token_hash: refreshHash,
+      user_agent: params.ua,
+      ip_address: params.ip,
+      revoked: false,
+      expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+      family_id: sessionId,
+      family_created_at: now,
+      device_info: { app: "lte" },
+    });
+
+    const claims: JwtClaims = entitlement.claims;
+    const lteProducts = claims.products.includes("lte") ? claims.products : [...claims.products, "lte"];
+    const accessToken = await signLteAccessToken(
+      {
+        sub: record.userId,
+        email: entitlement.user.email,
+        org_id: record.orgId,
+        roles: claims.roles,
+        products: lteProducts,
+        membership_status: claims.membership_status,
+        is_email_verified: entitlement.user.is_email_verified,
+        user_metadata: entitlement.user.user_metadata ?? {},
+      },
+      this.env,
+    );
+
+    let subscription = null;
+    try {
+      subscription = await getLteSubscriptionSnapshot(this.env, record.userId);
+    } catch (err) {
+      console.warn("[SSO] Failed to fetch LTE subscription snapshot:", err);
+    }
+
+    audit(this.ctx, this.env, "authorization_code.exchanged", {
+      user_id: record.userId,
+      org_id: record.orgId,
+      ip_address: params.ip,
+      user_agent: params.ua,
+      metadata: { target_app: "lte", session_id: sessionId },
+    });
+
+    return {
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      user: {
+        sub: record.userId,
+        email: entitlement.user.email,
+        org_id: record.orgId,
+        roles: claims.roles,
+        products: lteProducts,
+        membership_status: claims.membership_status,
+        is_email_verified: entitlement.user.is_email_verified,
+        user_metadata: entitlement.user.user_metadata ?? {},
+      },
+      subscription,
+      expires_in: 900,
     };
   }
 
@@ -1368,7 +1650,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     };
   }
 
-  async forgotPassword(params: { email?: string; redirect_url?: string }, ip?: string, ua?: string): Promise<{ success: true; message: string } | { success: false; error: string }> {
+  async forgotPassword(params: { email?: string; redirect_url?: string }, ip?: string, ua?: string): Promise<{ success: boolean; message?: string; error?: string }> {
     const { performForgotPassword } = await import("./routes/password-reset");
     const result = await performForgotPassword(
       this.env,
@@ -1435,16 +1717,18 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const tokenHash = await hashToken(refreshToken);
 
     const session = await database.queryOne<Session>(
-      `sessions?refresh_token_hash=eq.${encodeURIComponent(tokenHash)}&select=user_id,org_id`,
+      `sessions?refresh_token_hash=eq.${encodeURIComponent(tokenHash)}&select=user_id,org_id,family_id`,
     );
 
     if (session) {
+      // Global SSO logout: revoke all sessions for this user across all apps
+      // WARNING: this revokes every active session for the user, not only the presented refresh token.
       await database.update(
         "sessions",
-        { refresh_token_hash: `eq.${encodeURIComponent(tokenHash)}` },
+        { user_id: `eq.${encodeURIComponent(session.user_id)}` },
         { revoked: true },
       ).catch((err) => {
-        console.warn("[SSO] Session revocation failed on logout:", err);
+        console.warn("[SSO] User sessions revocation failed on logout:", err);
       });
 
       audit(this.ctx, this.env, "logout", {
@@ -1452,6 +1736,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         org_id: session.org_id,
         ip_address: ip || null,
         user_agent: ua || null,
+        metadata: { global_logout: true, family_id: session.family_id },
       });
     }
 
@@ -1617,8 +1902,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     // Assign roles from invite via join table
     const inviteRoles = invite.role?.length ? invite.role : ["member"];
-   const roleRows = await database.query<{ id: string; name: string }>(
-  `roles?name=in.(${inviteRoles.map(r => encodeURIComponent(r)).join(",")})&select=id,name`,
+    const roleRows = await database.query<{ id: string; name: string }>(
+      `roles?name=in.(${inviteRoles.map(r => encodeURIComponent(r)).join(",")})&select=id,name`,
     );
 
     for (const role of roleRows) {

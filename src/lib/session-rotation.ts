@@ -311,7 +311,7 @@ async function resolveFamilyOrgId(
  * verification status and RBAC claims, mirroring the existing inline rotation
  * logic in `routes/refresh.ts` and `index.ts::refreshSession`.
  */
-async function mintAccessToken(
+export async function mintAccessToken(
     database: DbClient,
     env: Env,
     userId: string,
@@ -335,13 +335,15 @@ async function mintAccessToken(
         return "blocked";
     }
 
+    const products = claims?.products ?? [];
+
     const token = await signAccessToken(
         {
             sub: userId,
             email: user?.email ?? "",
             org_id: orgId ?? "",
             roles: claims?.roles ?? [],
-            products: claims?.products ?? [],
+            products: products,
             membership_status: claims?.membership_status ?? "active",
             is_email_verified: user?.is_email_verified ?? false,
             user_metadata: user?.user_metadata ?? {},

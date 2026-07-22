@@ -1,4 +1,5 @@
 import type { SyncEvent } from './lib/sync-queue';
+import type { AuthorizationCodeStore } from './durable-objects/AuthorizationCodeStore';
 
 // ─── EMAIL_SERVICE Types (from email-worker RPC) ───────────────
 export interface EmailServiceSendRequest {
@@ -81,6 +82,8 @@ export interface Env {
   JWT_KID_PREVIOUS?: string;
   ALLOWED_ORIGINS: string;
   RATE_LIMIT_KV: KVNamespace;
+  /** Durable Object namespace for one-time cross-app authorization codes. */
+  AUTH_CODE_STORE: DurableObjectNamespace<AuthorizationCodeStore>;
   /** Service binding to the email-worker for sending emails via RPC. */
   EMAIL_SERVICE: Fetcher & {
     sendEmail(params: EmailServiceSendRequest): Promise<EmailServiceSendResponse>;
@@ -106,7 +109,9 @@ export interface Env {
   /** Comma-separated allowlist of base URLs for email links, e.g. "https://skillpassport.rareminds.in,https://courses.rareminds.in". */
   ALLOWED_APP_URLS: string;
 
-  /** Optional registrable parent domain for refresh_token cookie (e.g., ".rareminds.in"). When unset, cookie is host-only. */
+  /**
+   * @deprecated Removed in RPC architecture. Cookies are now managed by frontend applications.
+   */
   REFRESH_COOKIE_DOMAIN?: string;
 }
 
@@ -224,6 +229,8 @@ export interface Session {
   rotated_from: string | null;
   last_used_at: string | null;
   device_info: Record<string, unknown> | null;
+  family_id: string | null;
+  family_created_at: string | null;
 }
 
 export interface Invite {
