@@ -54,16 +54,27 @@ LTE subscription snapshot - Read from SSO database and returned to LTE backend f
 ## SSO Files To Create
 
 `src/durable-objects/AuthorizationCodeStore.ts` - Durable Object that stores, consumes, and expires one authorization code record.
+* **Storage & Alarm**: Persists `AuthorizationCodeRecord` and sets a KV alarm for automatic TTL deletion at `expiresAt`.
+* **Transactional Consumption**: Employs transactional read-and-delete (`consume`) to ensure single-use logic, returning failure reasons (`missing`, `expired`, `state_mismatch`, `redirect_uri_mismatch`) on mismatch.
 
 `src/lib/authorization-code.ts` - Helpers to generate code/state, hash them, build redirect URLs, and resolve Durable Object IDs.
+* **Cryptographic Generation**: Generates 32-byte cryptographically secure random values formatted as base64url.
+* **SHA-256 Hashing**: Pre-computes hashes of code and state for safe storage on the edge.
+* **Local-Aware Allowlist**: Validates redirect URIs against `ALLOWED_APP_URLS` and `ALLOWED_ORIGINS` with support for local-origin equivalent domains (`localhost`, `127.0.0.1`, `::1`) and wildcard matching.
+* **Stub Resolution**: Resolves Durable Object stubs by calling `env.AUTH_CODE_STORE.idFromName(codeHash)`.
 
 `src/lib/lte-entitlement.ts` - Helper to confirm the user has active LTE product access.
+* **Verifications**: Queries user record to confirm they are not blocked and their email is verified.
+* **Membership Validation**: Invokes database `get_jwt_claims` RPC to ensure active membership status.
 
 `src/lib/subscription-snapshot.ts` - Helper to build the LTE subscription snapshot returned during exchange.
+* **Cache Enrichment**: Compiles plans, billing cycles, features, and dates into `LteSubscriptionSnapshot` so target apps can keep local databases synchronized.
 
 `src/lib/app-token.ts` - Helper to issue access tokens scoped to target app audience.
+* **Token Wrapping**: Wraps token claims and injects required products (e.g., `["lte"]`) prior to calling `signAccessToken`.
 
 `src/types/sso-code.ts` - Typed request and response contracts for authorization-code RPCs.
+* **Contracts**: Declares type payloads (`GenerateAuthorizationCodeRequest`, `ExchangeAuthorizationCodeRequest`, `LteUserClaims`, `LteSubscriptionSnapshot`, `ExchangeAuthorizationCodeResponse`) for end-to-end type safety.
 
 ## SSO Files To Update
 
