@@ -39,19 +39,25 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       const result = await database.rpc<{ count: number }[]>("expire_old_subscriptions");
       const expired = Array.isArray(result) ? result[0]?.count ?? 0 : 0;
       if (expired > 0) console.log(`[SSO] Expired ${expired} subscription(s)`);
-    } catch (err: any) {
-      console.error(`[SSO] Failed to expire subscriptions: ${err?.message}`);
+    } catch (err: unknown) {
+      const errMessage = err instanceof Error ? err.message : String(err);
+      console.error(`[SSO] Failed to expire subscriptions: ${errMessage}`);
     }
 
     try {
-      const pendingEvents = await database.query<Record<string, any>>(
+      const pendingEvents = await database.query<Record<string, unknown>>(
         "events?status=eq.received&order=created_at.asc&limit=10"
       );
       if (pendingEvents && pendingEvents.length > 0) {
         for (const event of pendingEvents) {
-          await database.update("events", { id: `eq.${encodeURIComponent(event.id)}` }, { status: "processing" });
+          const eventId = event.id as string;
+          const eventType = event.event_type as string;
+          const eventPublicId = event.event_id as string;
+          const eventRetryCount = event.retry_count as number | null;
+
+          await database.update("events", { id: `eq.${encodeURIComponent(eventId)}` }, { status: "processing" });
           try {
-            if (event.event_type === 'payment.captured' || event.event_type === 'order.paid') {
+            if (eventType === 'payment.captured' || eventType === 'order.paid') {
               if (!this.env.SKILLPASSPORT_URL || !this.env.INTERNAL_WEBHOOK_SECRET) {
                 throw new Error("SKILLPASSPORT URL or INTERNAL_WEBHOOK_SECRET not configured. Cannot dispatch webhook.");
               }
@@ -62,7 +68,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
                 headers: {
                   'Content-Type': 'application/json',
                   'Authorization': `Bearer ${this.env.INTERNAL_WEBHOOK_SECRET}`,
-                  'X-Webhook-Event': event.event_type
+                  'X-Webhook-Event': eventType
                 },
                 body: JSON.stringify(event.payload)
               }, 10000); // 10 second timeout for webhook dispatch
@@ -74,22 +80,24 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
             }
 
             // Mark as completed since fulfillment succeeded (or event type was ignored)
-            await database.update("events", { id: `eq.${encodeURIComponent(event.id)}` }, {
+            await database.update("events", { id: `eq.${encodeURIComponent(eventId)}` }, {
               status: "completed",
               processed_at: new Date().toISOString()
             });
-            console.log(`[SSO] Processed webhook event ${event.event_id} of type ${event.event_type}`);
-          } catch (processErr: any) {
-            await database.update("events", { id: `eq.${encodeURIComponent(event.id)}` }, {
+            console.log(`[SSO] Processed webhook event ${eventPublicId} of type ${eventType}`);
+          } catch (processErr: unknown) {
+            const processErrMessage = processErr instanceof Error ? processErr.message : String(processErr);
+            await database.update("events", { id: `eq.${encodeURIComponent(eventId)}` }, {
               status: "failed",
-              error_message: processErr?.message || "Unknown error",
-              retry_count: (event.retry_count || 0) + 1
+              error_message: processErrMessage || "Unknown error",
+              retry_count: (eventRetryCount || 0) + 1
             });
           }
         }
       }
-    } catch (err: any) {
-      console.error(`[SSO] Failed to process webhook events: ${err?.message}`);
+    } catch (err: unknown) {
+      const errMessage = err instanceof Error ? err.message : String(err);
+      console.error(`[SSO] Failed to process webhook events: ${errMessage}`);
     }
   }
 
@@ -137,7 +145,6 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     features: unknown[];
     full_name: string;
     email: string;
-    phone?: string;
     razorpay_order_id?: string;
     razorpay_payment_id?: string;
     organization_id?: string;
@@ -166,7 +173,6 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       features: data.features || [],
       full_name: data.full_name || "",
       email: data.email,
-      phone: data.phone || null,
       status: "active",
       auto_renew: billingCycle !== "lifetime",
       subscription_start_date: now.toISOString(),
@@ -479,16 +485,15 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     let productId = data.product_id;
     if (!productId && data.subscription_id) {
-      const sub = await database.queryOne(
+      const subRow = await database.queryOne<{ product_id: string | null; plan_id: string | null }>(
         `subscriptions?id=eq.${encodeURIComponent(data.subscription_id)}&select=product_id,plan_id`,
       );
-      const subRow = sub as any;
-      productId = subRow?.product_id || null;
+      productId = subRow?.product_id ?? undefined;
       if (!productId && subRow?.plan_id) {
-        const plan = await database.queryOne(
+        const plan = await database.queryOne<{ product_id: string | null }>(
           `plans?id=eq.${encodeURIComponent(subRow.plan_id)}&select=product_id`,
         );
-        productId = (plan as any)?.product_id || null;
+        productId = plan?.product_id ?? undefined;
       }
     }
 
@@ -863,7 +868,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       const result = await performSignup(
         this.env,
         this.ctx,
-        params as any,
+        params,
         params.ip,
         params.ua
       );
@@ -880,10 +885,11 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         org: result.org,
         email_sent: result.email_sent
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const errMessage = err instanceof Error ? err.message : String(err);
       return {
         success: false,
-        error: err?.message || 'Signup failed',
+        error: errMessage || 'Signup failed',
         status: 500
       };
     }
@@ -898,7 +904,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     email: string;
     redirect_url?: string;
     org_id?: string;
-  }): Promise<any> {
+  }): Promise<{ message?: string; already_verified?: boolean }> {
     const { performRequestVerification } = await import('./routes/verify-email');
     const result = await performRequestVerification(
       this.env,
@@ -921,7 +927,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     token: string;
     ip?: string;
     ua?: string;
-  }): Promise<any> {
+  }): Promise<{ success: false; error: string } | { success: true; verified?: boolean }> {
     const { performVerifyEmail } = await import('./routes/verify-email');
     const result = await performVerifyEmail(
       this.env,
@@ -947,7 +953,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     org_id?: string;
     ip?: string;
     ua?: string;
-  }): Promise<any> {
+  }): Promise<{ success: true; deleted?: boolean }> {
     const { performDeleteAccount } = await import('./routes/delete-account');
     const result = await performDeleteAccount(
       this.env,
@@ -978,7 +984,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     org_id?: string;
     ip?: string;
     ua?: string;
-  }): Promise<any> {
+  }): Promise<{ success: true; message?: string }> {
     const { performChangePassword } = await import('./routes/change-password');
     const result = await performChangePassword(
       this.env,
@@ -1012,7 +1018,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     new_password: string;
     ip?: string;
     ua?: string;
-  }): Promise<any> {
+  }): Promise<{ success: true; message?: string }> {
     const { performAdminResetPassword } = await import('./routes/change-password');
     const result = await performAdminResetPassword(
       this.env,
@@ -1142,9 +1148,16 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         // Per-token TTL expiry.
         throw new Error("Session expired");
 
-      default:
-        // Unknown or missing refresh token.
+      case "invalid":
+        // Missing session row, unresolvable token, or user deleted mid-rotation.
         throw new Error("Invalid refresh token");
+
+      default: {
+        // Compile-time guard: if RotationOutcome ever gains a new "kind", this
+        // line fails to typecheck until it's handled explicitly above.
+        const _exhaustive: never = outcome;
+        throw new Error("Invalid refresh token");
+      }
     }
   }
 
@@ -1201,7 +1214,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     };
   }
 
-  async listOrgs(accessToken: string): Promise<{ organizations: Array<any> }> {
+  async listOrgs(accessToken: string): Promise<any> {
     if (!accessToken) throw new Error("No access token provided");
 
     let payload: AccessTokenPayload;
@@ -1225,12 +1238,12 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       )
       : [];
 
-    const orgMap = new Map(orgs.map((o: Organization) => [o.id, o]));
+    const orgMap = new Map(orgs.map((o) => [o.id, o]));
 
     // Fetch roles for each membership via join table
     const membershipIds = memberships.map((m) => m.id);
     const roleRows = membershipIds.length
-      ? await database.query<{ membership_id: string; name: string }>(
+      ? await database.query<{ membership_id: string; role_id: { name: string } | null }>(
         `membership_roles?membership_id=in.(${membershipIds.map(id => encodeURIComponent(id)).join(",")})&select=membership_id,role_id(name)`,
       )
       : [];
@@ -1238,10 +1251,15 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     // PostgREST returns nested objects for FK selects — flatten
     const roleMap = new Map<string, string[]>();
     for (const row of roleRows) {
+      if (!row.role_id) continue;
+
       const mid = row.membership_id;
-      const roleName = (row as any).role_id?.name ?? (row as any).name;
-      if (!roleMap.has(mid)) roleMap.set(mid, []);
-      if (roleName) roleMap.get(mid)?.push(roleName);
+      let roles = roleMap.get(mid);
+      if (!roles) {
+        roles = [];
+        roleMap.set(mid, roles);
+      }
+      roles.push(row.role_id.name);
     }
 
     return {
@@ -1350,7 +1368,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     };
   }
 
-  async forgotPassword(params: { email?: string; redirect_url?: string }, ip?: string, ua?: string): Promise<{ success: boolean; error?: string; message?: string }> {
+  async forgotPassword(params: { email?: string; redirect_url?: string }, ip?: string, ua?: string): Promise<{ success: true; message: string } | { success: false; error: string }> {
     const { performForgotPassword } = await import("./routes/password-reset");
     const result = await performForgotPassword(
       this.env,
@@ -1364,10 +1382,13 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       return { success: false, error: result.error };
     }
 
-    return { success: true, message: result.message };
+    const message =
+      result.message ?? "If an account exists, a reset email has been sent.";
+
+    return { success: true, message };
   }
 
-  async resetPassword(params: { token?: string; password?: string }, ip?: string, ua?: string): Promise<any> {
+  async resetPassword(params: { token?: string; password?: string }, ip?: string, ua?: string): Promise<{ success: false; error: string } | { success: true; reset: boolean }> {
     const { performResetPassword } = await import("./routes/password-reset");
     const result = await performResetPassword(
       this.env,
@@ -1381,7 +1402,9 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       return { success: false, error: result.error };
     }
 
-    return { success: true, reset: result.reset };
+    const reset = result.reset ?? true;
+
+    return { success: true, reset };
   }
 
   async listAddonCatalog(params?: { category?: string; role?: string; product?: string }): Promise<any> {
@@ -1541,7 +1564,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       throw new Error("Invite has expired");
     }
 
-    let user = await database.queryOne<{ id: string; email: string; is_email_verified: boolean; user_metadata?: Record<string, unknown> }>(
+    let user = await database.queryOne<{ id: string; email: string; is_email_verified: boolean; user_metadata: Record<string, unknown> | null }>(
       `users?email=eq.${encodeURIComponent(invite.email)}&select=*`,
     );
 
@@ -1604,9 +1627,11 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           membership_id: membershipId,
           role_id: role.id,
         });
-      } catch (err: any) {
+      } catch (err: unknown) {
         // Ignore duplicate — role already assigned
-        if (!err?.message?.includes("23505") && !err?.message?.includes("duplicate")) {
+        const errMessage = err instanceof Error ? err.message : String(err);
+        const isDuplicate = errMessage.includes("23505") || errMessage.includes("duplicate");
+        if (!isDuplicate) {
           throw err;
         }
       }
@@ -1650,7 +1675,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         products: claims?.products ?? [],
         membership_status: (claims?.membership_status ?? "active") as "active" | "inactive" | "suspended" | "expired",
         is_email_verified: user.is_email_verified,
-        user_metadata: user.user_metadata ?? {},
+        // user_metadata is nullable at the DB level; default to an empty object
+        user_metadata: user.user_metadata !== null ? user.user_metadata : {},
       },
       this.env,
     );
