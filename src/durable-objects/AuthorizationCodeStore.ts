@@ -46,7 +46,7 @@ export class AuthorizationCodeStore extends DurableObject<AuthorizationCodeStore
 				return { success: false, reason: "missing" };
 			}
 
-			if (!constantTimeEqual(record.codeHash, params.codeHash)) {
+			if (record.codeHash.length === 0 || !constantTimeEqual(record.codeHash, params.codeHash)) {
 				return { success: false, reason: "missing" };
 			}
 

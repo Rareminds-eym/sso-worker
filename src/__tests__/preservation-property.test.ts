@@ -12,6 +12,59 @@ import { SignJWT, importPKCS8 } from 'jose';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { JWT_AUDIENCE, JWT_ISSUER } from '../lib/constants';
 import type { Env } from '../types';
+import type { AuthorizationCodeStore } from '../durable-objects/AuthorizationCodeStore';
+
+function createDurableObjectId(value: string): DurableObjectId {
+  return {
+    toString: () => value,
+    equals: (other: DurableObjectId) => other.toString() === value,
+  };
+}
+
+class MockAuthorizationCodeNamespace extends DurableObjectNamespace<AuthorizationCodeStore> {
+  newUniqueId(): DurableObjectId {
+    return createDurableObjectId("");
+  }
+
+  idFromName(name: string): DurableObjectId {
+    return createDurableObjectId(name);
+  }
+
+  idFromString(id: string): DurableObjectId {
+    return createDurableObjectId(id);
+  }
+
+  get(_id: DurableObjectId): DurableObjectStub<AuthorizationCodeStore> {
+    return {} as DurableObjectStub<AuthorizationCodeStore>;
+  }
+
+  getByName(name: string): DurableObjectStub<AuthorizationCodeStore> {
+    return this.get(this.idFromName(name));
+  }
+
+  jurisdiction(): DurableObjectNamespace<AuthorizationCodeStore> {
+    return this;
+  }
+}
+
+const mockQueue: Queue<unknown> = {
+  send: () => Promise.resolve({
+    metadata: {
+      metrics: {
+        backlogCount: 0,
+        backlogBytes: 0,
+      },
+    },
+  }),
+  sendBatch: () => Promise.resolve({
+    metadata: {
+      metrics: {
+        backlogCount: 0,
+        backlogBytes: 0,
+      },
+    },
+  }),
+};
 
 // Mock environment for testing
 const mockEnv: Env = {
@@ -57,12 +110,7 @@ UQIDAQAB
   JWT_KID: 'test-key-1',
   ALLOWED_ORIGINS: 'http://localhost:3000',
   RATE_LIMIT_KV: {} as KVNamespace,
-  AUTH_CODE_STORE: {
-    idFromName: (name: string) => ({ toString: () => name, equals: (other: any) => other.toString() === name }),
-    idFromString: (id: string) => ({ toString: () => id, equals: (other: any) => other.toString() === id }),
-    newUniqueId: () => ({ toString: () => "", equals: () => false }),
-    get: (_id: any) => ({} as any),
-  } as unknown as DurableObjectNamespace<any>,
+  AUTH_CODE_STORE: new MockAuthorizationCodeNamespace(),
   EMAIL_SERVICE: {
     fetch: async () => new Response(),
     sendEmail: async () => ({ success: true }),
@@ -71,6 +119,8 @@ UQIDAQAB
   } as any,
   ALLOWED_APP_URLS: "https://skillpassport.rareminds.in",
   SYNC_QUEUE: { send: () => Promise.resolve() } as unknown as Queue<any>,
+  LEARNER_ADMISSION_QUEUE: mockQueue,
+  EMAIL_QUEUE: mockQueue,
   SKILLPASSPORT_URL: "https://skillpassport.rareminds.in",
   INTERNAL_WEBHOOK_SECRET: "test_webhook_secret"
 };

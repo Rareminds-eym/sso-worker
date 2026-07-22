@@ -16,3 +16,13 @@ export class WorkerEntrypoint<Env = unknown> {
     return new Response('Not implemented', { status: 501 });
   }
 }
+
+export class DurableObject<Env = unknown> {
+  readonly ctx: any;
+  readonly env: Env;
+
+  constructor(ctx: any, env: Env) {
+    this.ctx = ctx;
+    this.env = env;
+  }
+}

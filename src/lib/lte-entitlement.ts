@@ -1,4 +1,4 @@
-import type { AccessTokenPayload, Env, JwtClaims, User } from "../types";
+import type { Env, JwtClaims, User } from "../types";
 import { db } from "./db";
 
 export interface LteEntitlementContext {
@@ -33,7 +33,7 @@ export async function requireLteEntitlement(
   });
 
   if (!claims) {
-    throw new Error("Failed to load user permissions");
+    throw new Error(`Failed to load user permissions for user ${payload.sub} in org ${payload.org_id}`);
   }
 
   if (claims.membership_status !== "active") {
