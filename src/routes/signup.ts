@@ -11,8 +11,6 @@ import { publishSyncEvent } from "../lib/sync-queue";
 import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "../lib/validate";
 import type { Env, JwtClaims, SignupBody } from "../types";
 
-const EMAIL_SEND_TIMEOUT_MS = 5_000;
-
 /**
  * performSignup - Core business logic (pure RPC, no HTTP)
  * Called by: SsoWorker.signup() RPC method, signup() HTTP handler
@@ -153,10 +151,13 @@ export async function performSignup(
         const template = generateVerificationEmailTemplate(verifyUrl);
         ctx.waitUntil(sendEmail(env, { to: email, subject: template.subject, html: template.html, text: template.text }, ctx));
       }
-    } catch (emailErr) {
+    } catch (err) {
+      console.warn('[SSO] Email verification sending failed:', err);
       emailSent = false;
     }
 
+    // ponytail: Always publish sync events - consumer's upsert handles deduplication
+    // Simpler than checking if user exists first, let database handle it
     publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.created', {
       id: result.user_id,
       email,
@@ -168,12 +169,59 @@ export async function performSignup(
       slug: result.slug,
       created_by: result.user_id,
     });
+    
+    // Publish dependent events (membership and subscription)
+    // Consumer should handle these idempotently and retry if dependencies not ready
     publishSyncEvent(env.SYNC_QUEUE, ctx, 'membership.created', {
       user_id: result.user_id,
       organization_id: result.org_id,
-      roles: claims?.roles ?? [],
+      roles: claims?.roles ?? [],  // Use actual roles from DB, empty if claims failed
       status: 'active',
     });
+
+    // ponytail: Best-effort sync of pre-existing subscription
+    // Non-blocking; login re-sync path serves as backstop if this fails
+    ctx.waitUntil(
+      database.query<{
+        id: string;
+        plan_id: string;
+        plan_code: string;
+        plan_type: string;
+        plan_amount: number;
+        billing_cycle: string;
+        features: string[];
+        status: string;
+        subscription_start_date: string;
+        subscription_end_date: string | null;
+        product_id: string | null;
+        updated_at: string;
+      }>(`subscriptions?user_id=eq.${encodeURIComponent(result.user_id)}&order=created_at.desc&limit=1`)
+        .then((subscriptions) => {
+          if (subscriptions && subscriptions.length > 0) {
+            const sub = subscriptions[0];
+            publishSyncEvent(env.SYNC_QUEUE, ctx, 'subscription.created', {
+              id: sub.id,
+              user_id: result.user_id,
+              organization_id: null,
+              plan_id: sub.plan_id,
+              plan_code: sub.plan_code,
+              plan_type: sub.plan_type,
+              plan_amount: sub.plan_amount,
+              billing_cycle: sub.billing_cycle,
+              features: sub.features,
+              status: sub.status,
+              subscription_start_date: sub.subscription_start_date,
+              subscription_end_date: sub.subscription_end_date,
+              is_organization_subscription: false,
+              product_id: sub.product_id,
+              updated_at: sub.updated_at,
+            });
+          }
+        })
+        .catch((err) => {
+          console.error(`[SSO] Failed to sync subscription for user ${result.user_id}:`, err);
+        }),
+    );
 
     audit(ctx, env, "signup", {
       user_id: result.user_id,
