@@ -42,7 +42,7 @@ export class AuthorizationCodeStore extends DurableObject<AuthorizationCodeStore
 		return this.ctx.storage.transaction(async (transaction) => {
 			const record = await transaction.get<AuthorizationCodeRecord>(AUTHORIZATION_CODE_KEY);
 
-			if (!record || record.codeHash !== params.codeHash) {
+			if (!record || !constantTimeEqual(record.codeHash, params.codeHash)) {
 				return { success: false, reason: "missing" };
 			}
 
@@ -51,7 +51,7 @@ export class AuthorizationCodeStore extends DurableObject<AuthorizationCodeStore
 				return { success: false, reason: "expired" };
 			}
 
-			if (record.stateHash !== params.stateHash) {
+			if (!constantTimeEqual(record.stateHash, params.stateHash)) {
 				return { success: false, reason: "state_mismatch" };
 			}
 
@@ -67,4 +67,15 @@ export class AuthorizationCodeStore extends DurableObject<AuthorizationCodeStore
 	async alarm(): Promise<void> {
 		await this.ctx.storage.delete(AUTHORIZATION_CODE_KEY);
 	}
+}
+
+function constantTimeEqual(a: string, b: string): boolean {
+	if (a.length !== b.length) {
+		return false;
+	}
+	let result = 0;
+	for (let i = 0; i < a.length; i++) {
+		result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+	}
+	return result === 0;
 }

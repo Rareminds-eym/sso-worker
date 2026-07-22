@@ -47,15 +47,26 @@ export async function getLteSubscriptionSnapshot(
     `subscriptions?user_id=eq.${encodeURIComponent(userId)}&status=in.(active,pending)&order=created_at.desc`,
   );
 
+  // Batch-fetch all plan records at once to avoid N+1 queries in the loop
+  const planIds = subscriptions
+    .map((s) => s.plan_id)
+    .filter((id): id is string => typeof id === "string");
+
+  let plans: PlanRow[] = [];
+  if (planIds.length > 0) {
+    plans = (await database.query<PlanRow>(
+      `plans?id=in.(${planIds.map((id) => encodeURIComponent(id)).join(",")})&select=id,name,plan_code,product_id,base_features`,
+    )) || [];
+  }
+  const planMap = new Map<string, PlanRow>(plans.map((p) => [p.id, p]));
+
   let selectedSubscription: SubscriptionRow | null = null;
   let selectedPlan: PlanRow | null = null;
 
   // First, try to find an LTE-specific subscription
   for (const subscription of subscriptions) {
     const plan = subscription.plan_id
-      ? await database.queryOne<PlanRow>(
-        `plans?id=eq.${encodeURIComponent(subscription.plan_id)}&select=id,name,plan_code,product_id,base_features&limit=1`,
-      )
+      ? planMap.get(subscription.plan_id) || null
       : null;
 
     if (
@@ -75,9 +86,7 @@ export async function getLteSubscriptionSnapshot(
   if (!selectedSubscription && subscriptions.length > 0) {
     selectedSubscription = subscriptions[0]; // Most recent by created_at desc
     if (selectedSubscription.plan_id) {
-      selectedPlan = await database.queryOne<PlanRow>(
-        `plans?id=eq.${encodeURIComponent(selectedSubscription.plan_id)}&select=id,name,plan_code,product_id,base_features&limit=1`,
-      );
+      selectedPlan = planMap.get(selectedSubscription.plan_id) || null;
     }
   }
 

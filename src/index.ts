@@ -1261,7 +1261,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     // Fallback: If session was marked revoked, resolve latest unrevoked session in family
-    if ((!session || session.revoked) && session?.family_id) {
+    if (session?.revoked && session.family_id) {
       const activeSession = await database.queryOne<Session>(
         `sessions?family_id=eq.${encodeURIComponent(session.family_id)}&revoked=eq.false&order=created_at.desc&limit=1&select=id,user_id,org_id,expires_at,revoked,family_id`,
       );
