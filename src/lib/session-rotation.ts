@@ -335,8 +335,7 @@ export async function mintAccessToken(
         return "blocked";
     }
 
-    const rawProducts = claims?.products ?? [];
-    const products = rawProducts.includes("lte") ? rawProducts : [...rawProducts, "lte"];
+    const products = claims?.products ?? [];
 
     const token = await signAccessToken(
         {

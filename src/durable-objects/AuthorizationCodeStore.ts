@@ -42,7 +42,11 @@ export class AuthorizationCodeStore extends DurableObject<AuthorizationCodeStore
 		return this.ctx.storage.transaction(async (transaction) => {
 			const record = await transaction.get<AuthorizationCodeRecord>(AUTHORIZATION_CODE_KEY);
 
-			if (!record || !constantTimeEqual(record.codeHash, params.codeHash)) {
+			if (!record) {
+				return { success: false, reason: "missing" };
+			}
+
+			if (!constantTimeEqual(record.codeHash, params.codeHash)) {
 				return { success: false, reason: "missing" };
 			}
 

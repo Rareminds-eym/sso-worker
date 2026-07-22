@@ -108,6 +108,11 @@ export interface Env {
 
   /** Comma-separated allowlist of base URLs for email links, e.g. "https://skillpassport.rareminds.in,https://courses.rareminds.in". */
   ALLOWED_APP_URLS: string;
+
+  /**
+   * @deprecated Removed in RPC architecture. Cookies are now managed by frontend applications.
+   */
+  REFRESH_COOKIE_DOMAIN?: string;
 }
 
 // ─── Route Configuration ───────────────────────────────────────

@@ -67,17 +67,18 @@ function clearLegacyAccessTokenCookie(): string {
  * - Sets ONLY the refresh_token cookie (no access_token cookie per Req 9.1, 9.2).
  * - Sets the X-Access-Token header for in-memory client storage.
  * - Access token is also in JSON body (handled by caller).
- * - Wires REFRESH_COOKIE_DOMAIN from env when set.
+ * - Wires REFRESH_COOKIE_DOMAIN from env when set (deprecated).
  * @param res - Response object to mutate
  * @param accessToken - Access token (sent via header, not cookie)
  * @param refreshToken - Refresh token (sent via HttpOnly cookie)
- * @param env - Environment (reads REFRESH_COOKIE_DOMAIN)
+ * @param env - Environment (reads REFRESH_COOKIE_DOMAIN - deprecated)
+ * @deprecated Cookies are now managed by frontend applications.
  */
 export function setAuthCookies(
   res: Response,
   accessToken: string,
   refreshToken: string,
-  env: { REFRESH_COOKIE_DOMAIN?: string; ENVIRONMENT?: string },
+  env: { /** @deprecated */ REFRESH_COOKIE_DOMAIN?: string; ENVIRONMENT?: string },
 ): void {
   // Access token delivered via header only (in-memory on client)
   res.headers.set("X-Access-Token", accessToken);
@@ -94,9 +95,10 @@ export function setAuthCookies(
  * - Clears refresh_token cookie with matching attributes (including Domain).
  * - LEGACY: Also clears access_token cookie for rollout window (task 13.3 will remove this).
  * @param res - Response object to mutate
- * @param env - Environment (reads REFRESH_COOKIE_DOMAIN) — must match the set cookies
+ * @param env - Environment (reads REFRESH_COOKIE_DOMAIN - deprecated) — must match the set cookies
+ * @deprecated Cookies are now managed by frontend applications.
  */
-export function clearCookies(res: Response, env: { REFRESH_COOKIE_DOMAIN?: string; ENVIRONMENT?: string }): void {
+export function clearCookies(res: Response, env: { /** @deprecated */ REFRESH_COOKIE_DOMAIN?: string; ENVIRONMENT?: string }): void {
   // Build cookie config from env
   const cfg: CookieConfig = { domain: env.REFRESH_COOKIE_DOMAIN, environment: env.ENVIRONMENT };
 

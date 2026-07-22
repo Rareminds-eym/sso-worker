@@ -1339,16 +1339,20 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const stub = getAuthorizationCodeStub(this.env, generated.codeHash);
     const now = Date.now();
 
-    await stub.store({
-      codeHash: generated.codeHash,
-      stateHash: generated.stateHash,
-      userId: payload.sub,
-      orgId: payload.org_id,
-      targetApp: "lte",
-      redirectUri: params.redirectUri,
-      expiresAt: Date.parse(generated.expiresAt),
-      createdAt: now,
-    });
+    try {
+      await stub.store({
+        codeHash: generated.codeHash,
+        stateHash: generated.stateHash,
+        userId: payload.sub,
+        orgId: payload.org_id,
+        targetApp: "lte",
+        redirectUri: params.redirectUri,
+        expiresAt: Date.parse(generated.expiresAt),
+        createdAt: now,
+      });
+    } catch (err) {
+      throw new Error(`Failed to store authorization code: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     audit(this.ctx, this.env, "authorization_code.generated", {
       user_id: payload.sub,
@@ -1381,12 +1385,17 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       hashAuthorizationValue(params.state),
     ]);
     const stub = getAuthorizationCodeStub(this.env, codeHash);
-    const consumeResult = await stub.consume({
-      codeHash,
-      stateHash,
-      redirectUri: params.redirectUri,
-      now: Date.now(),
-    });
+    let consumeResult;
+    try {
+      consumeResult = await stub.consume({
+        codeHash,
+        stateHash,
+        redirectUri: params.redirectUri,
+        now: Date.now(),
+      });
+    } catch (err) {
+      throw new Error(`Failed to consume authorization code: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     if (!consumeResult.success) {
       audit(this.ctx, this.env, "authorization_code.exchange_failed", {
@@ -1404,13 +1413,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     const entitlement = await requireLteEntitlement(this.env, {
       sub: record.userId,
-      email: "",
       org_id: record.orgId,
-      roles: [],
-      products: [],
-      membership_status: "active",
-      is_email_verified: false,
-      user_metadata: {},
     });
 
     const refreshToken = generateRefreshToken();

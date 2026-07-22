@@ -57,7 +57,12 @@ UQIDAQAB
   JWT_KID: 'test-key-1',
   ALLOWED_ORIGINS: 'http://localhost:3000',
   RATE_LIMIT_KV: {} as KVNamespace,
-  AUTH_CODE_STORE: {} as unknown as Env["AUTH_CODE_STORE"],
+  AUTH_CODE_STORE: {
+    idFromName: (name: string) => ({ toString: () => name, equals: (other: any) => other.toString() === name }),
+    idFromString: (id: string) => ({ toString: () => id, equals: (other: any) => other.toString() === id }),
+    newUniqueId: () => ({ toString: () => "", equals: () => false }),
+    get: (_id: any) => ({} as any),
+  } as unknown as DurableObjectNamespace<any>,
   EMAIL_SERVICE: {
     fetch: async () => new Response(),
     sendEmail: async () => ({ success: true }),

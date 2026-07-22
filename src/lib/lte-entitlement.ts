@@ -8,7 +8,7 @@ export interface LteEntitlementContext {
 
 export async function requireLteEntitlement(
   env: Env,
-  payload: AccessTokenPayload,
+  payload: { sub: string; org_id: string | null },
 ): Promise<LteEntitlementContext> {
   const database = db(env);
   const user = await database.queryOne<User>(
@@ -32,7 +32,11 @@ export async function requireLteEntitlement(
     p_org_id: payload.org_id,
   });
 
-  if (!claims || claims.membership_status !== "active") {
+  if (!claims) {
+    throw new Error("Failed to load user permissions");
+  }
+
+  if (claims.membership_status !== "active") {
     throw new Error("Active membership is required");
   }
 

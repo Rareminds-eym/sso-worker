@@ -44,8 +44,10 @@ export function assertAllowedRedirectUri(redirectUri: string, env: Env): void {
     throw new Error("Invalid redirect URI");
   }
 
-  const allowed = `${env.ALLOWED_APP_URLS || ""},${env.ALLOWED_ORIGINS || ""}`
-    .split(",")
+  const allowed = [
+    ...(env.ALLOWED_APP_URLS || "").split(","),
+    ...(env.ALLOWED_ORIGINS || "").split(","),
+  ]
     .map((value) => value.trim())
     .filter(Boolean);
 
@@ -108,12 +110,14 @@ function normalizePath(pathname: string): string {
 function matchesWildcardOrigin(redirect: URL, pattern: string): boolean {
   try {
     const patternUrl = new URL(pattern.replace("*.", ""));
+    if (redirect.protocol !== patternUrl.protocol) {
+      return false;
+    }
+    const redirectHost = redirect.hostname.toLowerCase();
+    const patternHost = patternUrl.hostname.toLowerCase();
     return (
-      redirect.protocol === patternUrl.protocol &&
-      (
-        redirect.hostname === patternUrl.hostname ||
-        redirect.hostname.endsWith(`.${patternUrl.hostname}`)
-      )
+      redirectHost === patternHost ||
+      redirectHost.endsWith(`.${patternHost}`)
     );
   } catch {
     return false;
