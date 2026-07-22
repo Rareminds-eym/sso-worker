@@ -1349,13 +1349,15 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         stateHash: generated.stateHash,
         userId: payload.sub,
         orgId: payload.org_id,
-        targetApp: "lte",
+        targetApp: params.targetApp,
         redirectUri: params.redirectUri,
         expiresAt: Date.parse(generated.expiresAt),
         createdAt: now,
       });
     } catch (err) {
-      throw new Error(`Failed to store authorization code: ${err instanceof Error ? err.message : String(err)}`);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error("[SSO] Failed to store authorization code:", errMsg);
+      throw new Error(`Failed to store authorization code: ${errMsg}`);
     }
 
     audit(this.ctx, this.env, "authorization_code.generated", {
@@ -1363,7 +1365,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       org_id: payload.org_id,
       ip_address: params.ip,
       user_agent: params.ua,
-      metadata: { target_app: "lte", redirect_uri: params.redirectUri },
+      metadata: { target_app: params.targetApp, redirect_uri: params.redirectUri },
     });
 
     return {
@@ -1398,7 +1400,9 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         now: Date.now(),
       });
     } catch (err) {
-      throw new Error(`Failed to consume authorization code: ${err instanceof Error ? err.message : String(err)}`);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error("[SSO] Failed to consume authorization code:", errMsg);
+      throw new Error(`Failed to consume authorization code: ${errMsg}`);
     }
 
     if (!consumeResult.success) {
@@ -1406,13 +1410,13 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       audit(this.ctx, this.env, "authorization_code.exchange_failed", {
         ip_address: params.ip,
         user_agent: params.ua,
-        metadata: { target_app: "lte", reason },
+        metadata: { target_app: params.targetApp, reason },
       });
       throw new Error(`Authorization code exchange failed: ${reason}`);
     }
 
     const record = consumeResult.record;
-    if (record.targetApp !== "lte") {
+    if (record.targetApp !== params.targetApp) {
       throw new Error("Authorization code target app mismatch");
     }
 
@@ -1646,11 +1650,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     };
   }
 
-  async forgotPassword(
-    params: { email?: string; redirect_url?: string },
-    ip?: string,
-    ua?: string,
-  ): Promise<{ success: boolean; message?: string; error?: string }> {
+  async forgotPassword(params: { email?: string; redirect_url?: string }, ip?: string, ua?: string): Promise<{ success: boolean; message?: string; error?: string }> {
     const { performForgotPassword } = await import("./routes/password-reset");
     const result = await performForgotPassword(
       this.env,

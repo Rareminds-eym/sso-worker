@@ -131,8 +131,8 @@ function matchesWildcardOrigin(redirect: URL, pattern: string): boolean {
   }
 }
 
-// Resolves the DurableObjectStub return type dynamically using ReturnType to prevent
-// ambient/runtime import mismatches of DurableObjectStub inside Vitest mock files.
+// Resolves the DurableObjectStub return type dynamically using ReturnType.
+// This avoids direct imports of DurableObjectStub to prevent Vitest mock conflicts.
 export function getAuthorizationCodeStub(
   env: Env,
   codeHash: string,
