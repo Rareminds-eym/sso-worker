@@ -1226,8 +1226,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   async authenticateSharedSession(
     refreshToken: string,
     targetApp: string,
-    ip?: string,
-    ua?: string,
+    _ip?: string,
+    _ua?: string,
   ): Promise<{ success: boolean; access_token?: string; refresh_token?: string; error?: string }> {
     if (!refreshToken) {
       return { success: false, error: "No refresh token provided" };
@@ -1235,7 +1235,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     const database = db(this.env);
     let activeToken = refreshToken;
-    let tokenHash = await hashToken(activeToken);
+    const tokenHash = await hashToken(activeToken);
 
     let session = await database.queryOne<Session>(
       `sessions?refresh_token_hash=eq.${encodeURIComponent(tokenHash)}&select=id,user_id,org_id,expires_at,revoked,family_id`,

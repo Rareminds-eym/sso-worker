@@ -40,26 +40,9 @@ function createAuthorizationCodeNamespace(): DurableObjectNamespace<Authorizatio
 
 function createMockQueue<T>(): Queue<T> {
   return {
-  metrics: () => Promise.resolve({
-    backlogCount: 0,
-    backlogBytes: 0,
-  }),
-  send: () => Promise.resolve({
-    metadata: {
-      metrics: {
-        backlogCount: 0,
-        backlogBytes: 0,
-      },
-    },
-  }),
-  sendBatch: () => Promise.resolve({
-    metadata: {
-      metrics: {
-        backlogCount: 0,
-        backlogBytes: 0,
-      },
-    },
-  }),
+    metrics: () => Promise.resolve({ backlogCount: 0, backlogBytes: 0 } as any),
+    send: () => Promise.resolve({} as any),
+    sendBatch: () => Promise.resolve({} as any),
   };
 }
 
@@ -68,10 +51,11 @@ const mockSyncQueue = createMockQueue<SyncEvent>();
 const mockUnknownQueue = createMockQueue<unknown>();
 const mockEmailService: Env["EMAIL_SERVICE"] = {
   fetch: async () => new Response(),
+  connect: () => { throw new Error("Not implemented"); },
   sendEmail: async () => ({ success: true }),
   sendOTP: async () => ({ success: true }),
   verifyOTP: async () => ({ success: true, verified: true }),
-} as unknown as Env["EMAIL_SERVICE"];
+} as Env["EMAIL_SERVICE"];
 
 const mockEnv: Env = {
   SUPABASE_URL: 'https://test.supabase.co',

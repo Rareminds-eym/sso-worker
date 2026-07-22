@@ -18,10 +18,10 @@ export class WorkerEntrypoint<Env = unknown> {
 }
 
 export class DurableObject<Env = unknown> {
-  readonly ctx: any;
+  readonly ctx: DurableObjectState;
   readonly env: Env;
 
-  constructor(ctx: any, env: Env) {
+  constructor(ctx: DurableObjectState, env: Env) {
     this.ctx = ctx;
     this.env = env;
   }
