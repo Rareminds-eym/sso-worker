@@ -1382,7 +1382,13 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       return { success: false, error: result.error };
     }
 
-    return { success: true, message: result.message ?? "If an account exists, a reset email has been sent." };
+    if (result.message === undefined) {
+      throw new Error(
+        "Invariant violated: performForgotPassword() succeeded without returning a message."
+      );
+    }
+
+    return { success: true, message: result.message };
   }
 
   async resetPassword(params: { token?: string; password?: string }, ip?: string, ua?: string): Promise<{ success: false; error: string } | { success: true; reset: boolean }> {
@@ -1399,7 +1405,13 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       return { success: false, error: result.error };
     }
 
-    return { success: true, reset: result.reset ?? true };
+    if (result.reset === undefined) {
+      throw new Error(
+        "Invariant violated: performResetPassword() succeeded without returning reset=true."
+      );
+    }
+
+    return { success: true, reset: result.reset };
   }
 
   async listAddonCatalog(params?: { category?: string; role?: string; product?: string }): Promise<any> {
