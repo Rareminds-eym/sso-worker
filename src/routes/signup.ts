@@ -87,7 +87,7 @@ export async function performSignup(
         p_user_metadata: body.user_metadata ?? {},
       },
     );
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (err?.message?.includes("duplicate") || err?.message?.includes("23505")) {
       return { error: "An account with this email already exists. Please log in.", status: 409 };
     }

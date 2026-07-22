@@ -12,8 +12,6 @@ import { publishSyncEvent } from "../lib/sync-queue";
 import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "../lib/validate";
 import type { Env, JwtClaims, SignupMemberBody } from "../types";
 
-const EMAIL_SEND_TIMEOUT_MS = 5_000;
-
 /**
  * Pure business logic for signupMember (extracted for RPC)
  */
@@ -21,9 +19,7 @@ export async function performSignupMember(
   env: Env,
   ctx: ExecutionContext,
   params: SignupMemberBody & { ip?: string; ua?: string }
-): Promise<any> {
-  // Implementation will reuse the logic from signupMember but return data instead of Response
-  // This is a simplified version - the HTTP handler below has the full implementation
+): Promise<Record<string, unknown>> {
   return await signupMemberImpl(env, ctx, params);
 }
 
@@ -31,7 +27,7 @@ async function signupMemberImpl(
   env: Env,
   ctx: ExecutionContext,
   params: SignupMemberBody & { ip?: string; ua?: string }
-): Promise<any> {
+): Promise<Record<string, unknown>> {
   if (!params.email || !params.password || !params.role) {
     return { error: "email, password, and role are required", status: 400 };
   }
@@ -89,7 +85,7 @@ async function signupMemberImpl(
       p_org_id: params.org_id ?? null,
       p_user_metadata: params.user_metadata ?? {},
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (err?.message?.includes("duplicate") || err?.message?.includes("23505")) {
       return { error: "An account with this email already exists. Please log in.", status: 409 };
     }
@@ -165,7 +161,7 @@ async function signupMemberImpl(
         const template = generateVerificationEmailTemplate(verifyUrl);
         ctx.waitUntil(sendEmail(env, { to: email, subject: template.subject, html: template.html, text: template.text }, ctx));
       }
-    } catch (emailErr) {
+    } catch {
       emailSent = false;
     }
 
