@@ -7,6 +7,7 @@ import { checkEmailThrottle } from "../lib/email-throttle";
 import { generateRefreshToken, hashPassword, hashToken } from "../lib/hash";
 import { signAccessToken } from "../lib/jwt";
 import { endpointRateLimit } from "../lib/rate-limit";
+import { getErrorMessage } from "../lib/error-utils";
 import { publishSyncEvent } from "../lib/sync-queue";
 import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "../lib/validate";
 import type { Env, JwtClaims, SignupBody } from "../types";
@@ -88,7 +89,8 @@ export async function performSignup(
       },
     );
   } catch (err: unknown) {
-    if (err?.message?.includes("duplicate") || err?.message?.includes("23505")) {
+    const message = getErrorMessage(err);
+    if (message.includes("duplicate") || message.includes("23505")) {
       return { error: "An account with this email already exists. Please log in.", status: 409 };
     }
     throw err;

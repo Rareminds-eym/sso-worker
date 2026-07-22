@@ -5,6 +5,7 @@ import { sendEmail } from "../lib/email";
 import { checkEmailThrottle } from "../lib/email-throttle";
 import { generateRefreshToken, hashPassword, hashToken } from "../lib/hash";
 import { signAccessToken } from "../lib/jwt";
+import { getErrorMessage } from "../lib/error-utils";
 import { endpointRateLimit } from "../lib/rate-limit";
 
 import { generateVerificationEmailTemplate } from "../lib/email-templates";
@@ -86,16 +87,17 @@ async function signupMemberImpl(
       p_user_metadata: params.user_metadata ?? {},
     });
   } catch (err: unknown) {
-    if (err?.message?.includes("duplicate") || err?.message?.includes("23505")) {
+    const message = getErrorMessage(err);
+    if (message.includes("duplicate") || message.includes("23505")) {
       return { error: "An account with this email already exists. Please log in.", status: 409 };
     }
-    if (err?.message?.includes("Invalid role")) {
+    if (message.includes("Invalid role")) {
       return { error: "Invalid role specified", status: 400 };
     }
-    if (err?.message?.includes("Organization not found")) {
+    if (message.includes("Organization not found")) {
       return { error: "Organization not found", status: 404 };
     }
-    return { error: err.message || "Signup failed", status: 500 };
+    return { error: message || "Signup failed", status: 500 };
   }
 
   // Step 2: Create session + sign JWT (rollback user on failure)
