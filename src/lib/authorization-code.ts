@@ -5,6 +5,7 @@ import type { TargetApp } from "../types/sso-code";
 const AUTH_CODE_TTL_MS = 60_000;
 const TOKEN_BYTES = 32;
 
+
 export interface GeneratedAuthorizationCode {
   code: string;
   state: string;
@@ -130,10 +131,12 @@ function matchesWildcardOrigin(redirect: URL, pattern: string): boolean {
   }
 }
 
+// Resolves the DurableObjectStub return type dynamically using ReturnType to prevent
+// ambient/runtime import mismatches of DurableObjectStub inside Vitest mock files.
 export function getAuthorizationCodeStub(
   env: Env,
   codeHash: string,
-): DurableObjectStub<AuthorizationCodeStore> {
+): ReturnType<Env["AUTH_CODE_STORE"]["get"]> {
   const id = env.AUTH_CODE_STORE.idFromName(codeHash);
   return env.AUTH_CODE_STORE.get(id);
 }

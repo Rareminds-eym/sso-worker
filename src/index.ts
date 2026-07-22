@@ -1459,7 +1459,12 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       this.env,
     );
 
-    const subscription = await getLteSubscriptionSnapshot(this.env, record.userId);
+    let subscription = null;
+    try {
+      subscription = await getLteSubscriptionSnapshot(this.env, record.userId);
+    } catch (err) {
+      console.warn("[SSO] Failed to fetch LTE subscription snapshot:", err);
+    }
 
     audit(this.ctx, this.env, "authorization_code.exchanged", {
       user_id: record.userId,
