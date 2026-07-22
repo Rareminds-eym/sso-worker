@@ -7,6 +7,7 @@ import { checkEmailThrottle } from "../lib/email-throttle";
 import { generateRefreshToken, hashPassword, hashToken } from "../lib/hash";
 import { signAccessToken } from "../lib/jwt";
 import { endpointRateLimit } from "../lib/rate-limit";
+import { getErrorMessage } from "../lib/error-utils";
 import { publishSyncEvent } from "../lib/sync-queue";
 import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "../lib/validate";
 import type { Env, JwtClaims, SignupBody } from "../types";
@@ -87,8 +88,9 @@ export async function performSignup(
         p_user_metadata: body.user_metadata ?? {},
       },
     );
-  } catch (err: any) {
-    if (err?.message?.includes("duplicate") || err?.message?.includes("23505")) {
+  } catch (err: unknown) {
+    const message = getErrorMessage(err);
+    if (message.includes("duplicate") || message.includes("23505")) {
       return { error: "An account with this email already exists. Please log in.", status: 409 };
     }
     throw err;
@@ -161,7 +163,10 @@ export async function performSignup(
     publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.created', {
       id: result.user_id,
       email,
-      user_metadata: body.user_metadata ?? {},
+      user_metadata: {
+        ...(body.user_metadata ?? {}),
+        role: body.role,
+      },
     });
     publishSyncEvent(env.SYNC_QUEUE, ctx, 'organization.created', {
       id: result.org_id,

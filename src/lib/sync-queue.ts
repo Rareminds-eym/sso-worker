@@ -7,6 +7,7 @@ export type SyncEventType =
   | 'organization.updated'
   | 'membership.created'
   | 'membership.role_changed'
+  | 'membership.status_changed'
   | 'membership.removed'
   | 'subscription.created'
   | 'subscription.updated'

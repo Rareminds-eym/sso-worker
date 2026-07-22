@@ -37,10 +37,7 @@ export async function performCreateMember(
 		});
 	} catch (err: unknown) {
 		const errorMessage = err instanceof Error ? err.message : String(err);
-		if (
-			errorMessage.includes("duplicate") ||
-			errorMessage.includes("23505")
-		) {
+		if (errorMessage.includes("duplicate") || errorMessage.includes("23505")) {
 			throw new Error(`A user with email ${email} already exists`);
 		}
 		throw err;
@@ -140,6 +137,40 @@ export async function performUpdateMembershipStatus(
 		{ id: `eq.${encodeURIComponent(data.membership_id)}` },
 		{ status: data.status },
 	);
+
+	if (env.SYNC_QUEUE) {
+		try {
+			const [membership, roleRows] = await Promise.all([
+				database.queryOne<{ user_id: string; org_id: string }>(
+					`memberships?id=eq.${encodeURIComponent(data.membership_id)}&select=user_id,org_id`,
+				),
+				database.query<{ role_id: { name: string } }>(
+					`membership_roles?membership_id=eq.${encodeURIComponent(data.membership_id)}&select=role_id(name)`,
+				),
+			]);
+			if (membership) {
+				const roles = roleRows
+					.map(r => r.role_id?.name)
+					.filter(Boolean) as string[];
+				await env.SYNC_QUEUE.send({
+					type: "membership.status_changed",
+					payload: {
+						user_id: membership.user_id,
+						organization_id: membership.org_id,
+						roles: roles.length > 0 ? roles : undefined,
+						status: data.status,
+					},
+					timestamp: new Date().toISOString(),
+				});
+			}
+		} catch (e) {
+			console.error(
+				`[SSO] Failed to publish sync event for membership ${data.membership_id}:`,
+				e,
+			);
+		}
+	}
+
 	return { success: true };
 }
 
@@ -165,5 +196,33 @@ export async function performAssignMembershipRole(
 		membership_id: data.membership_id,
 		role_id: data.role_id,
 	});
+
+	try {
+		const [membership, roleRow] = await Promise.all([
+			database.queryOne<{ user_id: string; org_id: string }>(
+				`memberships?id=eq.${encodeURIComponent(data.membership_id)}&select=user_id,org_id`,
+			),
+			database.queryOne<{ name: string }>(
+				`roles?id=eq.${encodeURIComponent(data.role_id)}&select=name`,
+			),
+		]);
+		if (membership && roleRow && env.SYNC_QUEUE) {
+			await env.SYNC_QUEUE.send({
+				type: "membership.role_changed",
+				payload: {
+					user_id: membership.user_id,
+					organization_id: membership.org_id,
+					roles: [roleRow.name],
+				},
+				timestamp: new Date().toISOString(),
+			});
+		}
+	} catch (e) {
+		console.error(
+			`[SSO] Failed to publish sync event for membership role ${data.membership_id}:`,
+			e,
+		);
+	}
+
 	return { success: true };
 }
