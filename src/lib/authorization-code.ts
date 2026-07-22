@@ -109,12 +109,18 @@ function normalizePath(pathname: string): string {
 
 function matchesWildcardOrigin(redirect: URL, pattern: string): boolean {
   try {
-    const patternUrl = new URL(pattern.replace("*.", ""));
+    const patternUrl = new URL(pattern);
+    if (!patternUrl.hostname.startsWith("*.")) {
+      return false;
+    }
     if (redirect.protocol !== patternUrl.protocol) {
       return false;
     }
     const redirectHost = redirect.hostname.toLowerCase();
-    const patternHost = patternUrl.hostname.toLowerCase();
+    const patternHost = patternUrl.hostname.slice(2).toLowerCase();
+    if (!patternHost) {
+      return false;
+    }
     return (
       redirectHost === patternHost ||
       redirectHost.endsWith(`.${patternHost}`)

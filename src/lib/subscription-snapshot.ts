@@ -54,9 +54,14 @@ export async function getLteSubscriptionSnapshot(
 
   let plans: PlanRow[] = [];
   if (planIds.length > 0) {
-    plans = await database.query<PlanRow>(
-      `plans?id=in.(${planIds.map((id) => encodeURIComponent(id)).join(",")})&select=id,name,plan_code,product_id,base_features`,
-    ) ?? [];
+    try {
+      plans = await database.query<PlanRow>(
+        `plans?id=in.(${planIds.map((id) => encodeURIComponent(id)).join(",")})&select=id,name,plan_code,product_id,base_features`,
+      ) ?? [];
+    } catch (error) {
+      console.error("[SSO] Failed to fetch LTE subscription plans:", error);
+      plans = [];
+    }
   }
   const planMap = new Map<string, PlanRow>(plans.map((p) => [p.id, p]));
 

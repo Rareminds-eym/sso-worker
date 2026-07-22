@@ -13,6 +13,11 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { JWT_AUDIENCE, JWT_ISSUER } from '../lib/constants';
 import type { Env } from '../types';
 import type { AuthorizationCodeStore } from '../durable-objects/AuthorizationCodeStore';
+import type { SyncEvent } from '../lib/sync-queue';
+
+type FetchableWorker = {
+  fetch: (request: Request) => Promise<Response>;
+};
 
 function createDurableObjectId(value: string): DurableObjectId {
   return {
@@ -21,33 +26,24 @@ function createDurableObjectId(value: string): DurableObjectId {
   };
 }
 
-class MockAuthorizationCodeNamespace extends DurableObjectNamespace<AuthorizationCodeStore> {
-  newUniqueId(): DurableObjectId {
-    return createDurableObjectId("");
-  }
-
-  idFromName(name: string): DurableObjectId {
-    return createDurableObjectId(name);
-  }
-
-  idFromString(id: string): DurableObjectId {
-    return createDurableObjectId(id);
-  }
-
-  get(_id: DurableObjectId): DurableObjectStub<AuthorizationCodeStore> {
-    return {} as DurableObjectStub<AuthorizationCodeStore>;
-  }
-
-  getByName(name: string): DurableObjectStub<AuthorizationCodeStore> {
-    return this.get(this.idFromName(name));
-  }
-
-  jurisdiction(): DurableObjectNamespace<AuthorizationCodeStore> {
-    return this;
-  }
+function createAuthorizationCodeNamespace(): DurableObjectNamespace<AuthorizationCodeStore> {
+  const namespace = {
+    newUniqueId: () => createDurableObjectId(""),
+    idFromName: (name: string) => createDurableObjectId(name),
+    idFromString: (id: string) => createDurableObjectId(id),
+    get: (_id: DurableObjectId) => ({} as DurableObjectStub<AuthorizationCodeStore>),
+    getByName: (name: string) => namespace.get(namespace.idFromName(name)),
+    jurisdiction: () => namespace,
+  };
+  return namespace as DurableObjectNamespace<AuthorizationCodeStore>;
 }
 
-const mockQueue: Queue<unknown> = {
+function createMockQueue<T>(): Queue<T> {
+  return {
+  metrics: () => Promise.resolve({
+    backlogCount: 0,
+    backlogBytes: 0,
+  }),
   send: () => Promise.resolve({
     metadata: {
       metrics: {
@@ -64,9 +60,19 @@ const mockQueue: Queue<unknown> = {
       },
     },
   }),
-};
+  };
+}
 
 // Mock environment for testing
+const mockSyncQueue = createMockQueue<SyncEvent>();
+const mockUnknownQueue = createMockQueue<unknown>();
+const mockEmailService: Env["EMAIL_SERVICE"] = {
+  fetch: async () => new Response(),
+  sendEmail: async () => ({ success: true }),
+  sendOTP: async () => ({ success: true }),
+  verifyOTP: async () => ({ success: true, verified: true }),
+} as unknown as Env["EMAIL_SERVICE"];
+
 const mockEnv: Env = {
   SUPABASE_URL: 'https://test.supabase.co',
   SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
@@ -110,25 +116,24 @@ UQIDAQAB
   JWT_KID: 'test-key-1',
   ALLOWED_ORIGINS: 'http://localhost:3000',
   RATE_LIMIT_KV: {} as KVNamespace,
-  AUTH_CODE_STORE: new MockAuthorizationCodeNamespace(),
-  EMAIL_SERVICE: {
-    fetch: async () => new Response(),
-    sendEmail: async () => ({ success: true }),
-    sendOTP: async () => ({ success: true }),
-    verifyOTP: async () => ({ success: true })
-  } as any,
+  AUTH_CODE_STORE: createAuthorizationCodeNamespace(),
+  EMAIL_SERVICE: mockEmailService,
   ALLOWED_APP_URLS: "https://skillpassport.rareminds.in",
-  SYNC_QUEUE: { send: () => Promise.resolve() } as unknown as Queue<any>,
-  LEARNER_ADMISSION_QUEUE: mockQueue,
-  EMAIL_QUEUE: mockQueue,
+  SYNC_QUEUE: mockSyncQueue,
+  LEARNER_ADMISSION_QUEUE: mockUnknownQueue,
+  EMAIL_QUEUE: mockUnknownQueue,
   SKILLPASSPORT_URL: "https://skillpassport.rareminds.in",
   INTERNAL_WEBHOOK_SECRET: "test_webhook_secret"
 };
 
 async function createWorker() {
-  const ctx = { waitUntil: () => { }, passThroughOnException: () => { } } as any;
+  const ctx: ExecutionContext = { waitUntil: () => { }, passThroughOnException: () => { }, props: undefined };
   const { default: SsoWorker } = await import('../index');
-  return new SsoWorker(ctx, mockEnv);
+  const worker = new SsoWorker(ctx, mockEnv);
+  if (!worker.fetch) {
+    throw new Error("SsoWorker fetch handler is not configured");
+  }
+  return worker as FetchableWorker;
 }
 
 describe('Property: Public Endpoints Work Correctly', () => {

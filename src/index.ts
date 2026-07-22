@@ -1283,12 +1283,16 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     if (result === "blocked") return { success: false, error: "Account is blocked" };
     if (result === "not_found") return { success: false, error: "User not found" };
+    if (!result || typeof result !== "object") {
+      return { success: false, error: "Failed to mint access token" };
+    }
 
     const payload = await verifyAccessToken(result.token, this.env);
     if (!payload.products.includes(targetApp) && targetApp !== "sso") {
       return { success: false, error: `Access denied for product: ${targetApp}` };
     }
 
+    // Always include user_metadata so app clients can normalize a stable user shape.
     return {
       success: true,
       access_token: result.token,
@@ -1398,12 +1402,13 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     if (!consumeResult.success) {
+      const reason = consumeResult.reason || "unknown";
       audit(this.ctx, this.env, "authorization_code.exchange_failed", {
         ip_address: params.ip,
         user_agent: params.ua,
-        metadata: { target_app: "lte", reason: consumeResult.reason },
+        metadata: { target_app: "lte", reason },
       });
-      throw new Error(`Authorization code exchange failed: ${consumeResult.reason}`);
+      throw new Error(`Authorization code exchange failed: ${reason}`);
     }
 
     const record = consumeResult.record;
@@ -1415,6 +1420,9 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       sub: record.userId,
       org_id: record.orgId,
     });
+    if (!entitlement) {
+      throw new Error("Failed to resolve LTE entitlement");
+    }
 
     const refreshToken = generateRefreshToken();
     const refreshHash = await hashToken(refreshToken);
@@ -1709,6 +1717,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     if (session) {
       // Global SSO logout: revoke all sessions for this user across all apps
+      // WARNING: this revokes every active session for the user, not only the presented refresh token.
       await database.update(
         "sessions",
         { user_id: `eq.${encodeURIComponent(session.user_id)}` },
@@ -2114,6 +2123,5 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     };
   }
 }
-
 
 export default SsoWorker;
