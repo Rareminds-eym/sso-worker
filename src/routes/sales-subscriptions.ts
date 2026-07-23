@@ -52,7 +52,7 @@ export async function performGetSalesSubscriptions(
     if (planType) subsFilters.push(`plan_type=eq.${encodeURIComponent(planType)}`);
     if (status) subsFilters.push(`status=eq.${encodeURIComponent(status)}`);
     if (startDate) subsFilters.push(`subscription_start_date=gte.${encodeURIComponent(startDate)}`);
-    if (endDate) subsFilters.push(`subscription_end_date=lte.${encodeURIComponent(endDate)}`);
+    if (endDate) subsFilters.push(`subscription_start_date=lte.${encodeURIComponent(endDate)}`);
 
     if (subsFilters.length > 0) {
       subsQuery += "&" + subsFilters.join("&");
@@ -170,10 +170,10 @@ export async function performGetSalesSubscriptions(
         }
       }
       if (endDate) {
-        if (!subscription.subscription_end_date) return false;
-        const subEnd = new Date(subscription.subscription_end_date).getTime();
+        if (!subscription.subscription_start_date) return false;
+        const subStartForEnd = new Date(subscription.subscription_start_date).getTime();
         const filterEnd = new Date(endDate).getTime();
-        if (!isNaN(subEnd) && !isNaN(filterEnd) && subEnd > filterEnd) {
+        if (!isNaN(subStartForEnd) && !isNaN(filterEnd) && subStartForEnd > filterEnd) {
           return false;
         }
       }
@@ -216,8 +216,7 @@ export async function performGetSalesSubscriptions(
       planAmount: subscription.plan_amount,
       billingCycle: subscription.billing_cycle,
       subscriptionStatus: subscription.status,
-      startDate: subscription.subscription_start_date,
-      endDate: subscription.subscription_end_date,
+      subscriptionDate: subscription.subscription_start_date,
     }));
 
     return {
