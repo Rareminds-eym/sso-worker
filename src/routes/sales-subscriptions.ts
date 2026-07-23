@@ -49,7 +49,7 @@ export async function performGetSalesSubscriptions(
   const isValidISODate = (dateStr: string): boolean => {
     try {
       const d = new Date(dateStr);
-      return !isNaN(d.getTime());
+      return !Number.isNaN(d.getTime());
     } catch {
       return false;
     }
@@ -70,7 +70,7 @@ export async function performGetSalesSubscriptions(
     if (endDate) subsFilters.push(`${SUBSCRIPTION_DATE_FIELD}=lte.${encodeURIComponent(endDate)}`);
 
     if (subsFilters.length > 0) {
-      subsQuery += "&" + subsFilters.join("&");
+      subsQuery += `&${subsFilters.join("&")}`;
     }
 
     // Fetch subscription user IDs (lightweight query for pagination)
@@ -181,7 +181,7 @@ export async function performGetSalesSubscriptions(
         if (!subscriptionDate) return false;
         const subscriptionDateMs = new Date(subscriptionDate).getTime();
         const filterStartMs = new Date(startDate).getTime();
-        if (!isNaN(subscriptionDateMs) && !isNaN(filterStartMs) && subscriptionDateMs < filterStartMs) {
+        if (!Number.isNaN(subscriptionDateMs) && !Number.isNaN(filterStartMs) && subscriptionDateMs < filterStartMs) {
           return false;
         }
       }
@@ -190,7 +190,7 @@ export async function performGetSalesSubscriptions(
         if (!subscriptionDate) return false;
         const subscriptionDateMs = new Date(subscriptionDate).getTime();
         const filterEndMs = new Date(endDate).getTime();
-        if (!isNaN(subscriptionDateMs) && !isNaN(filterEndMs) && subscriptionDateMs > filterEndMs) {
+        if (!Number.isNaN(subscriptionDateMs) && !Number.isNaN(filterEndMs) && subscriptionDateMs > filterEndMs) {
           return false;
         }
       }
