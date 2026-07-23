@@ -1279,6 +1279,42 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       return { success: false, error: "Session expired" };
     }
 
+    if (targetApp === "lte") {
+      let entitlement;
+      try {
+        entitlement = await requireLteEntitlement(this.env, {
+          sub: session.user_id,
+          org_id: session.org_id,
+        });
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        return { success: false, error: errMsg };
+      }
+
+      const claims = entitlement.claims;
+      const lteProducts = claims.products.includes("lte") ? claims.products : [...claims.products, "lte"];
+      const accessToken = await signLteAccessToken(
+        {
+          sub: session.user_id,
+          email: entitlement.user.email,
+          // Fallback to empty string for org-less personal accounts
+          org_id: session.org_id ?? "",
+          roles: claims.roles,
+          products: lteProducts,
+          membership_status: claims.membership_status,
+          is_email_verified: entitlement.user.is_email_verified,
+          user_metadata: entitlement.user.user_metadata ?? {},
+        },
+        this.env,
+      );
+
+      return {
+        success: true,
+        access_token: accessToken,
+        refresh_token: activeToken,
+      };
+    }
+
     const result = await mintAccessToken(database, this.env, session.user_id, session.org_id);
 
     if (result === "blocked") return { success: false, error: "Account is blocked" };
