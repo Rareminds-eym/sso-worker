@@ -2,6 +2,21 @@ import type { Env, SalesSubscription } from "../types";
 import { db } from "../lib/db";
 
 /**
+ * Sales Dashboard "Subscription Date" — the single field both the From and To
+ * bounds of the Date Range filter compare against, and the value exposed to
+ * the frontend as `subscriptionDate`. This is the only place the raw column
+ * is named; every filter, comparison, and response field below goes through
+ * SUBSCRIPTION_DATE_FIELD or getSubscriptionDate() instead of naming it again.
+ */
+const SUBSCRIPTION_DATE_FIELD = "subscription_start_date";
+
+function getSubscriptionDate(
+  subscription: Pick<SalesSubscription, "subscription_start_date">
+): string | undefined {
+  return subscription.subscription_start_date;
+}
+
+/**
  * GET /api/sales/subscriptions — fetch subscription data for sales dashboard
  * Query params: page, limit, planType, status, startDate, endDate, clientType, search
  */
@@ -51,8 +66,8 @@ export async function performGetSalesSubscriptions(
     const subsFilters = [];
     if (planType) subsFilters.push(`plan_type=eq.${encodeURIComponent(planType)}`);
     if (status) subsFilters.push(`status=eq.${encodeURIComponent(status)}`);
-    if (startDate) subsFilters.push(`subscription_start_date=gte.${encodeURIComponent(startDate)}`);
-    if (endDate) subsFilters.push(`subscription_start_date=lte.${encodeURIComponent(endDate)}`);
+    if (startDate) subsFilters.push(`${SUBSCRIPTION_DATE_FIELD}=gte.${encodeURIComponent(startDate)}`);
+    if (endDate) subsFilters.push(`${SUBSCRIPTION_DATE_FIELD}=lte.${encodeURIComponent(endDate)}`);
 
     if (subsFilters.length > 0) {
       subsQuery += "&" + subsFilters.join("&");
@@ -162,18 +177,20 @@ export async function performGetSalesSubscriptions(
         return false;
       }
       if (startDate) {
-        if (!subscription.subscription_start_date) return false;
-        const subStart = new Date(subscription.subscription_start_date).getTime();
-        const filterStart = new Date(startDate).getTime();
-        if (!isNaN(subStart) && !isNaN(filterStart) && subStart < filterStart) {
+        const subscriptionDate = getSubscriptionDate(subscription);
+        if (!subscriptionDate) return false;
+        const subscriptionDateMs = new Date(subscriptionDate).getTime();
+        const filterStartMs = new Date(startDate).getTime();
+        if (!isNaN(subscriptionDateMs) && !isNaN(filterStartMs) && subscriptionDateMs < filterStartMs) {
           return false;
         }
       }
       if (endDate) {
-        if (!subscription.subscription_start_date) return false;
-        const subStartForEnd = new Date(subscription.subscription_start_date).getTime();
-        const filterEnd = new Date(endDate).getTime();
-        if (!isNaN(subStartForEnd) && !isNaN(filterEnd) && subStartForEnd > filterEnd) {
+        const subscriptionDate = getSubscriptionDate(subscription);
+        if (!subscriptionDate) return false;
+        const subscriptionDateMs = new Date(subscriptionDate).getTime();
+        const filterEndMs = new Date(endDate).getTime();
+        if (!isNaN(subscriptionDateMs) && !isNaN(filterEndMs) && subscriptionDateMs > filterEndMs) {
           return false;
         }
       }
@@ -216,7 +233,7 @@ export async function performGetSalesSubscriptions(
       planAmount: subscription.plan_amount,
       billingCycle: subscription.billing_cycle,
       subscriptionStatus: subscription.status,
-      subscriptionDate: subscription.subscription_start_date,
+      subscriptionDate: getSubscriptionDate(subscription),
     }));
 
     return {
