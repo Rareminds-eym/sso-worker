@@ -34,8 +34,12 @@ export async function performGetSalesSubscriptions(
   // Parse and validate filter params
   const planType = searchParams.get("planType")?.trim() || null;
   const status = searchParams.get("status")?.trim() || null;
-  const startDate = searchParams.get("startDate")?.trim() || null;
-  const endDate = searchParams.get("endDate")?.trim() || null;
+  // Keep the external query parameter names (startDate/endDate) for API
+  // compatibility with existing callers. Internally these represent the
+  // lower and upper bounds of the Subscription Date range, so we bind them
+  // to more descriptive names below to avoid implying subscription_end_date.
+  const subscriptionDateFrom = searchParams.get("startDate")?.trim() || null;
+  const subscriptionDateTo = searchParams.get("endDate")?.trim() || null;
   const clientTypeParam = searchParams.get("clientType")?.trim() || null;
   const search = searchParams.get("search")?.trim() || null;
 
@@ -54,8 +58,8 @@ export async function performGetSalesSubscriptions(
       return false;
     }
   };
-  if (startDate && !isValidISODate(startDate)) return { error: "Invalid startDate format, use ISO 8601", status: 400 };
-  if (endDate && !isValidISODate(endDate)) return { error: "Invalid endDate format, use ISO 8601", status: 400 };
+  if (subscriptionDateFrom && !isValidISODate(subscriptionDateFrom)) return { error: "Invalid startDate format, use ISO 8601", status: 400 };
+  if (subscriptionDateTo && !isValidISODate(subscriptionDateTo)) return { error: "Invalid endDate format, use ISO 8601", status: 400 };
 
   try {
     const database = db(env);
@@ -66,8 +70,8 @@ export async function performGetSalesSubscriptions(
     const subsFilters = [];
     if (planType) subsFilters.push(`plan_type=eq.${encodeURIComponent(planType)}`);
     if (status) subsFilters.push(`status=eq.${encodeURIComponent(status)}`);
-    if (startDate) subsFilters.push(`${SUBSCRIPTION_DATE_FIELD}=gte.${encodeURIComponent(startDate)}`);
-    if (endDate) subsFilters.push(`${SUBSCRIPTION_DATE_FIELD}=lte.${encodeURIComponent(endDate)}`);
+    if (subscriptionDateFrom) subsFilters.push(`${SUBSCRIPTION_DATE_FIELD}=gte.${encodeURIComponent(subscriptionDateFrom)}`);
+    if (subscriptionDateTo) subsFilters.push(`${SUBSCRIPTION_DATE_FIELD}=lte.${encodeURIComponent(subscriptionDateTo)}`);
 
     if (subsFilters.length > 0) {
       subsQuery += `&${subsFilters.join("&")}`;
@@ -176,20 +180,20 @@ export async function performGetSalesSubscriptions(
       if (status && subscription.status !== status) {
         return false;
       }
-      if (startDate) {
+      if (subscriptionDateFrom) {
         const subscriptionDate = getSubscriptionDate(subscription);
         if (!subscriptionDate) return false;
         const subscriptionDateMs = new Date(subscriptionDate).getTime();
-        const filterStartMs = new Date(startDate).getTime();
+        const filterStartMs = new Date(subscriptionDateFrom).getTime();
         if (!Number.isNaN(subscriptionDateMs) && !Number.isNaN(filterStartMs) && subscriptionDateMs < filterStartMs) {
           return false;
         }
       }
-      if (endDate) {
+      if (subscriptionDateTo) {
         const subscriptionDate = getSubscriptionDate(subscription);
         if (!subscriptionDate) return false;
         const subscriptionDateMs = new Date(subscriptionDate).getTime();
-        const filterEndMs = new Date(endDate).getTime();
+        const filterEndMs = new Date(subscriptionDateTo).getTime();
         if (!Number.isNaN(subscriptionDateMs) && !Number.isNaN(filterEndMs) && subscriptionDateMs > filterEndMs) {
           return false;
         }
