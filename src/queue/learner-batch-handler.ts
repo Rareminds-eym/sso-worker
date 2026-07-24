@@ -170,12 +170,12 @@ export async function handleCreateLearnerBatch(
 								errorMsg.includes("duplicate")
 							) {
 								// Idempotency check: did WE create this user on a previous retry of this same batch?
-								const existingUsers = await database.query<{ id: string; email: string; user_metadata: Record<string, unknown> }>(
-									`users?email=eq.${encodeURIComponent(userData.email)}&select=id,email,user_metadata`,
-								);
-								
-								const existingUser = existingUsers?.[0];
-								if (existingUser?.user_metadata?.import_batch_id === batch_id) {
+const existingUsers = await database.query<{ id: string; email: string; user_metadata?: Record<string, unknown> | null }>(
+  `users?email=eq.${encodeURIComponent(userData.email)}&select=id,email,user_metadata`,
+);
+
+const existingUser = existingUsers?.[0];
+if (existingUser?.user_metadata?.import_batch_id === batch_id) {
 									console.log(`[SSO] User ${userData.email} was created in a previous retry of batch ${batch_id}. Recovering successfully.`);
 									createdUsers.push({ id: existingUser.id, email: existingUser.email });
 									continue;

@@ -81,7 +81,7 @@ export async function checkUserExistsInSkillpassport(
       await env.RATE_LIMIT_KV.put(kvKey, 'true', { expirationTtl: KV_TTL_SECONDS });
       console.log(`[SSO KV] Cached user ${userId} for ${KV_TTL_SECONDS}s`);
     } catch (err) {
-      console.error(`[SSO KV] Error writing cache for ${userId}:`, err);
+      console.warn(`[SSO KV] Failed to cache user ${userId}:`, err);
     }
   }
 
