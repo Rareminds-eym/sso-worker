@@ -4,7 +4,9 @@
  * Keeps index.ts clean and focused on RPC methods
  */
 
+import { markBatchFailed, recordRowError, updateBatchProgress } from "../lib/batch-kv";
 import { db } from "../lib/db";
+import { getErrorMessage } from "../lib/error-utils";
 import type { Env, MessageBatch, QueueMessage } from "../types";
 import type { CsvParseMessage } from "./csv-parser-handler";
 import { handleParseCsvQueue } from "./csv-parser-handler";
@@ -227,14 +229,32 @@ export async function handleQueueBatch(
 	env: Env,
 	batch: MessageBatch,
 ): Promise<void> {
-	// Handle DLQ messages
+	// Handle DLQ messages — mark affected batches as failed so the frontend sees the error
 	if (batch.queue === "learner-admission-dlq") {
 		for (const message of batch.messages) {
-			console.error(
-				`[DLQ] Unrecoverable message from ${batch.queue}:`,
-				JSON.stringify(message.body),
-			);
-			message.ack();
+			try {
+				const body = message.body as Record<string, unknown>;
+				const batchId = body?.batch_id as string | undefined;
+				const errorMsg = `Processing failed after retries exhausted`;
+
+				if (body?.type === "parse-csv" && batchId) {
+					await markBatchFailed(env, batchId, errorMsg);
+				} else if (body?.type === "create-learner-batch" && batchId && Array.isArray(body?.learners)) {
+					for (const learner of body.learners as Array<{ row_number?: number; email?: string }>) {
+						await recordRowError(env, batchId, learner.row_number ?? 0, learner.email ?? "", errorMsg);
+					}
+					await updateBatchProgress(env, batchId, {
+						processed_rows_increment: (body.learners as Array<unknown>).length,
+						failed_count_increment: (body.learners as Array<unknown>).length,
+					});
+				}
+
+				console.error(`[DLQ] batch=${batchId} type=${body?.type}: ${errorMsg}`);
+				message.ack();
+			} catch (error) {
+				console.error(`[DLQ] Failed to process DLQ message: ${getErrorMessage(error)}`);
+				message.retry();
+			}
 		}
 		return;
 	}

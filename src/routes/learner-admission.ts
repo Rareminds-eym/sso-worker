@@ -382,7 +382,6 @@ export async function performQueueBulkLearnerUpload(
 				csv_data: data.csv_data,
 				organization_id: data.organization_id,
 				admin_id: data.admin_id,
-				retry_count: 0,
 			});
 		} catch (queueError) {
 			const errorMsg = getErrorMessage(queueError);

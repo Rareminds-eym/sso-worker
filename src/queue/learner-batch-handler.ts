@@ -14,7 +14,6 @@ export interface LearnerBatchMessage {
 	batch_index: number;
 	learners: LearnerBatchItem[];
 	organization_id: string;
-	retry_count?: number;
 }
 
 interface CreatedUser {
@@ -58,12 +57,11 @@ export async function handleCreateLearnerBatch(
 		batch_index,
 		learners,
 		organization_id,
-		retry_count = 0,
 	} = body;
 
 	try {
 		console.log(
-			`[SSO] Processing batch ${batch_index} with ${learners.length} learners, retry ${retry_count}`,
+			`[SSO] Processing batch ${batch_index} with ${learners.length} learners`,
 		);
 
 		const database = db(env);
@@ -151,23 +149,38 @@ export async function handleCreateLearnerBatch(
 
 						if (!learner) continue;
 
-					try {
-						const user = await createUser(env, {
-							email: userData.email,
-							password_hash: userData.password_hash,
-							first_name: userData.user_metadata.first_name,
-							last_name: userData.user_metadata.last_name,
-							metadata: userData.user_metadata,
-							is_email_verified: true,
-						});
-						createdUsers.push({ id: user.user_id, email: user.email });
-					} catch (err) {
+						try {
+							const user = await createUser(env, {
+								email: userData.email,
+								password_hash: userData.password_hash,
+								first_name: userData.user_metadata.first_name,
+								last_name: userData.user_metadata.last_name,
+								metadata: {
+									...userData.user_metadata,
+									import_batch_id: batch_id,
+								},
+								is_email_verified: true,
+							});
+							createdUsers.push({ id: user.user_id, email: user.email });
+						} catch (err) {
 							const errorMsg = getErrorMessage(err);
 							if (
 								errorMsg.includes("already exists") ||
 								errorMsg.includes("23505") ||
 								errorMsg.includes("duplicate")
 							) {
+								// Idempotency check: did WE create this user on a previous retry of this same batch?
+const existingUsers = await database.query<{ id: string; email: string; user_metadata?: Record<string, unknown> | null }>(
+  `users?email=eq.${encodeURIComponent(userData.email)}&select=id,email,user_metadata`,
+);
+
+const existingUser = existingUsers?.[0];
+if (existingUser?.user_metadata?.import_batch_id === batch_id) {
+									console.log(`[SSO] User ${userData.email} was created in a previous retry of batch ${batch_id}. Recovering successfully.`);
+									createdUsers.push({ id: existingUser.id, email: existingUser.email });
+									continue;
+								}
+
 								failedLearners.push({
 									rowNumber: learner.row_number,
 									email: userData.email,
@@ -235,33 +248,7 @@ export async function handleCreateLearnerBatch(
 	} catch (error) {
 		const errorMsg = getErrorMessage(error);
 		console.error(`[SSO] Error processing batch ${batch_index}:`, errorMsg);
-
-		// Retry entire batch on transient errors
-		if (retry_count >= 3) {
-			console.error(
-				`[SSO] Max retries reached for batch ${batch_index}, moving to DLQ`,
-			);
-
-			// Mark all learners in batch as failed
-			for (const learner of learners) {
-				await recordRowError(
-					env,
-					batch_id,
-					learner.row_number,
-					learner.email,
-					`Batch failed: ${errorMsg}`,
-				);
-			}
-			await updateBatchProgress(env, batch_id, {
-				processed_rows_increment: learners.length,
-				failed_count_increment: learners.length,
-			});
-
-			message.ack(); // Send to DLQ
-		} else {
-			body.retry_count = retry_count + 1;
-			message.retry();
-		}
+		message.retry();
 	}
 }
 
