@@ -165,18 +165,20 @@ export async function markBatchFailed(
   errorMessage: string
 ): Promise<void> {
   const metadata = await getBatch(env, batchId);
-  
+
   if (!metadata) {
     return;
   }
-  
+
   metadata.status = 'failed';
   metadata.completed_at = new Date().toISOString();
+  metadata.processed_rows = metadata.total_rows;
+  metadata.failed_count = metadata.total_rows - metadata.success_count;
   metadata.errors.push({
     row: 0,
     email: '',
     error: errorMessage
   });
-  
+
   await saveBatch(env, metadata);
 }
