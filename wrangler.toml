@@ -24,6 +24,7 @@ crons = ["0 3 * * *"]
 [vars]
 ENVIRONMENT = "production"
 SUPABASE_URL = "https://quvdgaydpctuspzeqknc.supabase.co"
+SKILLPASSPORT_URL = "http://localhost:3000"
 ALLOWED_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://localhost:8788,http://localhost:8789,https://*.rareminds.in,https://*.pages.dev,http://127.0.0.1:8788,http://127.0.0.1:8789"
 ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:3000/,http://localhost:3000/auth/callback,http://127.0.0.1:3000,http://127.0.0.1:3000/auth/callback,http://localhost:5173,http://localhost:8788,http://localhost:8789,http://127.0.0.1:8788,http://127.0.0.1:8789,https://skillpassport.rareminds.in,https://*.rareminds.in,https://*.pages.dev"
 
@@ -35,7 +36,7 @@ ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:3000/,http://localhos
 
 [[kv_namespaces]]
 binding = "RATE_LIMIT_KV"
-id = "6f54bab45fd840678dde620cd1518705"
+id = "a162f140e4464515a8d5a27b5ebc6c6b"
 
 [[durable_objects.bindings]]
 name = "AUTH_CODE_STORE"
@@ -54,6 +55,14 @@ entrypoint = "EmailService"
 binding = "SYNC_QUEUE"
 queue = "auth-db-sync-queue"
 
+[[queues.producers]]
+binding = "LEARNER_ADMISSION_QUEUE"
+queue = "learner-admission-queue"
+
+[[queues.producers]]
+binding = "EMAIL_QUEUE"
+queue = "email-queue"
+
 [[queues.consumers]]
 queue = "payment-webhooks-queue"
 max_batch_size = 10
@@ -63,3 +72,16 @@ max_batch_timeout = 5
 queue = "sso-reverse-sync-queue"
 max_batch_size = 10
 max_batch_timeout = 5
+
+[[queues.consumers]]
+queue = "learner-admission-queue"
+max_retries = 3
+max_concurrency = 1
+dead_letter_queue = "learner-admission-dlq"
+
+[[queues.consumers]]
+queue = "learner-admission-dlq"
+
+[env.production.vars]
+SUPABASE_URL = "https://quvdgaydpctuspzeqknc.supabase.co"
+SKILLPASSPORT_URL = "https://skillpassport.rareminds.in"
