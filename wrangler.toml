@@ -24,7 +24,7 @@ crons = ["0 3 * * *"]
 [vars]
 ENVIRONMENT = "production"
 SUPABASE_URL = "https://quvdgaydpctuspzeqknc.supabase.co"
-SKILLPASSPORT_URL = "http://localhost:3000"
+SKILLPASSPORT_URL = "https://skillpassport.rareminds.in"
 ALLOWED_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://localhost:8788,http://localhost:8789,https://*.rareminds.in,https://*.pages.dev,http://127.0.0.1:8788,http://127.0.0.1:8789"
 ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:3000/,http://localhost:3000/auth/callback,http://127.0.0.1:3000,http://127.0.0.1:3000/auth/callback,http://localhost:5173,http://localhost:8788,http://localhost:8789,http://127.0.0.1:8788,http://127.0.0.1:8789,https://skillpassport.rareminds.in,https://*.rareminds.in,https://*.pages.dev"
 
@@ -82,6 +82,3 @@ dead_letter_queue = "learner-admission-dlq"
 [[queues.consumers]]
 queue = "learner-admission-dlq"
 
-[env.production.vars]
-SUPABASE_URL = "https://quvdgaydpctuspzeqknc.supabase.co"
-SKILLPASSPORT_URL = "https://skillpassport.rareminds.in"
