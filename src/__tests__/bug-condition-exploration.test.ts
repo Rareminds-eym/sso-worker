@@ -12,8 +12,51 @@
 
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../types';
+import type { AuthorizationCodeStore } from '../durable-objects/AuthorizationCodeStore';
+import type { SyncEvent } from '../lib/sync-queue';
+
+type FetchableWorker = {
+  fetch: (request: Request) => Promise<Response>;
+};
+
+function createDurableObjectId(value: string): DurableObjectId {
+  return {
+    toString: () => value,
+    equals: (other: DurableObjectId) => other.toString() === value,
+  };
+}
+
+function createAuthorizationCodeNamespace(): DurableObjectNamespace<AuthorizationCodeStore> {
+  const namespace = {
+    newUniqueId: () => createDurableObjectId(""),
+    idFromName: (name: string) => createDurableObjectId(name),
+    idFromString: (id: string) => createDurableObjectId(id),
+    get: (_id: DurableObjectId) => ({} as DurableObjectStub<AuthorizationCodeStore>),
+    getByName: (name: string) => namespace.get(namespace.idFromName(name)),
+    jurisdiction: () => namespace,
+  };
+  return namespace as DurableObjectNamespace<AuthorizationCodeStore>;
+}
+
+function createMockQueue<T>(): Queue<T> {
+  return {
+    metrics: () => Promise.resolve({ backlogCount: 0, backlogBytes: 0 } as any),
+    send: () => Promise.resolve({} as any),
+    sendBatch: () => Promise.resolve({} as any),
+  };
+}
 
 const mockStore = new Map<string, string>();
+const mockSyncQueue = createMockQueue<SyncEvent>();
+const mockUnknownQueue = createMockQueue<unknown>();
+const mockEmailService: Env["EMAIL_SERVICE"] = {
+  fetch: async () => new Response(),
+  connect: () => { throw new Error("Not implemented"); },
+  sendEmail: async () => ({ success: true }),
+  sendOTP: async () => ({ success: true }),
+  verifyOTP: async () => ({ success: true, verified: true }),
+} as Env["EMAIL_SERVICE"];
+
 const mockEnv: Env = {
   SUPABASE_URL: 'https://test.supabase.co',
   SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
@@ -28,22 +71,24 @@ const mockEnv: Env = {
     list: () => Promise.resolve({ keys: [] }),
     getWithMetadata: () => Promise.resolve({ value: null, metadata: null }),
   } as unknown as KVNamespace,
-  EMAIL_SERVICE: {
-    fetch: async () => new Response(),
-    sendEmail: async () => ({ success: true }),
-    sendOTP: async () => ({ success: true }),
-    verifyOTP: async () => ({ success: true })
-  } as any,
+  AUTH_CODE_STORE: createAuthorizationCodeNamespace(),
+  EMAIL_SERVICE: mockEmailService,
   ALLOWED_APP_URLS: "https://skillpassport.rareminds.in",
-  SYNC_QUEUE: { send: () => Promise.resolve() } as unknown as Queue<any>,
+  SYNC_QUEUE: mockSyncQueue,
+  LEARNER_ADMISSION_QUEUE: mockUnknownQueue,
+  EMAIL_QUEUE: mockUnknownQueue,
   SKILLPASSPORT_URL: "https://skillpassport.rareminds.in",
   INTERNAL_WEBHOOK_SECRET: "test_webhook_secret"
 };
 
 async function createWorker() {
-  const ctx = { waitUntil: () => { }, passThroughOnException: () => { } } as any;
+  const ctx: ExecutionContext = { waitUntil: () => { }, passThroughOnException: () => { }, props: undefined };
   const { default: SsoWorker } = await import('../index');
-  return new SsoWorker(ctx, mockEnv);
+  const worker = new SsoWorker(ctx, mockEnv);
+  if (!worker.fetch) {
+    throw new Error("SsoWorker fetch handler is not configured");
+  }
+  return worker as FetchableWorker;
 }
 
 describe('RPC Architecture — Internal endpoints removed from fetch handler', () => {

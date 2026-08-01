@@ -2,6 +2,21 @@ import type { Env, SalesSubscription } from "../types";
 import { db } from "../lib/db";
 
 /**
+ * Sales Dashboard "Subscription Date" — the single field both the From and To
+ * bounds of the Date Range filter compare against, and the value exposed to
+ * the frontend as `subscriptionDate`. This is the only place the raw column
+ * is named; every filter, comparison, and response field below goes through
+ * SUBSCRIPTION_DATE_FIELD or getSubscriptionDate() instead of naming it again.
+ */
+const SUBSCRIPTION_DATE_FIELD = "subscription_start_date";
+
+function getSubscriptionDate(
+  subscription: Pick<SalesSubscription, "subscription_start_date">
+): string | undefined {
+  return subscription.subscription_start_date;
+}
+
+/**
  * GET /api/sales/subscriptions — fetch subscription data for sales dashboard
  * Query params: page, limit, planType, status, startDate, endDate, clientType, search
  */
@@ -19,8 +34,12 @@ export async function performGetSalesSubscriptions(
   // Parse and validate filter params
   const planType = searchParams.get("planType")?.trim() || null;
   const status = searchParams.get("status")?.trim() || null;
-  const startDate = searchParams.get("startDate")?.trim() || null;
-  const endDate = searchParams.get("endDate")?.trim() || null;
+  // Keep the external query parameter names (startDate/endDate) for API
+  // compatibility with existing callers. Internally these represent the
+  // lower and upper bounds of the Subscription Date range, so we bind them
+  // to more descriptive names below to avoid implying subscription_end_date.
+  const subscriptionDateFrom = searchParams.get("startDate")?.trim() || null;
+  const subscriptionDateTo = searchParams.get("endDate")?.trim() || null;
   const clientTypeParam = searchParams.get("clientType")?.trim() || null;
   const search = searchParams.get("search")?.trim() || null;
 
@@ -34,13 +53,13 @@ export async function performGetSalesSubscriptions(
   const isValidISODate = (dateStr: string): boolean => {
     try {
       const d = new Date(dateStr);
-      return !isNaN(d.getTime());
+      return !Number.isNaN(d.getTime());
     } catch {
       return false;
     }
   };
-  if (startDate && !isValidISODate(startDate)) return { error: "Invalid startDate format, use ISO 8601", status: 400 };
-  if (endDate && !isValidISODate(endDate)) return { error: "Invalid endDate format, use ISO 8601", status: 400 };
+  if (subscriptionDateFrom && !isValidISODate(subscriptionDateFrom)) return { error: "Invalid startDate format, use ISO 8601", status: 400 };
+  if (subscriptionDateTo && !isValidISODate(subscriptionDateTo)) return { error: "Invalid endDate format, use ISO 8601", status: 400 };
 
   try {
     const database = db(env);
@@ -51,11 +70,11 @@ export async function performGetSalesSubscriptions(
     const subsFilters = [];
     if (planType) subsFilters.push(`plan_type=eq.${encodeURIComponent(planType)}`);
     if (status) subsFilters.push(`status=eq.${encodeURIComponent(status)}`);
-    if (startDate) subsFilters.push(`subscription_start_date=gte.${encodeURIComponent(startDate)}`);
-    if (endDate) subsFilters.push(`subscription_end_date=lte.${encodeURIComponent(endDate)}`);
+    if (subscriptionDateFrom) subsFilters.push(`${SUBSCRIPTION_DATE_FIELD}=gte.${encodeURIComponent(subscriptionDateFrom)}`);
+    if (subscriptionDateTo) subsFilters.push(`${SUBSCRIPTION_DATE_FIELD}=lte.${encodeURIComponent(subscriptionDateTo)}`);
 
     if (subsFilters.length > 0) {
-      subsQuery += "&" + subsFilters.join("&");
+      subsQuery += `&${subsFilters.join("&")}`;
     }
 
     // Fetch subscription user IDs (lightweight query for pagination)
@@ -161,19 +180,21 @@ export async function performGetSalesSubscriptions(
       if (status && subscription.status !== status) {
         return false;
       }
-      if (startDate) {
-        if (!subscription.subscription_start_date) return false;
-        const subStart = new Date(subscription.subscription_start_date).getTime();
-        const filterStart = new Date(startDate).getTime();
-        if (!isNaN(subStart) && !isNaN(filterStart) && subStart < filterStart) {
+      if (subscriptionDateFrom) {
+        const subscriptionDate = getSubscriptionDate(subscription);
+        if (!subscriptionDate) return false;
+        const subscriptionDateMs = new Date(subscriptionDate).getTime();
+        const filterStartMs = new Date(subscriptionDateFrom).getTime();
+        if (!Number.isNaN(subscriptionDateMs) && !Number.isNaN(filterStartMs) && subscriptionDateMs < filterStartMs) {
           return false;
         }
       }
-      if (endDate) {
-        if (!subscription.subscription_end_date) return false;
-        const subEnd = new Date(subscription.subscription_end_date).getTime();
-        const filterEnd = new Date(endDate).getTime();
-        if (!isNaN(subEnd) && !isNaN(filterEnd) && subEnd > filterEnd) {
+      if (subscriptionDateTo) {
+        const subscriptionDate = getSubscriptionDate(subscription);
+        if (!subscriptionDate) return false;
+        const subscriptionDateMs = new Date(subscriptionDate).getTime();
+        const filterEndMs = new Date(subscriptionDateTo).getTime();
+        if (!Number.isNaN(subscriptionDateMs) && !Number.isNaN(filterEndMs) && subscriptionDateMs > filterEndMs) {
           return false;
         }
       }
@@ -216,8 +237,7 @@ export async function performGetSalesSubscriptions(
       planAmount: subscription.plan_amount,
       billingCycle: subscription.billing_cycle,
       subscriptionStatus: subscription.status,
-      startDate: subscription.subscription_start_date,
-      endDate: subscription.subscription_end_date,
+      subscriptionDate: getSubscriptionDate(subscription),
     }));
 
     return {

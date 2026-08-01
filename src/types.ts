@@ -1,4 +1,73 @@
 import type { SyncEvent } from './lib/sync-queue';
+import type { AuthorizationCodeStore } from './durable-objects/AuthorizationCodeStore';
+
+// ─── EMAIL_SERVICE Types (from email-worker RPC) ───────────────
+export interface EmailServiceSendRequest {
+  to: string | string[];
+  subject: string;
+  html: string;
+  text?: string;
+  from?: string;
+  fromName?: string;
+  replyTo?: string;
+  cc?: string[];
+  bcc?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface EmailServiceSendResponse {
+  success: boolean;
+  messageId?: string;
+  customMessageId?: string;
+  recipient?: string | string[];
+  timestamp?: string;
+  error?: string;
+  errorCode?: string;
+  errorType?: string;
+  shouldRetry?: boolean;
+}
+
+export interface EmailServiceOTPRequest {
+  mobileNumber: string;
+  countryCode?: string;
+  flowType?: 'SMS' | 'WHATSAPP' | 'RCS';
+}
+
+export interface EmailServiceOTPResponse {
+  success: boolean;
+  verificationId?: string;
+  timeout?: string;
+  message?: string;
+  error?: string;
+  retryAfter?: number;
+}
+
+export interface EmailServiceVerifyRequest {
+  mobileNumber: string;
+  verificationId: string;
+  code: string;
+  countryCode?: string;
+}
+
+export interface EmailServiceVerifyResponse {
+  success: boolean;
+  verified: boolean;
+  message?: string;
+  error?: string;
+  retryAfter?: number;
+}
+
+// ─── Queue Types ───────────────────────────────────────────────
+export interface QueueMessage<T = unknown> {
+  readonly body: T;
+  ack(): void;
+  retry(): void;
+}
+
+export interface MessageBatch<T = unknown> {
+  readonly queue: string;
+  readonly messages: readonly QueueMessage<T>[];
+}
 
 // ─── Environment ───────────────────────────────────────────────
 export interface Env {
@@ -13,11 +82,13 @@ export interface Env {
   JWT_KID_PREVIOUS?: string;
   ALLOWED_ORIGINS: string;
   RATE_LIMIT_KV: KVNamespace;
+  /** Durable Object namespace for one-time cross-app authorization codes. */
+  AUTH_CODE_STORE: DurableObjectNamespace<AuthorizationCodeStore>;
   /** Service binding to the email-worker for sending emails via RPC. */
   EMAIL_SERVICE: Fetcher & {
-    sendEmail(params: any): Promise<any>;
-    sendOTP(params: any): Promise<any>;
-    verifyOTP(params: any): Promise<any>;
+    sendEmail(params: EmailServiceSendRequest): Promise<EmailServiceSendResponse>;
+    sendOTP(params: EmailServiceOTPRequest): Promise<EmailServiceOTPResponse>;
+    verifyOTP(params: EmailServiceVerifyRequest): Promise<EmailServiceVerifyResponse>;
   };
 
   /** Base URL for the SkillPassport Pages app (e.g. https://skillpassport.rareminds.in) */
@@ -29,10 +100,18 @@ export interface Env {
   /** Queue for pushing auth DB sync events to SkillPassport. */
   SYNC_QUEUE: Queue<SyncEvent>;
 
+  /** Queue for learner admission processing (parse CSV, create users). */
+  LEARNER_ADMISSION_QUEUE: Queue<unknown>;
+
+  /** Queue for sending emails (learner invitations, notifications, etc.). */
+  EMAIL_QUEUE: Queue<unknown>;
+
   /** Comma-separated allowlist of base URLs for email links, e.g. "https://skillpassport.rareminds.in,https://courses.rareminds.in". */
   ALLOWED_APP_URLS: string;
 
-  /** Optional registrable parent domain for refresh_token cookie (e.g., ".rareminds.in"). When unset, cookie is host-only. */
+  /**
+   * @deprecated Removed in RPC architecture. Cookies are now managed by frontend applications.
+   */
   REFRESH_COOKIE_DOMAIN?: string;
 }
 
@@ -150,6 +229,8 @@ export interface Session {
   rotated_from: string | null;
   last_used_at: string | null;
   device_info: Record<string, unknown> | null;
+  family_id: string | null;
+  family_created_at: string | null;
 }
 
 export interface Invite {
@@ -206,7 +287,7 @@ export interface SignupMemberBody {
   user_metadata?: Record<string, unknown>;
 }
 
-// ─── Sales Database Models ─────────────────────────────────────
+// ─── Database Models (aligned to actual Supabase schema) ───────
 export interface SalesUser {
   id: string;
   email: string;

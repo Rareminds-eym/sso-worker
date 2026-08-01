@@ -7,14 +7,47 @@ import { inviteEmail, sendEmail } from "./lib/email";
 import { checkEmailThrottle } from "./lib/email-throttle";
 import { generateRefreshToken, hashPassword, hashToken } from "./lib/hash";
 import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "./lib/jwt";
+import { signLteAccessToken } from "./lib/app-token";
 import { endpointRateLimit } from "./lib/rate-limit";
-import { rotateRefreshToken } from "./lib/session-rotation";
+import { mintAccessToken, rotateRefreshToken } from "./lib/session-rotation";
 import { publishSyncEvent } from "./lib/sync-queue";
+import {
+  assertAllowedRedirectUri,
+  assertTargetApp,
+  createAuthorizationCode,
+  getAuthorizationCodeStub,
+  hashAuthorizationValue,
+} from "./lib/authorization-code";
+import { requireLteEntitlement } from "./lib/lte-entitlement";
+import { getLteSubscriptionSnapshot } from "./lib/subscription-snapshot";
 import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "./lib/validate";
-import type { AccessTokenPayload, Env, Invite, Session } from "./types";
+import { fetchWithTimeout } from "./lib/fetch-timeout";
+import { getBatch, type BatchMetadata } from "./lib/batch-kv";
+import { handleQueueBatch } from "./queue/queue-router";
+import type {
+  AccessTokenPayload,
+  Env,
+  Invite,
+  JwtClaims,
+  Membership,
+  MessageBatch,
+  Organization,
+  Session,
+  SignupMemberBody,
+} from "./types";
+import type {
+  ExchangeAuthorizationCodeRequest,
+  ExchangeAuthorizationCodeResponse,
+  GenerateAuthorizationCodeRequest,
+  GenerateAuthorizationCodeResponse,
+} from "./types/sso-code";
 
-// HTTP route handlers removed - all imports now unused except for types
-// Business logic functions (perform*) are imported dynamically in RPC methods
+export { AuthorizationCodeStore } from "./durable-objects/AuthorizationCodeStore";
+
+import { performQueueUserSync } from "./routes/user-sync";
+import { performCreateOrganization, performUpdateOrganization, performUpdateOrganizationDetails } from "./routes/organization";
+import { performCreateLearnerUser, performQueueBulkLearnerUpload } from "./routes/learner-admission";
+import { performCreateMember, performCreateMembership, performUpdateMembershipStatus, performAssignMembershipRole } from "./routes/membership";
 
 // ─── WorkerEntrypoint ─────────────────────────────────────────
 export class SsoWorker extends WorkerEntrypoint<Env> {
@@ -34,33 +67,39 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       const result = await database.rpc<{ count: number }[]>("expire_old_subscriptions");
       const expired = Array.isArray(result) ? result[0]?.count ?? 0 : 0;
       if (expired > 0) console.log(`[SSO] Expired ${expired} subscription(s)`);
-    } catch (err: any) {
-      console.error(`[SSO] Failed to expire subscriptions: ${err?.message}`);
+    } catch (err: unknown) {
+      const errMessage = err instanceof Error ? err.message : String(err);
+      console.error(`[SSO] Failed to expire subscriptions: ${errMessage}`);
     }
 
     try {
-      const pendingEvents = await database.query<Record<string, any>>(
+      const pendingEvents = await database.query<Record<string, unknown>>(
         "events?status=eq.received&order=created_at.asc&limit=10"
       );
       if (pendingEvents && pendingEvents.length > 0) {
         for (const event of pendingEvents) {
-          await database.update("events", { id: `eq.${encodeURIComponent(event.id)}` }, { status: "processing" });
+          const eventId = event.id as string;
+          const eventType = event.event_type as string;
+          const eventPublicId = event.event_id as string;
+          const eventRetryCount = event.retry_count as number | null;
+
+          await database.update("events", { id: `eq.${encodeURIComponent(eventId)}` }, { status: "processing" });
           try {
-            if (event.event_type === 'payment.captured' || event.event_type === 'order.paid') {
+            if (eventType === 'payment.captured' || eventType === 'order.paid') {
               if (!this.env.SKILLPASSPORT_URL || !this.env.INTERNAL_WEBHOOK_SECRET) {
                 throw new Error("SKILLPASSPORT URL or INTERNAL_WEBHOOK_SECRET not configured. Cannot dispatch webhook.");
               }
 
               const targetUrl = `${this.env.SKILLPASSPORT_URL}/api/internal/webhooks/payment`;
-              const dispatchResponse = await fetch(targetUrl, {
+              const dispatchResponse = await fetchWithTimeout(targetUrl, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
                   'Authorization': `Bearer ${this.env.INTERNAL_WEBHOOK_SECRET}`,
-                  'X-Webhook-Event': event.event_type
+                  'X-Webhook-Event': eventType
                 },
                 body: JSON.stringify(event.payload)
-              });
+              }, 10000); // 10 second timeout for webhook dispatch
 
               if (!dispatchResponse.ok) {
                 const resBody = await dispatchResponse.text();
@@ -69,43 +108,25 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
             }
 
             // Mark as completed since fulfillment succeeded (or event type was ignored)
-            await database.update("events", { id: `eq.${encodeURIComponent(event.id)}` }, {
+            await database.update("events", { id: `eq.${encodeURIComponent(eventId)}` }, {
               status: "completed",
               processed_at: new Date().toISOString()
             });
-            console.log(`[SSO] Processed webhook event ${event.event_id} of type ${event.event_type}`);
-          } catch (processErr: any) {
-            await database.update("events", { id: `eq.${encodeURIComponent(event.id)}` }, {
+            console.log(`[SSO] Processed webhook event ${eventPublicId} of type ${eventType}`);
+          } catch (processErr: unknown) {
+            const processErrMessage = processErr instanceof Error ? processErr.message : String(processErr);
+            await database.update("events", { id: `eq.${encodeURIComponent(eventId)}` }, {
               status: "failed",
-              error_message: processErr?.message || "Unknown error",
-              retry_count: (event.retry_count || 0) + 1
+              error_message: processErrMessage || "Unknown error",
+              retry_count: (eventRetryCount || 0) + 1
             });
           }
         }
       }
-    } catch (err: any) {
-      console.error(`[SSO] Failed to process webhook events: ${err?.message}`);
+    } catch (err: unknown) {
+      const errMessage = err instanceof Error ? err.message : String(err);
+      console.error(`[SSO] Failed to process webhook events: ${errMessage}`);
     }
-  }
-
-  // ── Fetch handler (RPC-only mode) ────────────────────────────
-  // HTTP routes disabled - all access via RPC service binding only
-  async fetch(req: Request): Promise<Response> {
-    return new Response(JSON.stringify({
-      error: "HTTP access disabled",
-      message: "This service is only accessible via RPC service binding (env.SSO_SERVICE)",
-      rpc_methods: [
-        "signup", "signupMember", "login", "refreshSession", "logoutSession",
-        "switchOrg", "getMe", "listOrgs", "requestVerification", "verifyEmail",
-        "forgotPassword", "resetPassword", "changePassword", "adminResetPassword",
-        "deleteAccount", "listAddonCatalog", "getAddonByFeatureKey", "listBundles",
-        "createSubscription", "getUserSubscription", "recordTransaction",
-        "createInvite", "acceptInvite", "cancelInvite", "resendInvite", "and more..."
-      ]
-    }), {
-      status: 403,
-      headers: { "Content-Type": "application/json" }
-    });
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -115,90 +136,32 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   // ── Subscription Management ─────────────────────────────────
 
   // ── Queue Handler (Asynchronous Events) ─────────────────────
-  async queue(batch: any): Promise<void> {
-    const database = db(this.env);
+  async queue(batch: MessageBatch): Promise<void> {
+    if (batch.messages.length === 0) {
+      console.log('[SSO] Empty batch received, skipping');
+      return;
+    }
 
-    for (const message of batch.messages) {
-      try {
-        const body = message.body;
-        if (!body.event_id || !body.event_type || !body.payload) {
-          console.warn("[SSO] Skipping invalid queue message", body);
-          message.ack();
-          continue;
-        }
-
-        // Intercept Reverse Sync Events
-        if (body.event_type === 'user_metadata.updated' && body.user_id) {
-          const { first_name, last_name } = body.payload;
-
-          if (first_name !== undefined || last_name !== undefined) {
-            try {
-              // Note: using db(this.env) which wraps Postgres REST. 
-              const user = await database.queryOne(`users?id=eq.${encodeURIComponent(body.user_id)}&select=user_metadata`);
-              const currentMetadata = (user as any)?.user_metadata || {};
-
-              const newMetadata = { ...currentMetadata };
-              if (first_name !== undefined) newMetadata.first_name = first_name;
-              if (last_name !== undefined) newMetadata.last_name = last_name;
-
-              await database.update('users', { id: `eq.${encodeURIComponent(body.user_id)}` }, { user_metadata: newMetadata });
-              console.log(`[SSO] Bidirectional sync complete: updated user_metadata for user ${body.user_id}`);
-
-              // Broadcast to all forward consumers (e.g. App 1, App 2) so they stay in sync
-              if (this.env.SYNC_QUEUE) {
-                const userObj = await database.queryOne<{ id: string, email: string }>(`users?id=eq.${encodeURIComponent(body.user_id)}&select=id,email`);
-                if (userObj) {
-                  await this.env.SYNC_QUEUE.send({
-                    type: 'user.updated',
-                    payload: {
-                      id: userObj.id,
-                      email: userObj.email,
-                      user_metadata: newMetadata
-                    },
-                    timestamp: new Date().toISOString()
-                  });
-                }
-              } else {
-                console.warn(`[SSO] SYNC_QUEUE not bound, cannot broadcast user.updated for ${body.user_id}`);
-              }
-            } catch (updateErr) {
-              console.error(`[SSO] Failed to update user_metadata for ${body.user_id}:`, updateErr);
-              message.retry();
-              continue;
-            }
-          }
-
-          message.ack();
-          continue;
-        }
-
-        // Idempotency check
-        const existing = await database.queryOne(
-          `events?event_id=eq.${encodeURIComponent(body.event_id)}`,
-        );
-        if (existing) {
-          console.log(`[SSO] Event ${body.event_id} already processed`);
-          message.ack();
-          continue;
-        }
-
-        await database.mutate("events", {
-          event_id: body.event_id,
-          event_type: body.event_type,
-          status: "received",
-          payload: body.payload,
-          user_id: body.user_id || null,
-          subscription_id: body.subscription_id || null,
-          razorpay_payment_id: body.razorpay_payment_id || null,
-        });
-
-        message.ack();
-      } catch (err) {
-        console.error("[SSO] Failed to process queue message:", err);
-        message.retry();
-      }
+    try {
+      await handleQueueBatch(this.env, batch);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error('[SSO] Queue batch processing failed:', errorMsg);
+      // Re-throw to trigger batch-level retry by Cloudflare Queues
+      throw err;
     }
   }
+
+
+  async queueUserSync(userId: string): Promise<{ queued: boolean; reason: string }> {
+    return performQueueUserSync(this.env, userId);
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // RPC METHODS — callable via service binding only
+  // ══════════════════════════════════════════════════════════════
+
+  // ── Subscription Management ─────────────────────────────────
 
   async createSubscription(data: {
     user_id: string;
@@ -210,7 +173,6 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     features: unknown[];
     full_name: string;
     email: string;
-    phone?: string;
     razorpay_order_id?: string;
     razorpay_payment_id?: string;
     organization_id?: string;
@@ -239,7 +201,6 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       features: data.features || [],
       full_name: data.full_name || "",
       email: data.email,
-      phone: data.phone || null,
       status: "active",
       auto_renew: billingCycle !== "lifetime",
       subscription_start_date: now.toISOString(),
@@ -252,6 +213,24 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       is_organization_subscription: data.is_organization_subscription || false,
       is_bulk_purchase: data.is_bulk_purchase || false,
       purchased_by: data.purchased_by || null,
+    });
+
+    publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'subscription.created', {
+      id: (subscription as { id: string }).id,
+      user_id: data.user_id,
+      organization_id: data.organization_id || null,
+      plan_id: data.plan_id,
+      plan_code: data.plan_code,
+      plan_type: data.plan_type || data.plan_code,
+      plan_amount: data.plan_amount || 0,
+      billing_cycle: billingCycle,
+      features: data.features || [],
+      status: 'active',
+      subscription_start_date: now.toISOString(),
+      subscription_end_date: billingCycle === 'lifetime' ? null : endDate.toISOString(),
+      is_organization_subscription: data.is_organization_subscription || false,
+      product_id: null,
+      updated_at: now.toISOString(),
     });
 
     return subscription as Record<string, unknown>;
@@ -298,6 +277,24 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       subscription_end_date: null,
     });
 
+    publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'subscription.created', {
+      id: (subscription as { id: string }).id,
+      user_id: data.user_id,
+      organization_id: null,
+      plan_id: freemiumPlan.id,
+      plan_code: 'freemium',
+      plan_type: 'Freemium',
+      plan_amount: 0,
+      billing_cycle: 'lifetime',
+      features: freemiumPlan.base_features || [],
+      status: 'active',
+      subscription_start_date: new Date().toISOString(),
+      subscription_end_date: null,
+      is_organization_subscription: false,
+      product_id: null,
+      updated_at: new Date().toISOString(),
+    });
+
     return subscription as Record<string, unknown>;
   }
 
@@ -320,58 +317,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     role: string;
     org_id: string;
   }): Promise<{ user_id: string; org_id: string; membership_id: string }> {
-    if (!data.email || !data.password || !data.role || !data.org_id) {
-      throw new Error("email, password, role, and org_id are required");
-    }
-
-    const email = data.email.toLowerCase().trim();
-    const password_hash = await hashPassword(data.password);
-    const database = db(this.env);
-
-    let result: { user_id: string; org_id: string; membership_id: string };
-    try {
-      result = await database.rpc<{ user_id: string; org_id: string; membership_id: string }>(
-        "signup_member",
-        {
-          p_email: email,
-          p_password_hash: password_hash,
-          p_role: data.role,
-          p_org_id: data.org_id,
-        },
-      );
-    } catch (err: any) {
-      if (err?.message?.includes("duplicate") || err?.message?.includes("23505")) {
-        throw new Error(`A user with email ${email} already exists`);
-      }
-      throw err;
-    }
-
-    // Admin-created members are trusted — auto-verify their email so they can log
-    // in immediately without an email-verification step.
-    await database.update("users", { id: `eq.${encodeURIComponent(result.user_id)}` }, { is_email_verified: true });
-
-    // Emit sync events — await directly (RPC method, no ctx.waitUntil)
-    try {
-      await this.env.SYNC_QUEUE.send({
-        type: 'user.created',
-        payload: { id: result.user_id, email },
-        timestamp: new Date().toISOString(),
-      });
-      await this.env.SYNC_QUEUE.send({
-        type: 'membership.created',
-        payload: {
-          user_id: result.user_id,
-          organization_id: data.org_id,
-          roles: [data.role],
-          status: 'active',
-        },
-        timestamp: new Date().toISOString(),
-      });
-    } catch (e) {
-      console.error('[SSO] Failed to emit sync events:', e);
-    }
-
-    return result;
+    return performCreateMember(this.env, data);
   }
 
   async getUserSubscription(userId: string): Promise<{
@@ -567,16 +513,15 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     let productId = data.product_id;
     if (!productId && data.subscription_id) {
-      const sub = await database.queryOne(
+      const subRow = await database.queryOne<{ product_id: string | null; plan_id: string | null }>(
         `subscriptions?id=eq.${encodeURIComponent(data.subscription_id)}&select=product_id,plan_id`,
       );
-      const subRow = sub as any;
-      productId = subRow?.product_id || null;
+      productId = subRow?.product_id ?? undefined;
       if (!productId && subRow?.plan_id) {
-        const plan = await database.queryOne(
+        const plan = await database.queryOne<{ product_id: string | null }>(
           `plans?id=eq.${encodeURIComponent(subRow.plan_id)}&select=product_id`,
         );
-        productId = (plan as any)?.product_id || null;
+        productId = plan?.product_id ?? undefined;
       }
     }
 
@@ -839,56 +784,87 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     org_id: string;
     status: string;
   }): Promise<{ id: string; status: string }> {
-    if (!data.user_id || !data.org_id || !data.status) {
-      throw new Error("user_id, org_id, and status are required");
-    }
-    const database = db(this.env);
-    const membership = await database.mutate<{ id: string; status: string }>("memberships", {
-      user_id: data.user_id,
-      org_id: data.org_id,
-      status: data.status,
-    });
-    return { id: membership.id, status: membership.status };
+    return performCreateMembership(this.env, data);
   }
 
   async updateMembershipStatus(data: {
     membership_id: string;
     status: string;
   }): Promise<{ success: boolean }> {
-    if (!data.membership_id || !data.status) {
-      throw new Error("membership_id and status are required");
-    }
-    const database = db(this.env);
-    await database.update(
-      "memberships",
-      { id: `eq.${encodeURIComponent(data.membership_id)}` },
-      { status: data.status },
-    );
-    return { success: true };
+    return performUpdateMembershipStatus(this.env, data);
   }
 
   async assignMembershipRole(data: {
     membership_id: string;
     role_id: string;
   }): Promise<{ success: boolean }> {
-    if (!data.membership_id || !data.role_id) {
-      throw new Error("membership_id and role_id are required");
+    return performAssignMembershipRole(this.env, data);
+  }
+
+  // ── Organization RPC Methods ──────────────────────────────────
+
+  async createOrganization(data: {
+    name: string;
+    slug: string;
+    created_by: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<{ success: boolean; org_id?: string; error?: string }> {
+    return performCreateOrganization(this.env, data);
+  }
+
+  async updateOrganization(data: {
+    id: string;
+    name: string;
+  }): Promise<{ success: boolean }> {
+    return performUpdateOrganization(this.env, data);
+  }
+
+  async updateOrganizationDetails(data: {
+    id: string;
+    metadata: Record<string, unknown>;
+  }): Promise<{ success: boolean; error?: string }> {
+    return performUpdateOrganizationDetails(this.env, data);
+  }
+
+  // ── Learner Admission RPC Methods ─────────────────────────────
+
+  async createLearnerUser(data: {
+    email: string;
+    name: string;
+    organization_id: string;
+    contact_number?: string;
+    enrollment_number?: string;
+    program_id?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<{ success: boolean; user_id?: string; temp_password?: string; error?: string; sync_warning?: string }> {
+    return performCreateLearnerUser(this.env, data);
+  }
+
+  async queueBulkLearnerUpload(data: {
+    csv_data: string;
+    organization_id: string;
+    admin_id: string;
+  }): Promise<{ success: boolean; batch_id?: string; error?: string }> {
+    return performQueueBulkLearnerUpload(this.env, data);
+  }
+
+  async getBulkUploadStatus(batchId: string): Promise<BatchMetadata | null> {
+    if (!batchId) {
+      throw new Error('batchId is required');
     }
-    const database = db(this.env);
-    const existing = await database.query<{ id: string }>(
-      `membership_roles?membership_id=eq.${encodeURIComponent(data.membership_id)}&role_id=eq.${encodeURIComponent(data.role_id)}&select=id`,
-    );
-    if (existing.length > 0) return { success: true };
-    await database.mutate("membership_roles", {
-      membership_id: data.membership_id,
-      role_id: data.role_id,
-    });
-    return { success: true };
+    try {
+      const result = await getBatch(this.env, batchId);
+      return result;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[SSO] getBulkUploadStatus error for ${batchId}:`, msg);
+      return null;
+    }
   }
 
   // ── Auth RPC Methods ──────────────────────────────────────────
 
-  async getJWKS(): Promise<{ keys: any[] }> {
+  async getJWKS(): Promise<{ keys: Record<string, unknown>[] }> {
     const keys = [await getPublicJWK(this.env)];
     if (this.env.JWT_PUBLIC_KEY_PREVIOUS && this.env.JWT_KID_PREVIOUS) {
       try {
@@ -920,7 +896,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       const result = await performSignup(
         this.env,
         this.ctx,
-        params as any,
+        params,
         params.ip,
         params.ua
       );
@@ -937,10 +913,11 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         org: result.org,
         email_sent: result.email_sent
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const errMessage = err instanceof Error ? err.message : String(err);
       return {
         success: false,
-        error: err?.message || 'Signup failed',
+        error: errMessage || 'Signup failed',
         status: 500
       };
     }
@@ -955,7 +932,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     email: string;
     redirect_url?: string;
     org_id?: string;
-  }): Promise<any> {
+  }): Promise<{ message?: string; already_verified?: boolean }> {
     const { performRequestVerification } = await import('./routes/verify-email');
     const result = await performRequestVerification(
       this.env,
@@ -978,7 +955,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     token: string;
     ip?: string;
     ua?: string;
-  }): Promise<any> {
+  }): Promise<{ success: false; error: string } | { success: true; verified?: boolean }> {
     const { performVerifyEmail } = await import('./routes/verify-email');
     const result = await performVerifyEmail(
       this.env,
@@ -1004,7 +981,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     org_id?: string;
     ip?: string;
     ua?: string;
-  }): Promise<any> {
+  }): Promise<{ success: true; deleted?: boolean }> {
     const { performDeleteAccount } = await import('./routes/delete-account');
     const result = await performDeleteAccount(
       this.env,
@@ -1035,7 +1012,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     org_id?: string;
     ip?: string;
     ua?: string;
-  }): Promise<any> {
+  }): Promise<{ success: true; message?: string }> {
     const { performChangePassword } = await import('./routes/change-password');
     const result = await performChangePassword(
       this.env,
@@ -1069,7 +1046,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     new_password: string;
     ip?: string;
     ua?: string;
-  }): Promise<any> {
+  }): Promise<{ success: true; message?: string }> {
     const { performAdminResetPassword } = await import('./routes/change-password');
     const result = await performAdminResetPassword(
       this.env,
@@ -1200,9 +1177,15 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         throw new Error("Session expired");
 
       case "invalid":
-      default:
-        // Unknown or missing refresh token.
+        // Missing session row, unresolvable token, or user deleted mid-rotation.
         throw new Error("Invalid refresh token");
+
+      default: {
+        // Compile-time guard: if RotationOutcome ever gains a new "kind", this
+        // line fails to typecheck until it's handled explicitly above.
+        const _exhaustive: never = outcome;
+        throw new Error("Invalid refresh token");
+      }
     }
   }
 
@@ -1240,6 +1223,119 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return { valid: true, roles: claims?.roles ?? [] };
   }
 
+  async authenticateSharedSession(
+    refreshToken: string,
+    targetApp: string,
+    _ip?: string,
+    _ua?: string,
+  ): Promise<{ success: boolean; access_token?: string; refresh_token?: string; error?: string }> {
+    if (!refreshToken) {
+      return { success: false, error: "No refresh token provided" };
+    }
+
+    const database = db(this.env);
+    let activeToken = refreshToken;
+    const tokenHash = await hashToken(activeToken);
+
+    let session = await database.queryOne<Session>(
+      `sessions?refresh_token_hash=eq.${encodeURIComponent(tokenHash)}&select=id,user_id,org_id,expires_at,revoked,family_id`,
+    );
+
+    // If no direct session or session is revoked, check if token was rotated within KV grace window
+    if ((!session || session.revoked) && this.env.RATE_LIMIT_KV) {
+      try {
+        const replacementToken = await this.env.RATE_LIMIT_KV.get(`grace:${tokenHash}`);
+        if (replacementToken) {
+          const replacementHash = await hashToken(replacementToken);
+          const activeSession = await database.queryOne<Session>(
+            `sessions?refresh_token_hash=eq.${encodeURIComponent(replacementHash)}&revoked=eq.false&select=id,user_id,org_id,expires_at,revoked,family_id`,
+          );
+          if (activeSession) {
+            session = activeSession;
+            activeToken = replacementToken;
+          }
+        }
+      } catch (kvErr) {
+        console.warn("[SSO] KV grace resolution failed:", kvErr);
+      }
+    }
+
+    // Fallback: If session was marked revoked, resolve latest unrevoked session in family
+    if (session?.revoked && session.family_id) {
+      const activeSession = await database.queryOne<Session>(
+        `sessions?family_id=eq.${encodeURIComponent(session.family_id)}&revoked=eq.false&order=created_at.desc&limit=1&select=id,user_id,org_id,expires_at,revoked,family_id`,
+      );
+      if (activeSession) {
+        session = activeSession;
+      }
+    }
+
+    if (!session || session.revoked) {
+      console.log("[SSO] Shared session is invalid or revoked for app:", targetApp);
+      return { success: false, error: "Invalid or revoked session" };
+    }
+
+    if (new Date(session.expires_at) < new Date()) {
+      return { success: false, error: "Session expired" };
+    }
+
+    if (targetApp === "lte") {
+      let entitlement;
+      try {
+        entitlement = await requireLteEntitlement(this.env, {
+          sub: session.user_id,
+          org_id: session.org_id,
+        });
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        return { success: false, error: errMsg };
+      }
+
+      const claims = entitlement.claims;
+      const lteProducts = claims.products.includes("lte") ? claims.products : [...claims.products, "lte"];
+      const accessToken = await signLteAccessToken(
+        {
+          sub: session.user_id,
+          email: entitlement.user.email,
+          // Fallback to empty string for org-less personal accounts
+          org_id: session.org_id ?? "",
+          roles: claims.roles,
+          products: lteProducts,
+          membership_status: claims.membership_status,
+          is_email_verified: entitlement.user.is_email_verified,
+          user_metadata: entitlement.user.user_metadata ?? {},
+        },
+        this.env,
+      );
+
+      return {
+        success: true,
+        access_token: accessToken,
+        refresh_token: activeToken,
+      };
+    }
+
+    const result = await mintAccessToken(database, this.env, session.user_id, session.org_id);
+
+    if (result === "blocked") return { success: false, error: "Account is blocked" };
+    if (result === "not_found") return { success: false, error: "User not found" };
+    if (!result || typeof result !== "object") {
+      return { success: false, error: "Failed to mint access token" };
+    }
+
+    const payload = await verifyAccessToken(result.token, this.env);
+    if (!payload.products.includes(targetApp) && targetApp !== "sso") {
+      return { success: false, error: `Access denied for product: ${targetApp}` };
+    }
+
+    // Always include user_metadata so app clients can normalize a stable user shape.
+    return {
+      success: true,
+      access_token: result.token,
+      refresh_token: activeToken,
+    };
+  }
+
   async getMe(accessToken: string): Promise<Record<string, unknown>> {
     if (!accessToken) throw new Error("No access token provided");
     let payload: AccessTokenPayload;
@@ -1256,10 +1352,187 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       products: payload.products,
       membership_status: payload.membership_status,
       is_email_verified: payload.is_email_verified,
+      user_metadata: payload.user_metadata ?? {},
     };
   }
 
-  async listOrgs(accessToken: string): Promise<{ organizations: Array<any> }> {
+  async generateAuthorizationCode(
+    params: GenerateAuthorizationCodeRequest,
+  ): Promise<GenerateAuthorizationCodeResponse> {
+    if (!params.accessToken) {
+      throw new Error("No access token provided");
+    }
+
+    assertTargetApp(params.targetApp);
+    assertAllowedRedirectUri(params.redirectUri, this.env);
+
+    let payload: AccessTokenPayload;
+    try {
+      payload = await verifyAccessToken(params.accessToken, this.env);
+    } catch {
+      throw new Error("Invalid or expired access token");
+    }
+
+    await requireLteEntitlement(this.env, payload);
+
+    const generated = await createAuthorizationCode(params.redirectUri);
+    const stub = getAuthorizationCodeStub(this.env, generated.codeHash);
+    const now = Date.now();
+
+    try {
+      await stub.store({
+        codeHash: generated.codeHash,
+        stateHash: generated.stateHash,
+        userId: payload.sub,
+        orgId: payload.org_id,
+        targetApp: params.targetApp,
+        redirectUri: params.redirectUri,
+        expiresAt: Date.parse(generated.expiresAt),
+        createdAt: now,
+      });
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error("[SSO] Failed to store authorization code:", errMsg);
+      throw new Error(`Failed to store authorization code: ${errMsg}`);
+    }
+
+    audit(this.ctx, this.env, "authorization_code.generated", {
+      user_id: payload.sub,
+      org_id: payload.org_id,
+      ip_address: params.ip,
+      user_agent: params.ua,
+      metadata: { target_app: params.targetApp, redirect_uri: params.redirectUri },
+    });
+
+    return {
+      code: generated.code,
+      state: generated.state,
+      redirectUrl: generated.redirectUrl,
+      codeExpiresAt: generated.expiresAt,
+    };
+  }
+
+  async exchangeAuthorizationCode(
+    params: ExchangeAuthorizationCodeRequest,
+  ): Promise<ExchangeAuthorizationCodeResponse> {
+    if (!params.code || !params.state) {
+      throw new Error("Authorization code and state are required");
+    }
+
+    assertTargetApp(params.targetApp);
+    assertAllowedRedirectUri(params.redirectUri, this.env);
+
+    const [codeHash, stateHash] = await Promise.all([
+      hashAuthorizationValue(params.code),
+      hashAuthorizationValue(params.state),
+    ]);
+    const stub = getAuthorizationCodeStub(this.env, codeHash);
+    let consumeResult;
+    try {
+      consumeResult = await stub.consume({
+        codeHash,
+        stateHash,
+        redirectUri: params.redirectUri,
+        now: Date.now(),
+      });
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error("[SSO] Failed to consume authorization code:", errMsg);
+      throw new Error(`Failed to consume authorization code: ${errMsg}`);
+    }
+
+    if (!consumeResult.success) {
+      const reason = consumeResult.reason || "unknown";
+      audit(this.ctx, this.env, "authorization_code.exchange_failed", {
+        ip_address: params.ip,
+        user_agent: params.ua,
+        metadata: { target_app: params.targetApp, reason },
+      });
+      throw new Error(`Authorization code exchange failed: ${reason}`);
+    }
+
+    const record = consumeResult.record;
+    if (record.targetApp !== params.targetApp) {
+      throw new Error("Authorization code target app mismatch");
+    }
+
+    const entitlement = await requireLteEntitlement(this.env, {
+      sub: record.userId,
+      org_id: record.orgId,
+    });
+    if (!entitlement) {
+      throw new Error("Failed to resolve LTE entitlement");
+    }
+
+    const refreshToken = generateRefreshToken();
+    const refreshHash = await hashToken(refreshToken);
+    const sessionId = crypto.randomUUID();
+    const now = new Date().toISOString();
+
+    await db(this.env).mutate("sessions", {
+      id: sessionId,
+      user_id: record.userId,
+      org_id: record.orgId,
+      refresh_token_hash: refreshHash,
+      user_agent: params.ua,
+      ip_address: params.ip,
+      revoked: false,
+      expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+      family_id: sessionId,
+      family_created_at: now,
+      device_info: { app: "lte" },
+    });
+
+    const claims: JwtClaims = entitlement.claims;
+    const lteProducts = claims.products.includes("lte") ? claims.products : [...claims.products, "lte"];
+    const accessToken = await signLteAccessToken(
+      {
+        sub: record.userId,
+        email: entitlement.user.email,
+        org_id: record.orgId,
+        roles: claims.roles,
+        products: lteProducts,
+        membership_status: claims.membership_status,
+        is_email_verified: entitlement.user.is_email_verified,
+        user_metadata: entitlement.user.user_metadata ?? {},
+      },
+      this.env,
+    );
+
+    let subscription = null;
+    try {
+      subscription = await getLteSubscriptionSnapshot(this.env, record.userId);
+    } catch (err) {
+      console.warn("[SSO] Failed to fetch LTE subscription snapshot:", err);
+    }
+
+    audit(this.ctx, this.env, "authorization_code.exchanged", {
+      user_id: record.userId,
+      org_id: record.orgId,
+      ip_address: params.ip,
+      user_agent: params.ua,
+      metadata: { target_app: "lte", session_id: sessionId },
+    });
+
+    return {
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      user: {
+        sub: record.userId,
+        email: entitlement.user.email,
+        org_id: record.orgId,
+        roles: claims.roles,
+        products: lteProducts,
+        membership_status: claims.membership_status,
+        is_email_verified: entitlement.user.is_email_verified,
+        user_metadata: entitlement.user.user_metadata ?? {},
+      },
+      subscription,
+      expires_in: 900,
+    };
+  }
+
+  async listOrgs(accessToken: string): Promise<any> {
     if (!accessToken) throw new Error("No access token provided");
 
     let payload: AccessTokenPayload;
@@ -1283,12 +1556,12 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       )
       : [];
 
-    const orgMap = new Map(orgs.map((o: any) => [o.id, o]));
+    const orgMap = new Map(orgs.map((o) => [o.id, o]));
 
     // Fetch roles for each membership via join table
     const membershipIds = memberships.map((m) => m.id);
     const roleRows = membershipIds.length
-      ? await database.query<{ membership_id: string; name: string }>(
+      ? await database.query<{ membership_id: string; role_id: { name: string } | null }>(
         `membership_roles?membership_id=in.(${membershipIds.map(id => encodeURIComponent(id)).join(",")})&select=membership_id,role_id(name)`,
       )
       : [];
@@ -1296,10 +1569,15 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     // PostgREST returns nested objects for FK selects — flatten
     const roleMap = new Map<string, string[]>();
     for (const row of roleRows) {
+      if (!row.role_id) continue;
+
       const mid = row.membership_id;
-      const roleName = (row as any).role_id?.name ?? (row as any).name;
-      if (!roleMap.has(mid)) roleMap.set(mid, []);
-      if (roleName) roleMap.get(mid)!.push(roleName);
+      let roles = roleMap.get(mid);
+      if (!roles) {
+        roles = [];
+        roleMap.set(mid, roles);
+      }
+      roles.push(row.role_id.name);
     }
 
     return {
@@ -1348,8 +1626,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     // Revoke old session and create new one
-    let familyId = crypto.randomUUID();
-    let familyCreatedAt = new Date().toISOString();
+    const familyId = crypto.randomUUID();
+    const familyCreatedAt = new Date().toISOString();
 
     // Get RBAC claims for the target org
     const claims = await database.rpc<JwtClaims>("get_jwt_claims", {
@@ -1408,7 +1686,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     };
   }
 
-  async forgotPassword(params: { email?: string; redirect_url?: string }, ip?: string, ua?: string): Promise<{ message?: string }> {
+  async forgotPassword(params: { email?: string; redirect_url?: string }, ip?: string, ua?: string): Promise<{ success: boolean; message?: string; error?: string }> {
     const { performForgotPassword } = await import("./routes/password-reset");
     const result = await performForgotPassword(
       this.env,
@@ -1422,10 +1700,13 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       return { success: false, error: result.error };
     }
 
-    return { success: true, message: result.message };
+    const message =
+      result.message ?? "If an account exists, a reset email has been sent.";
+
+    return { success: true, message };
   }
 
-  async resetPassword(params: { token?: string; password?: string }, ip?: string, ua?: string): Promise<any> {
+  async resetPassword(params: { token?: string; password?: string }, ip?: string, ua?: string): Promise<{ success: false; error: string } | { success: true; reset: boolean }> {
     const { performResetPassword } = await import("./routes/password-reset");
     const result = await performResetPassword(
       this.env,
@@ -1439,7 +1720,9 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       return { success: false, error: result.error };
     }
 
-    return { success: true, reset: result.reset };
+    const reset = result.reset ?? true;
+
+    return { success: true, reset };
   }
 
   async listAddonCatalog(params?: { category?: string; role?: string; product?: string }): Promise<any> {
@@ -1470,16 +1753,18 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const tokenHash = await hashToken(refreshToken);
 
     const session = await database.queryOne<Session>(
-      `sessions?refresh_token_hash=eq.${encodeURIComponent(tokenHash)}&select=user_id,org_id`,
+      `sessions?refresh_token_hash=eq.${encodeURIComponent(tokenHash)}&select=user_id,org_id,family_id`,
     );
 
     if (session) {
+      // Global SSO logout: revoke all sessions for this user across all apps
+      // WARNING: this revokes every active session for the user, not only the presented refresh token.
       await database.update(
         "sessions",
-        { refresh_token_hash: `eq.${encodeURIComponent(tokenHash)}` },
+        { user_id: `eq.${encodeURIComponent(session.user_id)}` },
         { revoked: true },
       ).catch((err) => {
-        console.warn("[SSO] Session revocation failed on logout:", err);
+        console.warn("[SSO] User sessions revocation failed on logout:", err);
       });
 
       audit(this.ctx, this.env, "logout", {
@@ -1487,6 +1772,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         org_id: session.org_id,
         ip_address: ip || null,
         user_agent: ua || null,
+        metadata: { global_logout: true, family_id: session.family_id },
       });
     }
 
@@ -1599,7 +1885,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       throw new Error("Invite has expired");
     }
 
-    let user = await database.queryOne<{ id: string; email: string; is_email_verified: boolean; user_metadata?: Record<string, unknown> }>(
+    let user = await database.queryOne<{ id: string; email: string; is_email_verified: boolean; user_metadata: Record<string, unknown> | null }>(
       `users?email=eq.${encodeURIComponent(invite.email)}&select=*`,
     );
 
@@ -1652,8 +1938,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     // Assign roles from invite via join table
     const inviteRoles = invite.role?.length ? invite.role : ["member"];
-   const roleRows = await database.query<{ id: string; name: string }>(
-  `roles?name=in.(${inviteRoles.map(r => encodeURIComponent(r)).join(",")})&select=id,name`,
+    const roleRows = await database.query<{ id: string; name: string }>(
+      `roles?name=in.(${inviteRoles.map(r => encodeURIComponent(r)).join(",")})&select=id,name`,
     );
 
     for (const role of roleRows) {
@@ -1662,9 +1948,11 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           membership_id: membershipId,
           role_id: role.id,
         });
-      } catch (err: any) {
+      } catch (err: unknown) {
         // Ignore duplicate — role already assigned
-        if (!err?.message?.includes("23505") && !err?.message?.includes("duplicate")) {
+        const errMessage = err instanceof Error ? err.message : String(err);
+        const isDuplicate = errMessage.includes("23505") || errMessage.includes("duplicate");
+        if (!isDuplicate) {
           throw err;
         }
       }
@@ -1708,7 +1996,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         products: claims?.products ?? [],
         membership_status: (claims?.membership_status ?? "active") as "active" | "inactive" | "suspended" | "expired",
         is_email_verified: user.is_email_verified,
-        user_metadata: user.user_metadata ?? {},
+        // user_metadata is nullable at the DB level; default to an empty object
+        user_metadata: user.user_metadata !== null ? user.user_metadata : {},
       },
       this.env,
     );

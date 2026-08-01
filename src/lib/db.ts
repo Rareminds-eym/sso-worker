@@ -2,11 +2,12 @@ import type { Env } from "../types";
 import { DB_TIMEOUT_MS } from "./constants";
 
 export interface DbClient {
-  query<T = any>(path: string, options?: RequestInit): Promise<T[]>;
-  queryOne<T = any>(path: string, options?: RequestInit): Promise<T | null>;
-  mutate<T = any>(table: string, body: Record<string, unknown>, method?: string): Promise<T>;
+  query<T = unknown>(path: string, options?: RequestInit): Promise<T[]>;
+  queryOne<T = unknown>(path: string, options?: RequestInit): Promise<T | null>;
+  mutate<T = unknown>(table: string, body: Record<string, unknown>, method?: string): Promise<T>;
   update(table: string, filter: Record<string, string>, body: Record<string, unknown>): Promise<void>;
-  rpc<T = any>(fn: string, args?: Record<string, unknown>): Promise<T>;
+  rpc<T = unknown>(fn: string, args?: Record<string, unknown>): Promise<T>;
+  bulkInsert<T = unknown>(table: string, data: unknown[]): Promise<T[]>;
 }
 
 /**
@@ -30,7 +31,7 @@ export function db(env: Env): DbClient {
     return { signal: controller.signal, clear: () => clearTimeout(timer) };
   }
 
-  async function query<T = any>(path: string, options: RequestInit = {}): Promise<T[]> {
+  async function query<T = unknown>(path: string, options: RequestInit = {}): Promise<T[]> {
     const { signal, clear } = withTimeout();
     try {
       const res = await fetch(`${base}/${path}`, {
@@ -51,12 +52,12 @@ export function db(env: Env): DbClient {
     }
   }
 
-  async function queryOne<T = any>(path: string, options: RequestInit = {}): Promise<T | null> {
+  async function queryOne<T = unknown>(path: string, options: RequestInit = {}): Promise<T | null> {
     const rows = await query<T>(path, options);
     return rows[0] ?? null;
   }
 
-  async function mutate<T = any>(
+  async function mutate<T = unknown>(
     table: string,
     body: Record<string, unknown>,
     method = "POST",
@@ -73,8 +74,22 @@ export function db(env: Env): DbClient {
         const text = await res.text();
         throw new Error(`DB mutate failed [${res.status}]: ${text}`);
       }
-      const rows = (await res.json()) as T[];
-      return (rows as any)[0];
+      const json = await res.json();
+      // ponytail: Runtime guard against unexpected API shape (PostgREST returns array or single object)
+      if (json === null || json === undefined) {
+        throw new Error(`DB mutate returned null/undefined for table ${table}`);
+      }
+      const rows = Array.isArray(json) ? json : [json];
+      if (rows.length === 0) {
+        throw new Error(`DB mutate returned empty result for table ${table}`);
+      }
+      const row = rows[0];
+      if (typeof row !== 'object' || row === null) {
+        throw new Error(
+          `DB mutate returned unexpected type for ${table}: expected object, got ${typeof row}`,
+        );
+      }
+      return row as T;
     } finally {
       clear();
     }
@@ -111,7 +126,7 @@ export function db(env: Env): DbClient {
   }
 
   /** Call a Supabase RPC (database function) */
-  async function rpc<T = any>(fn: string, args: Record<string, unknown> = {}): Promise<T> {
+  async function rpc<T = unknown>(fn: string, args: Record<string, unknown> = {}): Promise<T> {
     const { signal, clear } = withTimeout();
     try {
       const res = await fetch(`${rpcBase}/${fn}`, {
@@ -130,5 +145,30 @@ export function db(env: Env): DbClient {
     }
   }
 
-  return { query, queryOne, mutate, update, rpc };
+  /**
+   * Bulk insert multiple records
+   * ponytail: Extracted to eliminate duplicate fetch+headers boilerplate
+   */
+  async function bulkInsert<T = unknown>(table: string, data: unknown[]): Promise<T[]> {
+    if (data.length === 0) return [];
+    
+    const { signal, clear } = withTimeout();
+    try {
+      const res = await fetch(`${base}/${table}`, {
+        method: "POST",
+        signal,
+        headers: { ...headers, Prefer: "return=representation" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`DB bulk insert failed [${res.status}]: ${text}`);
+      }
+      return (await res.json()) as T[];
+    } finally {
+      clear();
+    }
+  }
+
+  return { query, queryOne, mutate, update, rpc, bulkInsert };
 }
