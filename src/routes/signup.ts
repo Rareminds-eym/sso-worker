@@ -7,7 +7,6 @@ import { checkEmailThrottle } from "../lib/email-throttle";
 import { generateRefreshToken, hashPassword, hashToken } from "../lib/hash";
 import { signAccessToken } from "../lib/jwt";
 import { endpointRateLimit } from "../lib/rate-limit";
-import { error, json, setAuthCookies } from "../lib/response";
 import { publishSyncEvent } from "../lib/sync-queue";
 import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "../lib/validate";
 import type { Env, JwtClaims, SignupBody } from "../types";
@@ -17,17 +16,12 @@ import type { Env, JwtClaims, SignupBody } from "../types";
  * Called by: SsoWorker.signup() RPC method, signup() HTTP handler
  */
 export async function performSignup(
-  req: Request,
   env: Env,
   ctx: ExecutionContext,
-): Promise<Response> {
-  let body: SignupBody;
-  try {
-    body = await req.json() as SignupBody;
-  } catch (parseErr) {
-    console.error('[SSO] signup: Failed to parse JSON body:', parseErr);
-    return error("Invalid JSON body");
-  }
+  body: SignupBody,
+  ip?: string,
+  ua?: string | null,
+): Promise<any> {
 
   console.log('[SSO] signup: Received request with body:', {
     email: body.email,
@@ -43,7 +37,7 @@ export async function performSignup(
       hasEmail: !!body.email,
       hasPassword: !!body.password
     });
-    return error("email and password are required");
+    return { error: "email and password are required", status: 400 };
   }
 
   // org_name is optional for recruiter onboarding flow
@@ -56,28 +50,28 @@ export async function performSignup(
   const emailErr = validateEmail(body.email);
   if (emailErr) {
     console.error('[SSO] signup: Email validation failed:', body.email);
-    return emailErr;
+    return { error: emailErr, status: 400 };
   }
 
   const passErr = validatePassword(body.password);
   if (passErr) {
     console.error('[SSO] signup: Password validation failed');
-    return passErr;
+    return { error: passErr, status: 400 };
   }
 
   const redirectErr = validateRedirectUrl(body.redirect_url, env);
   if (redirectErr) {
     console.error('[SSO] signup: Redirect URL validation failed:', body.redirect_url);
-    return redirectErr;
+    return { error: redirectErr, status: 400 };
   }
 
   const email = body.email.toLowerCase().trim();
-  const ip = req.headers.get("CF-Connecting-IP") ?? "unknown";
-  const ua = req.headers.get("User-Agent");
+  const resolvedIp = ip ?? "unknown";
+  const resolvedUa = ua ?? null;
 
-  console.log('[SSO] signup: All validations passed', { email, ip, org_name: body.org_name });
+  console.log('[SSO] signup: All validations passed', { email, ip: resolvedIp, org_name: body.org_name });
 
-  const rateLimited = await endpointRateLimit(env, `signup:ip:${ip}`, 5, 60);
+  const rateLimited = await endpointRateLimit(env, `signup:ip:${resolvedIp}`, 5, 60);
   if (rateLimited) return rateLimited;
 
   const database = db(env);
@@ -165,8 +159,8 @@ export async function performSignup(
       user_id: result.user_id,
       org_id: result.org_id,
       refresh_token_hash: refreshHash,
-      user_agent: ua ?? null,
-      ip_address: ip,
+      user_agent: resolvedUa,
+      ip_address: resolvedIp,
       revoked: false,
       expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
       family_id: sessionId,
@@ -213,19 +207,7 @@ export async function performSignup(
     }
 
     // ─── Step 4: Build response ──────────────────────────────────
-    const response = json(
-      {
-        access_token: accessToken,
-        user: { id: result.user_id, email },
-        org: { id: result.org_id, name: body.org_name || null, slug: result.slug },
-        email_sent: emailSent,
-      },
-      201,
-    );
-
-    setAuthCookies(response, accessToken, refreshToken, env);
-
-    // Response fully built — emit sync events (safe, no rollback after this point)
+    // ponytail: Best-effort sync of pre-existing subscription
     publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.created', {
       id: result.user_id,
       email,
@@ -297,8 +279,8 @@ export async function performSignup(
     audit(ctx, env, "signup", {
       user_id: result.user_id,
       org_id: result.org_id,
-      ip_address: ip,
-      user_agent: ua,
+      ip_address: resolvedIp,
+      user_agent: resolvedUa,
       metadata: { email_sent: emailSent },
     });
 
