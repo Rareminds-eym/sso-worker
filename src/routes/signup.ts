@@ -7,7 +7,6 @@ import { checkEmailThrottle } from "../lib/email-throttle";
 import { generateRefreshToken, hashPassword, hashToken } from "../lib/hash";
 import { signAccessToken } from "../lib/jwt";
 import { endpointRateLimit } from "../lib/rate-limit";
-import { getErrorMessage } from "../lib/error-utils";
 import { publishSyncEvent } from "../lib/sync-queue";
 import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "../lib/validate";
 import type { Env, JwtClaims, SignupBody } from "../types";
@@ -20,32 +19,60 @@ export async function performSignup(
   env: Env,
   ctx: ExecutionContext,
   body: SignupBody,
-  ip?: string | null,
+  ip?: string,
   ua?: string | null,
-) {
-  if (!body.email || !body.password || !body.org_name || !body.role) {
-    return { error: "email, password, org_name, and role are required", status: 400 };
+): Promise<any> {
+
+  console.log('[SSO] signup: Received request with body:', {
+    email: body.email,
+    hasPassword: !!body.password,
+    org_name: body.org_name,
+    role: body.role,
+    redirect_url: body.redirect_url,
+    hasUserMetadata: !!body.user_metadata
+  });
+
+  if (!body.email || !body.password) {
+    console.error('[SSO] signup: Missing required fields', {
+      hasEmail: !!body.email,
+      hasPassword: !!body.password
+    });
+    return { error: "email and password are required", status: 400 };
   }
+
+  // org_name is optional for recruiter onboarding flow
+  // If not provided, it will be set during onboarding Step 1
+
+  // role is optional, defaults to 'owner'
+  const role = body.role || 'owner';
+  console.log('[SSO] signup: Using role:', role);
 
   const emailErr = validateEmail(body.email);
   if (emailErr) {
-    return { error: "Invalid email format", status: 400 };
+    console.error('[SSO] signup: Email validation failed:', body.email);
+    return { error: emailErr, status: 400 };
   }
 
   const passErr = validatePassword(body.password);
   if (passErr) {
-    return { error: "Invalid password", status: 400 };
+    console.error('[SSO] signup: Password validation failed');
+    return { error: passErr, status: 400 };
   }
 
   const redirectErr = validateRedirectUrl(body.redirect_url, env);
   if (redirectErr) {
-    return { error: "Invalid redirect URL", status: 400 };
+    console.error('[SSO] signup: Redirect URL validation failed:', body.redirect_url);
+    return { error: redirectErr, status: 400 };
   }
 
   const email = body.email.toLowerCase().trim();
-  const ipAddr = ip ?? "unknown";
-  const rateLimited = await endpointRateLimit(env, `signup:ip:${ipAddr}`, 5, 60);
-  if (rateLimited) return { error: "Rate limit exceeded", status: 429 };
+  const resolvedIp = ip ?? "unknown";
+  const resolvedUa = ua ?? null;
+
+  console.log('[SSO] signup: All validations passed', { email, ip: resolvedIp, org_name: body.org_name });
+
+  const rateLimited = await endpointRateLimit(env, `signup:ip:${resolvedIp}`, 5, 60);
+  if (rateLimited) return rateLimited;
 
   const database = db(env);
 
@@ -70,27 +97,48 @@ export async function performSignup(
 
   const password_hash = await hashPassword(body.password);
 
+  // Generate slug from org_name if provided, otherwise use a temporary slug
   const slug = body.org_name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
+    ? body.org_name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+    : `org-${crypto.randomUUID().split('-')[0]}`;
 
   let result: { user_id: string; org_id: string; slug: string };
   try {
+    console.log('[SSO] signup: Calling signup_user RPC with:', {
+      email,
+      org_name: body.org_name || null,
+      slug,
+      role
+    });
+
     result = await database.rpc<{ user_id: string; org_id: string; slug: string }>(
       "signup_user",
       {
         p_email: email,
         p_password_hash: password_hash,
-        p_org_name: body.org_name,
+        p_org_name: body.org_name || null, // Allow null for recruiter onboarding
         p_org_slug: slug,
-        p_role: body.role,
+        p_role: role, // Use the role variable we set earlier
         p_user_metadata: body.user_metadata ?? {},
       },
     );
-  } catch (err: unknown) {
-    const message = getErrorMessage(err);
-    if (message.includes("duplicate") || message.includes("23505")) {
+
+    console.log('[SSO] signup: signup_user RPC succeeded', {
+      user_id: result.user_id,
+      org_id: result.org_id,
+      slug: result.slug
+    });
+  } catch (err: any) {
+    console.error('[SSO] signup: signup_user RPC failed:', {
+      error: err.message,
+      code: err.code,
+      details: err.details
+    });
+
+    if (err?.message?.includes("duplicate") || err?.message?.includes("23505")) {
       return { error: "An account with this email already exists. Please log in.", status: 409 };
     }
     throw err;
@@ -111,8 +159,8 @@ export async function performSignup(
       user_id: result.user_id,
       org_id: result.org_id,
       refresh_token_hash: refreshHash,
-      user_agent: ua ?? null,
-      ip_address: ipAddr,
+      user_agent: resolvedUa,
+      ip_address: resolvedIp,
       revoked: false,
       expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
       family_id: sessionId,
@@ -158,8 +206,8 @@ export async function performSignup(
       emailSent = false;
     }
 
-    // ponytail: Always publish sync events - consumer's upsert handles deduplication
-    // Simpler than checking if user exists first, let database handle it
+    // ─── Step 4: Build response ──────────────────────────────────
+    // ponytail: Best-effort sync of pre-existing subscription
     publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.created', {
       id: result.user_id,
       email,
@@ -231,8 +279,8 @@ export async function performSignup(
     audit(ctx, env, "signup", {
       user_id: result.user_id,
       org_id: result.org_id,
-      ip_address: ip,
-      user_agent: ua,
+      ip_address: resolvedIp,
+      user_agent: resolvedUa,
       metadata: { email_sent: emailSent },
     });
 
