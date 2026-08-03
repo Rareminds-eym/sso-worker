@@ -5,6 +5,8 @@ compatibility_flags = ["nodejs_compat"]
 
 [dev]
 port = 8787
+host = "127.0.0.1"
+inspector_port = 9227
 
 [observability]
 enabled = true
@@ -17,25 +19,32 @@ enabled = true
 head_sampling_rate = 0.01
 
 [triggers]
-crons = ["0 * * * *"]
+crons = ["0 3 * * *"]
 
 [vars]
 ENVIRONMENT = "production"
 SUPABASE_URL = "https://quvdgaydpctuspzeqknc.supabase.co"
-ALLOWED_ORIGINS = "http://localhost:3000,http://localhost:5173,http://localhost:8788,https://*.rareminds.in,https://*.pages.dev,http://127.0.0.1:8788"
-ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:5173,http://localhost:8788,http://127.0.0.1:8788,https://skillpassport.rareminds.in,https://*.rareminds.in,https://*.pages.dev"
 SKILLPASSPORT_URL = "https://skillpassport.rareminds.in"
+ALLOWED_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://localhost:8788,http://localhost:8789,https://*.rareminds.in,https://*.pages.dev,http://127.0.0.1:8788,http://127.0.0.1:8789"
+ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:3000/,http://localhost:3000/auth/callback,http://127.0.0.1:3000,http://127.0.0.1:3000/auth/callback,http://localhost:5173,http://localhost:8788,http://localhost:8789,http://127.0.0.1:8788,http://127.0.0.1:8789,https://skillpassport.rareminds.in,https://*.rareminds.in,https://*.pages.dev"
 
 # Secrets (set via `wrangler secret put`):
 # SUPABASE_SERVICE_ROLE_KEY
 # JWT_PRIVATE_KEY  (PEM-encoded RS256 private key)
 # JWT_PUBLIC_KEY   (PEM-encoded RS256 public key)
 # JWT_KID          (Key ID for JWKS, e.g. "key-1")
-# EMAIL_API_KEY    (Shared API key for email-worker service binding)
 
 [[kv_namespaces]]
 binding = "RATE_LIMIT_KV"
-id = "6f54bab45fd840678dde620cd1518705"
+id = "a162f140e4464515a8d5a27b5ebc6c6b"
+
+[[durable_objects.bindings]]
+name = "AUTH_CODE_STORE"
+class_name = "AuthorizationCodeStore"
+
+[[migrations]]
+tag = "v1_authorization_code_store"
+new_sqlite_classes = ["AuthorizationCodeStore"]
 
 [[services]]
 binding = "EMAIL_SERVICE"
@@ -46,6 +55,14 @@ entrypoint = "EmailService"
 binding = "SYNC_QUEUE"
 queue = "auth-db-sync-queue"
 
+[[queues.producers]]
+binding = "LEARNER_ADMISSION_QUEUE"
+queue = "learner-admission-queue"
+
+[[queues.producers]]
+binding = "EMAIL_QUEUE"
+queue = "email-queue"
+
 [[queues.consumers]]
 queue = "payment-webhooks-queue"
 max_batch_size = 10
@@ -55,3 +72,13 @@ max_batch_timeout = 5
 queue = "sso-reverse-sync-queue"
 max_batch_size = 10
 max_batch_timeout = 5
+
+[[queues.consumers]]
+queue = "learner-admission-queue"
+max_retries = 3
+max_concurrency = 1
+dead_letter_queue = "learner-admission-dlq"
+
+[[queues.consumers]]
+queue = "learner-admission-dlq"
+

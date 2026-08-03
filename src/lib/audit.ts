@@ -22,6 +22,9 @@ export type AuditAction =
   | "email_verified"
   | "password_reset_requested"
   | "password_reset_completed"
+  | "authorization_code.generated"
+  | "authorization_code.exchange_failed"
+  | "authorization_code.exchanged"
   | "account_deleted";
 
 /**
