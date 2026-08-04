@@ -1,11 +1,9 @@
 import { audit } from "../lib/audit";
 import { SESSION_TTL_MS } from "../lib/constants";
-import { setAuthCookies } from "../lib/cookies";
 import { db } from "../lib/db";
 import { generateRefreshToken, hashToken, verifyPassword } from "../lib/hash";
 import { signAccessToken } from "../lib/jwt";
 import { checkAccountLockout, clearFailedLogins, endpointRateLimit, recordFailedLogin } from "../lib/rate-limit";
-import { error, json } from "../lib/response";
 import { validateEmail } from "../lib/validate";
 import type { Env, JwtClaims, LoginBody, Membership, User } from "../types";
 
@@ -77,12 +75,12 @@ export async function performLogin(
   ctx.waitUntil(clearFailedLogins(env, email));
 
   ctx.waitUntil(
-    database.update("users", { id: `eq.${user.id}` }, { last_login_at: new Date().toISOString() })
+    database.update("users", { id: `eq.${encodeURIComponent(user.id)}` }, { last_login_at: new Date().toISOString() })
       .catch((err) => console.warn("[SSO] Failed to update last_login_at:", err)),
   );
 
   const memberships = await database.query<Membership>(
-    `memberships?user_id=eq.${user.id}&status=eq.active&select=*&order=created_at.asc`,
+    `memberships?user_id=eq.${encodeURIComponent(user.id)}&status=eq.active&select=*&order=created_at.asc`,
   );
 
   const activeMembership = memberships[0] ?? null;
@@ -133,6 +131,103 @@ export async function performLogin(
     user_agent: ua,
   });
 
+  ctx.waitUntil(
+    (async () => {
+      try {
+        const cacheKey = `login:user-synced:${user.id}`;
+        const cached = await env.RATE_LIMIT_KV.get(cacheKey);
+        
+        if (cached === 'true') return;
+
+        const { checkUserExistsInSkillpassport } = await import('../lib/skillpassport-check');
+        const exists = await checkUserExistsInSkillpassport(env, user.id);
+        
+        if (exists) {
+          await env.RATE_LIMIT_KV.put(cacheKey, 'true', { expirationTtl: 300 });
+          return;
+        }
+
+        console.log(`[SSO] User ${user.id} missing, batch querying data for re-sync`);
+        
+        if (!env.SYNC_QUEUE) {
+          console.error('[SSO] SYNC_QUEUE not bound, cannot re-sync user');
+          return;
+        }
+        
+        const { publishSyncEvent } = await import('../lib/sync-queue');
+        
+        const [orgResult, subscriptions] = await Promise.all([
+          activeMembership 
+            ? database.queryOne<{ id: string; name: string }>(
+                `organizations?id=eq.${encodeURIComponent(activeMembership.org_id)}&select=id,name`
+              ).catch(() => null)
+            : Promise.resolve(null),
+          database.query<{
+            id: string;
+            plan_id: string;
+            plan_code: string;
+            plan_type: string;
+            plan_amount: number;
+            billing_cycle: string;
+            features: string[];
+            status: string;
+            subscription_start_date: string;
+            subscription_end_date: string | null;
+            product_id: string | null;
+            updated_at: string;
+          }>(`subscriptions?user_id=eq.${encodeURIComponent(user.id)}&order=created_at.desc&limit=1`)
+            .catch(() => []),
+        ]);
+
+        // Publish all events at once (consumer processes them in parallel)
+        publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.created', {
+          id: user.id,
+          email: user.email,
+          user_metadata: user.user_metadata ?? {},
+        });
+        
+        if (orgResult && activeMembership && claims) {
+          publishSyncEvent(env.SYNC_QUEUE, ctx, 'organization.created', {
+            id: orgResult.id,
+            name: orgResult.name,
+          });
+          
+          publishSyncEvent(env.SYNC_QUEUE, ctx, 'membership.created', {
+            user_id: user.id,
+            organization_id: activeMembership.org_id,
+            roles: claims.roles.length > 0 ? claims.roles : ['member'],
+            status: 'active',
+          });
+        }
+        
+        if (subscriptions.length > 0) {
+          const sub = subscriptions[0];
+          publishSyncEvent(env.SYNC_QUEUE, ctx, 'subscription.created', {
+            id: sub.id,
+            user_id: user.id,
+            organization_id: activeMembership?.org_id ?? null,
+            plan_id: sub.plan_id,
+            plan_code: sub.plan_code,
+            plan_type: sub.plan_type,
+            plan_amount: sub.plan_amount,
+            billing_cycle: sub.billing_cycle,
+            features: sub.features,
+            status: sub.status,
+            subscription_start_date: sub.subscription_start_date,
+            subscription_end_date: sub.subscription_end_date,
+            is_organization_subscription: false,
+            product_id: sub.product_id,
+            updated_at: sub.updated_at,
+          });
+        }
+        
+        console.log(`[SSO] Batch re-sync completed for user ${user.id}`);
+      } catch (err) {
+        console.error('[SSO] Batch sync failed:', err);
+      }
+    })()
+  );
+
   return {
     access_token: accessToken,
     refresh_token: refreshToken,
@@ -142,37 +237,4 @@ export async function performLogin(
   };
 }
 
-export async function login(
-  req: Request,
-  env: Env,
-  ctx: ExecutionContext,
-): Promise<Response> {
-  let body: LoginBody;
-  try {
-    body = await req.json() as LoginBody;
-  } catch {
-    return error("Invalid JSON body");
-  }
 
-  const ip = req.headers.get("CF-Connecting-IP");
-  const ua = req.headers.get("User-Agent");
-
-  const result = await performLogin(env, ctx, body, ip, ua);
-
-  if (result.error) {
-    return error(result.error, result.status);
-  }
-
-  const response = json({
-    access_token: result.access_token,
-    user: result.user,
-    active_org_id: result.active_org_id,
-    organizations: result.organizations,
-  });
-
-  if (result.access_token && result.refresh_token) {
-    setAuthCookies(response, result.access_token, result.refresh_token, env);
-  }
-
-  return response;
-}

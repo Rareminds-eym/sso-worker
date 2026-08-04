@@ -215,7 +215,15 @@ async function resolveRevoked(
 
     let replacement: string | null = null;
     try {
-        replacement = await env.RATE_LIMIT_KV.get(graceKey(oldHash));
+        // Retry logic: KV is eventually consistent and the winning request might 
+        // still be executing its KV write. This mitigates React Strict Mode double-fetches.
+        for (let attempt = 0; attempt < 3; attempt++) {
+            replacement = await env.RATE_LIMIT_KV.get(graceKey(oldHash));
+            if (replacement) break;
+            
+            // Wait 300ms before retrying if not found yet
+            await new Promise(resolve => setTimeout(resolve, 300));
+        }
     } catch (err) {
         // Secure default: a grace read we cannot trust is treated as theft.
         console.error("[SSO] Grace KV read failed; classifying as theft:", err);
@@ -293,7 +301,7 @@ async function resolveFamilyOrgId(
     familyId: string,
 ): Promise<string | null> {
     const survivor = await database.queryOne<{ org_id: string | null }>(
-        `sessions?family_id=eq.${familyId}&revoked=eq.false&select=org_id&limit=1`,
+        `sessions?family_id=eq.${encodeURIComponent(familyId)}&revoked=eq.false&select=org_id&limit=1`,
     );
     return survivor?.org_id ?? null;
 }
@@ -303,7 +311,7 @@ async function resolveFamilyOrgId(
  * verification status and RBAC claims, mirroring the existing inline rotation
  * logic in `routes/refresh.ts` and `index.ts::refreshSession`.
  */
-async function mintAccessToken(
+export async function mintAccessToken(
     database: DbClient,
     env: Env,
     userId: string,
@@ -311,7 +319,7 @@ async function mintAccessToken(
 ): Promise<{ token: string } | "blocked" | "not_found"> {
     const [user, claims] = await Promise.all([
         database.queryOne<{ id: string; email: string; is_email_verified: boolean; is_blocked: boolean; user_metadata?: Record<string, unknown> }>(
-            `users?id=eq.${userId}&select=id,email,is_email_verified,is_blocked,user_metadata`,
+            `users?id=eq.${encodeURIComponent(userId)}&select=id,email,is_email_verified,is_blocked,user_metadata`,
         ),
         database.rpc<JwtClaims>("get_jwt_claims", {
             p_user_id: userId,
@@ -327,13 +335,15 @@ async function mintAccessToken(
         return "blocked";
     }
 
+    const products = claims?.products ?? [];
+
     const token = await signAccessToken(
         {
             sub: userId,
             email: user?.email ?? "",
             org_id: orgId ?? "",
             roles: claims?.roles ?? [],
-            products: claims?.products ?? [],
+            products: products,
             membership_status: claims?.membership_status ?? "active",
             is_email_verified: user?.is_email_verified ?? false,
             user_metadata: user?.user_metadata ?? {},

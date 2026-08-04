@@ -10,7 +10,7 @@
  * throttle behavior, token lifecycle (create → use → expire), audit logging.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../types";
 
 // ── KV mock ─────────────────────────────────────────────────────
@@ -219,8 +219,8 @@ function createMockEnv(kv?: ReturnType<typeof createMockKV>): Env {
         mailSent.push({ url: _req.url, body: await _req.json().catch(() => ({})) });
         return new Response("OK", { status: 200 });
       }),
+      sendEmail: vi.fn(async () => ({ success: true })),
     } as unknown as Fetcher,
-    EMAIL_API_KEY: "test-email-api-key",
     ALLOWED_APP_URLS: "http://localhost:3000,https://*.rareminds.in",
   } as Env;
 }
