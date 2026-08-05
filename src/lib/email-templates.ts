@@ -107,7 +107,7 @@ export function buildLearnerInvitationEmail(
         <h3 style="margin-top: 0;">Login Details:</h3>
         <p><strong>Portal:</strong> <a href="${escapeHrefAttr(loginUrl)}">${loginUrl}</a></p>
         <p><strong>Email:</strong> ${escapeHtmlAttr(email)}</p>
-        <p><strong>Temporary Password:</strong> <code style="background: #fff; padding: 4px 8px; border-radius: 3px; font-family: monospace; font-size: 14px;">${temp_password}</code></p>
+        <p><strong>Temporary Password:</strong> <code style="background: #fff; padding: 4px 8px; border-radius: 3px; font-family: monospace; font-size: 14px;">${escapeHtmlAttr(temp_password)}</code></p>
       </div>
       
       <p style="font-size: 14px; color: #666;"><strong>Important:</strong> Please change your temporary password after first login.</p>
@@ -161,7 +161,7 @@ export function buildFacultyInvitationEmail(
         <h3 style="margin-top: 0;">Login Details:</h3>
         <p><strong>Portal:</strong> <a href="${escapeHrefAttr(loginUrl)}">${loginUrl}</a></p>
         <p><strong>Email:</strong> ${escapeHtmlAttr(email)}</p>
-        <p><strong>Temporary Password:</strong> <code style="background: #fff; padding: 4px 8px; border-radius: 3px; font-family: monospace; font-size: 14px;">${temp_password}</code></p>
+        <p><strong>Temporary Password:</strong> <code style="background: #fff; padding: 4px 8px; border-radius: 3px; font-family: monospace; font-size: 14px;">${escapeHtmlAttr(temp_password)}</code></p>
       </div>
 
       <p style="font-size: 14px; color: #666;"><strong>Important:</strong> Please change your temporary password after first login.</p>
