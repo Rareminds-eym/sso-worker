@@ -1,4 +1,4 @@
-import { escapeHrefAttr } from "./escape";
+import { escapeHrefAttr, escapeHtmlAttr } from "./escape";
 
 export function generateVerificationEmailTemplate(verifyUrl: string) {
   return {
@@ -100,13 +100,13 @@ export function buildLearnerInvitationEmail(
         <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
     <div style="max-width: 600px; margin: 0 auto;">
       <h2>Welcome to SkillPassport!</h2>
-      <p>Hi ${name},</p>
+      <p>Hi ${escapeHtmlAttr(name)},</p>
       <p>Your learner account has been created by your institution.</p>
       
       <div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0;">
         <h3 style="margin-top: 0;">Login Details:</h3>
         <p><strong>Portal:</strong> <a href="${escapeHrefAttr(loginUrl)}">${loginUrl}</a></p>
-        <p><strong>Email:</strong> ${email}</p>
+        <p><strong>Email:</strong> ${escapeHtmlAttr(email)}</p>
         <p><strong>Temporary Password:</strong> <code style="background: #fff; padding: 4px 8px; border-radius: 3px; font-family: monospace; font-size: 14px;">${temp_password}</code></p>
       </div>
       
@@ -154,13 +154,13 @@ export function buildFacultyInvitationEmail(
         <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
     <div style="max-width: 600px; margin: 0 auto;">
       <h2>Welcome to SkillPassport!</h2>
-      <p>Hi ${name},</p>
+      <p>Hi ${escapeHtmlAttr(name)},</p>
       <p>Your faculty account has been created by your institution.</p>
 
       <div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0;">
         <h3 style="margin-top: 0;">Login Details:</h3>
         <p><strong>Portal:</strong> <a href="${escapeHrefAttr(loginUrl)}">${loginUrl}</a></p>
-        <p><strong>Email:</strong> ${email}</p>
+        <p><strong>Email:</strong> ${escapeHtmlAttr(email)}</p>
         <p><strong>Temporary Password:</strong> <code style="background: #fff; padding: 4px 8px; border-radius: 3px; font-family: monospace; font-size: 14px;">${temp_password}</code></p>
       </div>
 
