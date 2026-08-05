@@ -8,10 +8,16 @@ import { markBatchFailed, recordRowError, updateBatchProgress } from "../lib/bat
 import { db } from "../lib/db";
 import { getErrorMessage } from "../lib/error-utils";
 import type { Env, MessageBatch, QueueMessage } from "../types";
-import type { CsvParseMessage } from "./csv-parser-handler";
-import { handleParseCsvQueue } from "./csv-parser-handler";
-import type { LearnerBatchMessage } from "./learner-batch-handler";
-import { handleCreateLearnerBatch } from "./learner-batch-handler";
+import {
+	BULK_CREATE_MESSAGE_TYPES,
+	BULK_PARSE_MESSAGE_TYPES,
+	handleCreateFacultyBatch,
+	handleCreateLearnerBatch,
+	handleParseCsvQueue,
+	handleParseFacultyCsvQueue,
+	learnerBulkImport,
+} from "./bulk-import-adapters";
+import type { BatchCreateMessage, CsvParseMessage } from "./bulk-import-handlers";
 
 interface QueueMessageBody {
 	type?: string;
@@ -30,16 +36,45 @@ function isCsvParseMessage(
 	);
 }
 
-function isLearnerBatchMessage(
+function isBatchCreateMessage(
 	body: QueueMessageBody,
-): body is QueueMessageBody & LearnerBatchMessage {
+	itemKey: string,
+): body is QueueMessageBody & BatchCreateMessage {
 	return (
 		typeof body.batch_id === "string" &&
 		typeof body.batch_index === "number" &&
-		Array.isArray(body.learners) &&
+		Array.isArray(body[itemKey]) &&
 		typeof body.organization_id === "string"
 	);
 }
+
+interface BulkImportRegistration {
+	isMessage: (body: QueueMessageBody) => boolean;
+	handle: (env: Env, body: QueueMessageBody, message: QueueMessage<QueueMessageBody>) => Promise<void>;
+}
+
+/**
+ * Bulk import handlers, keyed by queue message type. Guards run before the
+ * handler, so the casts below are safe (the guard established the shape).
+ */
+const BULK_IMPORT_HANDLERS: Record<string, BulkImportRegistration> = {
+	[learnerBulkImport.parseMessageType]: {
+		isMessage: isCsvParseMessage,
+		handle: handleParseCsvQueue as unknown as BulkImportRegistration["handle"],
+	},
+	[learnerBulkImport.createMessageType]: {
+		isMessage: (body) => isBatchCreateMessage(body, learnerBulkImport.itemKey),
+		handle: handleCreateLearnerBatch as unknown as BulkImportRegistration["handle"],
+	},
+	"parse-faculty-csv": {
+		isMessage: isCsvParseMessage,
+		handle: handleParseFacultyCsvQueue as unknown as BulkImportRegistration["handle"],
+	},
+	"create-faculty-batch": {
+		isMessage: (body) => isBatchCreateMessage(body, "faculties"),
+		handle: handleCreateFacultyBatch as unknown as BulkImportRegistration["handle"],
+	},
+};
 
 /**
  * Route queue messages to appropriate handlers
@@ -61,33 +96,14 @@ export async function routeQueueMessage(
 	// BULK IMPORT HANDLERS (Learner Admission Queue)
 	// ═══════════════════════════════════════════════════════════
 
-	// CSV Parsing Handler
-	if (body.type === "parse-csv") {
-		if (!isCsvParseMessage(body)) {
-			console.warn("[SSO] Invalid parse-csv message body:", body);
+	if (typeof body.type === "string" && BULK_IMPORT_HANDLERS[body.type]) {
+		const registration = BULK_IMPORT_HANDLERS[body.type];
+		if (!registration.isMessage(body)) {
+			console.warn(`[SSO] Invalid ${body.type} message body:`, body);
 			message.ack();
 			return true;
 		}
-		await handleParseCsvQueue(
-			env,
-			body,
-			message as unknown as QueueMessage<CsvParseMessage>,
-		);
-		return true;
-	}
-
-	// Batch Creation Handler (20 learners at once)
-	if (body.type === "create-learner-batch") {
-		if (!isLearnerBatchMessage(body)) {
-			console.warn("[SSO] Invalid create-learner-batch message body:", body);
-			message.ack();
-			return true;
-		}
-		await handleCreateLearnerBatch(
-			env,
-			body,
-			message as unknown as QueueMessage<LearnerBatchMessage>,
-		);
+		await registration.handle(env, body, message);
 		return true;
 	}
 
@@ -235,21 +251,26 @@ export async function handleQueueBatch(
 			try {
 				const body = message.body as Record<string, unknown>;
 				const batchId = body?.batch_id as string | undefined;
+				const msgType = typeof body?.type === "string" ? body.type : undefined;
 				const errorMsg = `Processing failed after retries exhausted`;
 
-				if (body?.type === "parse-csv" && batchId) {
+				if (msgType && batchId && BULK_PARSE_MESSAGE_TYPES.includes(msgType)) {
 					await markBatchFailed(env, batchId, errorMsg);
-				} else if (body?.type === "create-learner-batch" && batchId && Array.isArray(body?.learners)) {
-					for (const learner of body.learners as Array<{ row_number?: number; email?: string }>) {
-						await recordRowError(env, batchId, learner.row_number ?? 0, learner.email ?? "", errorMsg);
+				} else if (msgType && batchId && BULK_CREATE_MESSAGE_TYPES[msgType]) {
+					const itemKey = BULK_CREATE_MESSAGE_TYPES[msgType];
+					const items = body?.[itemKey] as Array<{ row_number?: number; email?: string }> | undefined;
+					if (Array.isArray(items)) {
+						for (const item of items) {
+							await recordRowError(env, batchId, item.row_number ?? 0, item.email ?? "", errorMsg);
+						}
+						await updateBatchProgress(env, batchId, {
+							processed_rows_increment: items.length,
+							failed_count_increment: items.length,
+						});
 					}
-					await updateBatchProgress(env, batchId, {
-						processed_rows_increment: (body.learners as Array<unknown>).length,
-						failed_count_increment: (body.learners as Array<unknown>).length,
-					});
 				}
 
-				console.error(`[DLQ] batch=${batchId} type=${body?.type}: ${errorMsg}`);
+				console.error(`[DLQ] batch=${batchId} type=${msgType}: ${errorMsg}`);
 				message.ack();
 			} catch (error) {
 				console.error(`[DLQ] Failed to process DLQ message: ${getErrorMessage(error)}`);
@@ -260,7 +281,7 @@ export async function handleQueueBatch(
 	}
 
 	// Route each message to appropriate handler
-	for (const message of batch.messages) {
+	for (const message of batch.messages as readonly QueueMessage<QueueMessageBody>[]) {
 		try {
 			await routeQueueMessage(env, message, message.body);
 		} catch (err) {

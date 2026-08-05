@@ -46,7 +46,8 @@ export { AuthorizationCodeStore } from "./durable-objects/AuthorizationCodeStore
 
 import { performQueueUserSync } from "./routes/user-sync";
 import { performCreateOrganization, performUpdateOrganization, performUpdateOrganizationDetails } from "./routes/organization";
-import { performCreateLearnerUser, performQueueBulkLearnerUpload } from "./routes/learner-admission";
+import { performCreateLearnerUser } from "./routes/learner-admission";
+import { performQueueBulkFacultyUpload, performQueueBulkLearnerUpload } from "./routes/bulk-upload";
 import { performCreateMember, performCreateMembership, performUpdateMembershipStatus, performAssignMembershipRole } from "./routes/membership";
 
 // ─── WorkerEntrypoint ─────────────────────────────────────────
@@ -846,6 +847,14 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     admin_id: string;
   }): Promise<{ success: boolean; batch_id?: string; error?: string }> {
     return performQueueBulkLearnerUpload(this.env, data);
+  }
+
+  async queueBulkFacultyUpload(data: {
+    csv_data: string;
+    organization_id: string;
+    admin_id: string;
+  }): Promise<{ success: boolean; batch_id?: string; error?: string }> {
+    return performQueueBulkFacultyUpload(this.env, data);
   }
 
   async getBulkUploadStatus(batchId: string): Promise<BatchMetadata | null> {
