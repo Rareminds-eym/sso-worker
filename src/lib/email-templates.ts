@@ -1,4 +1,4 @@
-import { escapeHrefAttr } from "./escape";
+import { escapeHrefAttr, escapeHtmlAttr } from "./escape";
 
 export function generateVerificationEmailTemplate(verifyUrl: string) {
   return {
@@ -100,14 +100,14 @@ export function buildLearnerInvitationEmail(
         <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
     <div style="max-width: 600px; margin: 0 auto;">
       <h2>Welcome to SkillPassport!</h2>
-      <p>Hi ${name},</p>
+      <p>Hi ${escapeHtmlAttr(name)},</p>
       <p>Your learner account has been created by your institution.</p>
       
       <div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0;">
         <h3 style="margin-top: 0;">Login Details:</h3>
         <p><strong>Portal:</strong> <a href="${escapeHrefAttr(loginUrl)}">${loginUrl}</a></p>
-        <p><strong>Email:</strong> ${email}</p>
-        <p><strong>Temporary Password:</strong> <code style="background: #fff; padding: 4px 8px; border-radius: 3px; font-family: monospace; font-size: 14px;">${temp_password}</code></p>
+        <p><strong>Email:</strong> ${escapeHtmlAttr(email)}</p>
+        <p><strong>Temporary Password:</strong> <code style="background: #fff; padding: 4px 8px; border-radius: 3px; font-family: monospace; font-size: 14px;">${escapeHtmlAttr(temp_password)}</code></p>
       </div>
       
       <p style="font-size: 14px; color: #666;"><strong>Important:</strong> Please change your temporary password after first login.</p>
@@ -122,6 +122,60 @@ export function buildLearnerInvitationEmail(
 Hi ${name},
 
 Your learner account has been created by your institution.
+
+Login Details:
+Portal: ${loginUrl}
+Email: ${email}
+Temporary Password: ${temp_password}
+
+Important: Please change your temporary password after first login.
+
+Best regards,
+SkillPassport Team`,
+  };
+}
+
+export function buildFacultyInvitationEmail(
+  name: string,
+  email: string,
+  temp_password: string,
+  loginUrl: string
+): { subject: string; html: string; text: string } {
+  return {
+    subject: 'Welcome to SkillPassport - Your Faculty Account is Ready!',
+    html: `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Welcome to SkillPassport</title>
+        </head>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+    <div style="max-width: 600px; margin: 0 auto;">
+      <h2>Welcome to SkillPassport!</h2>
+      <p>Hi ${escapeHtmlAttr(name)},</p>
+      <p>Your faculty account has been created by your institution.</p>
+
+      <div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0;">
+        <h3 style="margin-top: 0;">Login Details:</h3>
+        <p><strong>Portal:</strong> <a href="${escapeHrefAttr(loginUrl)}">${loginUrl}</a></p>
+        <p><strong>Email:</strong> ${escapeHtmlAttr(email)}</p>
+        <p><strong>Temporary Password:</strong> <code style="background: #fff; padding: 4px 8px; border-radius: 3px; font-family: monospace; font-size: 14px;">${escapeHtmlAttr(temp_password)}</code></p>
+      </div>
+
+      <p style="font-size: 14px; color: #666;"><strong>Important:</strong> Please change your temporary password after first login.</p>
+
+      <p>Best regards,<br>SkillPassport Team</p>
+    </div>
+        </body>
+      </html>
+  `,
+    text: `Welcome to SkillPassport!
+
+Hi ${name},
+
+Your faculty account has been created by your institution.
 
 Login Details:
 Portal: ${loginUrl}
