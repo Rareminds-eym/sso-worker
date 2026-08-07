@@ -569,7 +569,15 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     await database.update("transactions", { id: `eq.${encodeURIComponent(transactionId)}` }, fields);
 
-    return { id: transactionId, ...fields };
+    const updated = await database.queryOne<Record<string, unknown>>(
+      `transactions?id=eq.${encodeURIComponent(transactionId)}`
+    );
+
+    if (!updated) {
+      throw new Error(`Transaction not found: ${transactionId}`);
+    }
+
+    return updated;
   }
 
   async getUserTransactions(userId: string, subscriptionId?: string): Promise<Record<string, unknown>[]> {
