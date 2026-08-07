@@ -1,16 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { audit } from "./lib/audit";
-import { INVITE_TTL_MS, SESSION_TTL_MS } from "./lib/constants";
-import { addMonths, parseDurationMonths } from "./lib/date";
-import { db } from "./lib/db";
-import { inviteEmail, sendEmail } from "./lib/email";
-import { checkEmailThrottle } from "./lib/email-throttle";
-import { generateRefreshToken, hashPassword, hashToken } from "./lib/hash";
-import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "./lib/jwt";
 import { signLteAccessToken } from "./lib/app-token";
-import { endpointRateLimit } from "./lib/rate-limit";
-import { mintAccessToken, rotateRefreshToken } from "./lib/session-rotation";
-import { publishSyncEvent } from "./lib/sync-queue";
+import { audit } from "./lib/audit";
 import {
   assertAllowedRedirectUri,
   assertTargetApp,
@@ -18,12 +8,27 @@ import {
   getAuthorizationCodeStub,
   hashAuthorizationValue,
 } from "./lib/authorization-code";
-import { requireLteEntitlement } from "./lib/lte-entitlement";
-import { getLteSubscriptionSnapshot } from "./lib/subscription-snapshot";
-import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "./lib/validate";
-import { fetchWithTimeout } from "./lib/fetch-timeout";
 import { getBatch, type BatchMetadata } from "./lib/batch-kv";
+import { INVITE_TTL_MS, SESSION_TTL_MS } from "./lib/constants";
+import { addMonths, parseDurationMonths } from "./lib/date";
+import { db } from "./lib/db";
+import { inviteEmail, sendEmail } from "./lib/email";
+import { checkEmailThrottle } from "./lib/email-throttle";
+import { fetchWithTimeout } from "./lib/fetch-timeout";
+import { generateRefreshToken, hashPassword, hashToken } from "./lib/hash";
+import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "./lib/jwt";
+import { requireLteEntitlement } from "./lib/lte-entitlement";
+import { endpointRateLimit } from "./lib/rate-limit";
+import { mintAccessToken, rotateRefreshToken } from "./lib/session-rotation";
+import { getLteSubscriptionSnapshot } from "./lib/subscription-snapshot";
+import { publishSyncEvent } from "./lib/sync-queue";
+import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "./lib/validate";
 import { handleQueueBatch } from "./queue/queue-router";
+import { performQueueBulkFacultyUpload, performQueueBulkLearnerUpload } from "./routes/bulk-upload";
+import { performCreateLearnerUser } from "./routes/learner-admission";
+import { performAssignMembershipRole, performCreateMember, performCreateMembership, performUpdateMembershipStatus } from "./routes/membership";
+import { performCreateOrganization, performUpdateOrganization, performUpdateOrganizationDetails } from "./routes/organization";
+import { performQueueUserSync } from "./routes/user-sync";
 import type {
   AccessTokenPayload,
   Env,
@@ -41,14 +46,8 @@ import type {
   GenerateAuthorizationCodeRequest,
   GenerateAuthorizationCodeResponse,
 } from "./types/sso-code";
-
 export { AuthorizationCodeStore } from "./durable-objects/AuthorizationCodeStore";
 
-import { performQueueUserSync } from "./routes/user-sync";
-import { performCreateOrganization, performUpdateOrganization, performUpdateOrganizationDetails } from "./routes/organization";
-import { performCreateLearnerUser } from "./routes/learner-admission";
-import { performQueueBulkFacultyUpload, performQueueBulkLearnerUpload } from "./routes/bulk-upload";
-import { performCreateMember, performCreateMembership, performUpdateMembershipStatus, performAssignMembershipRole } from "./routes/membership";
 
 // ─── WorkerEntrypoint ─────────────────────────────────────────
 export class SsoWorker extends WorkerEntrypoint<Env> {
@@ -550,6 +549,35 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     });
 
     return transaction as Record<string, unknown>;
+  }
+
+  async updateTransaction(transactionId: string, data: {
+    receipt_url?: string;
+    status?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<Record<string, unknown>> {
+    if (!transactionId) throw new Error("transactionId is required");
+
+    const database = db(this.env);
+
+    const fields: Record<string, unknown> = {};
+    if (data.receipt_url !== undefined) fields.receipt_url = data.receipt_url;
+    if (data.status !== undefined) fields.status = data.status;
+    if (data.metadata !== undefined) fields.metadata = data.metadata;
+
+    if (Object.keys(fields).length === 0) throw new Error("No fields to update");
+
+    await database.update("transactions", { id: `eq.${encodeURIComponent(transactionId)}` }, fields);
+
+    const updated = await database.queryOne<Record<string, unknown>>(
+      `transactions?id=eq.${encodeURIComponent(transactionId)}`
+    );
+
+    if (!updated) {
+      throw new Error(`Transaction not found: ${transactionId}`);
+    }
+
+    return updated;
   }
 
   async getUserTransactions(userId: string, subscriptionId?: string): Promise<Record<string, unknown>[]> {
