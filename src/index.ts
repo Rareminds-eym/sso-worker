@@ -552,6 +552,27 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return transaction as Record<string, unknown>;
   }
 
+  async updateTransaction(transactionId: string, data: {
+    receipt_url?: string;
+    status?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<Record<string, unknown>> {
+    if (!transactionId) throw new Error("transactionId is required");
+
+    const database = db(this.env);
+
+    const fields: Record<string, unknown> = {};
+    if (data.receipt_url !== undefined) fields.receipt_url = data.receipt_url;
+    if (data.status !== undefined) fields.status = data.status;
+    if (data.metadata !== undefined) fields.metadata = data.metadata;
+
+    if (Object.keys(fields).length === 0) throw new Error("No fields to update");
+
+    await database.update("transactions", { id: `eq.${transactionId}` }, fields);
+
+    return { id: transactionId, ...fields };
+  }
+
   async getUserTransactions(userId: string, subscriptionId?: string): Promise<Record<string, unknown>[]> {
     if (!userId) throw new Error("user_id is required");
 
