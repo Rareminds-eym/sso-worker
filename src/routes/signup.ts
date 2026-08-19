@@ -167,12 +167,16 @@ export async function performSignup(
       family_created_at: new Date().toISOString(),
     });
 
+    const effectiveRoles = (claims?.roles && claims.roles.length > 0)
+      ? claims.roles
+      : (role ? [role] : ["learner"]);
+
     const accessToken = await signAccessToken(
       {
         sub: result.user_id,
         email,
         org_id: result.org_id,
-        roles: claims?.roles ?? [],
+        roles: effectiveRoles,
         products: claims?.products ?? [],
         membership_status: claims?.membership_status ?? "active",
         is_email_verified: false,

@@ -1,5 +1,5 @@
 import { audit } from "../lib/audit";
-import { SESSION_TTL_MS } from "../lib/constants";
+import { SESSION_TTL_MS, PLATFORM_ORG_ID } from "../lib/constants";
 import { db } from "../lib/db";
 import { sendEmail } from "../lib/email";
 import { checkEmailThrottle } from "../lib/email-throttle";
@@ -128,12 +128,16 @@ async function signupMemberImpl(
       family_created_at: new Date().toISOString(),
     });
 
+    const effectiveRoles = (claims?.roles && claims.roles.length > 0)
+      ? claims.roles
+      : (params.role ? [params.role] : ["member"]);
+
     const accessToken = await signAccessToken(
       {
         sub: result.user_id,
         email,
-        org_id: result.org_id ?? "",
-        roles: claims?.roles ?? [],
+        org_id: (result.org_id && result.org_id.length > 0) ? result.org_id : PLATFORM_ORG_ID,
+        roles: effectiveRoles,
         products: claims?.products ?? [],
         membership_status: claims?.membership_status ?? "active",
         is_email_verified: false,

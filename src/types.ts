@@ -1,5 +1,5 @@
-import type { SyncEvent } from './lib/sync-queue';
 import type { AuthorizationCodeStore } from './durable-objects/AuthorizationCodeStore';
+import type { SyncEvent } from './lib/sync-queue';
 
 // ─── EMAIL_SERVICE Types (from email-worker RPC) ───────────────
 export interface EmailServiceSendRequest {
@@ -76,6 +76,8 @@ export interface Env {
   JWT_PRIVATE_KEY: string;
   JWT_PUBLIC_KEY: string;
   JWT_KID: string;
+  /** Positive finite JWKS validity metadata published to trusted verifiers. */
+  JWKS_FRESHNESS_SECONDS: string;
   /** Previous public key PEM for key rotation (optional). Set during rotation window. */
   JWT_PUBLIC_KEY_PREVIOUS?: string;
   /** Previous key ID (optional). Set during rotation window. */

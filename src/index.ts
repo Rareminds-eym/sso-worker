@@ -1,16 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { audit } from "./lib/audit";
-import { INVITE_TTL_MS, SESSION_TTL_MS } from "./lib/constants";
-import { addMonths, parseDurationMonths } from "./lib/date";
-import { db } from "./lib/db";
-import { inviteEmail, sendEmail } from "./lib/email";
-import { checkEmailThrottle } from "./lib/email-throttle";
-import { generateRefreshToken, hashPassword, hashToken } from "./lib/hash";
-import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "./lib/jwt";
 import { signLteAccessToken } from "./lib/app-token";
-import { endpointRateLimit } from "./lib/rate-limit";
-import { mintAccessToken, rotateRefreshToken } from "./lib/session-rotation";
-import { publishSyncEvent } from "./lib/sync-queue";
+import { audit } from "./lib/audit";
 import {
   assertAllowedRedirectUri,
   assertTargetApp,
@@ -18,11 +8,21 @@ import {
   getAuthorizationCodeStub,
   hashAuthorizationValue,
 } from "./lib/authorization-code";
-import { requireLteEntitlement } from "./lib/lte-entitlement";
-import { getLteSubscriptionSnapshot } from "./lib/subscription-snapshot";
-import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "./lib/validate";
-import { fetchWithTimeout } from "./lib/fetch-timeout";
 import { getBatch, type BatchMetadata } from "./lib/batch-kv";
+import { INVITE_TTL_MS, SESSION_TTL_MS } from "./lib/constants";
+import { addMonths, parseDurationMonths } from "./lib/date";
+import { db } from "./lib/db";
+import { inviteEmail, sendEmail } from "./lib/email";
+import { checkEmailThrottle } from "./lib/email-throttle";
+import { fetchWithTimeout } from "./lib/fetch-timeout";
+import { generateRefreshToken, hashPassword, hashToken } from "./lib/hash";
+import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "./lib/jwt";
+import { requireLteEntitlement } from "./lib/lte-entitlement";
+import { endpointRateLimit } from "./lib/rate-limit";
+import { mintAccessToken, rotateRefreshToken } from "./lib/session-rotation";
+import { getLteSubscriptionSnapshot } from "./lib/subscription-snapshot";
+import { publishSyncEvent } from "./lib/sync-queue";
+import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "./lib/validate";
 import { handleQueueBatch } from "./queue/queue-router";
 import type {
   AccessTokenPayload,
@@ -44,10 +44,25 @@ import type {
 
 export { AuthorizationCodeStore } from "./durable-objects/AuthorizationCodeStore";
 
-import { performQueueUserSync } from "./routes/user-sync";
-import { performCreateOrganization, performUpdateOrganization, performUpdateOrganizationDetails } from "./routes/organization";
 import { performCreateLearnerUser, performQueueBulkLearnerUpload } from "./routes/learner-admission";
-import { performCreateMember, performCreateMembership, performUpdateMembershipStatus, performAssignMembershipRole } from "./routes/membership";
+import { performAssignMembershipRole, performCreateMember, performCreateMembership, performUpdateMembershipStatus } from "./routes/membership";
+import { performCreateOrganization, performUpdateOrganization, performUpdateOrganizationDetails } from "./routes/organization";
+import { performQueueUserSync } from "./routes/user-sync";
+import { createSsoAuthority } from "./rpc/authority";
+import type {
+  AllLogoutRpcInput,
+  AllLogoutRpcOutcome,
+  Correlated,
+  CurrentLogoutRpcInput,
+  CurrentLogoutRpcOutcome,
+  LoginRpcInput,
+  SessionIssueRpcOutcome,
+  SessionRotateRpcOutcome,
+  SignupMemberRpcInput,
+  SignupRpcInput,
+  SsoJwksRpcOutcome,
+  SsoServiceBinding
+} from "./rpc/contracts";
 
 // ─── WorkerEntrypoint ─────────────────────────────────────────
 export class SsoWorker extends WorkerEntrypoint<Env> {
@@ -247,7 +262,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     const database = db(this.env);
 
-    const freemiumPlan = await database.queryOne(
+    const freemiumPlan = await database.queryOne<{ id: string; base_features?: string[] }>(
       "plans?plan_code=eq.freemium&is_active=eq.true",
     );
     if (!freemiumPlan) {
@@ -327,7 +342,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     if (!userId) throw new Error("User ID required");
 
     const database = db(this.env);
-    const subscription = await database.queryOne(
+    const subscription = await database.queryOne<{ plan_id: string }>(
       `subscriptions?user_id=eq.${encodeURIComponent(userId)}&status=in.(active,pending)&order=created_at.desc`,
     );
 
@@ -573,7 +588,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     if (!userId) throw new Error("user_id is required");
 
     const database = db(this.env);
-    const subscription = await database.queryOne(
+    const subscription = await database.queryOne<{ plan_id: string }>(
       `subscriptions?user_id=eq.${encodeURIComponent(userId)}&status=in.(active,pending)&order=created_at.desc`,
     );
 
@@ -652,7 +667,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     const database = db(this.env);
-    const addon = await database.queryOne(
+    const addon = await database.queryOne<{ product_id?: string | null }>(
       `addon_catalog?feature_key=eq.${encodeURIComponent(data.feature_key)}`,
     );
 
@@ -699,7 +714,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     const database = db(this.env);
-    const bundle = await database.queryOne(
+    const bundle = await database.queryOne<{ product_id?: string | null; discount_percentage?: number }>(
       `bundles?id=eq.${encodeURIComponent(data.bundle_id)}`,
     );
 
@@ -877,11 +892,91 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return { keys };
   }
 
+  /** Private clean-contract JWKS publication with finite authoritative metadata. */
+  async getJwks(input: Correlated): Promise<SsoJwksRpcOutcome> {
+    return createSsoAuthority(this.env, this.ctx).getJwks(input);
+  }
+
+  /** Validate credentials and issue a new authoritative session. */
+  async login(input: LoginRpcInput): Promise<SessionIssueRpcOutcome> {
+    return createSsoAuthority(this.env, this.ctx).login(input);
+  }
+
+  /** Create an identity and issue its initial authoritative session. */
+  async signup(input: SignupRpcInput): Promise<SessionIssueRpcOutcome> {
+    return createSsoAuthority(this.env, this.ctx).signup(input);
+  }
+
+  /** Create a member identity and issue its initial authoritative session. */
+  async signupMember(input: SignupMemberRpcInput): Promise<SessionIssueRpcOutcome> {
+    return createSsoAuthority(this.env, this.ctx).signupMember(input);
+  }
+
+  /** Atomically rotate the current refresh session and classify overlap or replay. */
+  async refreshCurrentSession(input: import("./rpc/contracts").RefreshCurrentRpcInput): Promise<SessionRotateRpcOutcome> {
+    return createSsoAuthority(this.env, this.ctx).refreshCurrentSession(input);
+  }
+
+  /** Revoke only the session row represented by the supplied opaque credential. */
+  async logoutCurrentSession(input: CurrentLogoutRpcInput): Promise<CurrentLogoutRpcOutcome> {
+    return createSsoAuthority(this.env, this.ctx).logoutCurrentSession(input);
+  }
+
+  /** Derive identity from the active session and revoke all of its active sessions. */
+  async logoutAllSessions(input: AllLogoutRpcInput): Promise<AllLogoutRpcOutcome> {
+    return createSsoAuthority(this.env, this.ctx).logoutAllSessions(input);
+  }
+
+  /** Replace the current session after an authoritative organization change. */
+  async changeOrganization(input: Parameters<SsoServiceBinding["changeOrganization"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["changeOrganization"]>>> {
+    return createSsoAuthority(this.env, this.ctx).changeOrganization(input);
+  }
+
+  async listOrganizations(input: Parameters<SsoServiceBinding["listOrganizations"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["listOrganizations"]>>> {
+    return createSsoAuthority(this.env, this.ctx).listOrganizations(input);
+  }
+
+  async createInvite(input: Parameters<SsoServiceBinding["createInvite"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["createInvite"]>>> {
+    return createSsoAuthority(this.env, this.ctx).createInvite(input);
+  }
+
+  async acceptInvite(input: Parameters<SsoServiceBinding["acceptInvite"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["acceptInvite"]>>> {
+    return createSsoAuthority(this.env, this.ctx).acceptInvite(input);
+  }
+
+  async cancelInvite(input: Parameters<SsoServiceBinding["cancelInvite"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["cancelInvite"]>>> {
+    return createSsoAuthority(this.env, this.ctx).cancelInvite(input);
+  }
+
+  async resendInvite(input: Parameters<SsoServiceBinding["resendInvite"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["resendInvite"]>>> {
+    return createSsoAuthority(this.env, this.ctx).resendInvite(input);
+  }
+
+  async requestVerification(input: Parameters<SsoServiceBinding["requestVerification"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["requestVerification"]>>> {
+    return createSsoAuthority(this.env, this.ctx).requestVerification(input);
+  }
+
+  async verifyEmail(input: Parameters<SsoServiceBinding["verifyEmail"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["verifyEmail"]>>> {
+    return createSsoAuthority(this.env, this.ctx).verifyEmail(input);
+  }
+
+  async forgotPassword(input: Parameters<SsoServiceBinding["forgotPassword"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["forgotPassword"]>>> {
+    return createSsoAuthority(this.env, this.ctx).forgotPassword(input);
+  }
+
+  async resetPassword(input: Parameters<SsoServiceBinding["resetPassword"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["resetPassword"]>>> {
+    return createSsoAuthority(this.env, this.ctx).resetPassword(input);
+  }
+
+  async getIdentity(input: Parameters<SsoServiceBinding["getIdentity"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["getIdentity"]>>> {
+    return createSsoAuthority(this.env, this.ctx).getIdentity(input);
+  }
+
   /**
    * Signup RPC - creates user, org, membership
    * Called by skillpassport via RPC
    */
-  async signup(params: {
+  async legacySignup(params: {
     email: string;
     password: string;
     org_name: string;
@@ -927,7 +1022,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
    * Request verification email RPC
    * Called by skillpassport via RPC
    */
-  async requestVerification(params: {
+  async legacyRequestVerification(params: {
     user_id: string;
     email: string;
     redirect_url?: string;
@@ -951,7 +1046,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
    * Verify email RPC
    * Called by skillpassport via RPC
    */
-  async verifyEmail(params: {
+  async legacyVerifyEmail(params: {
     token: string;
     ip?: string;
     ua?: string;
@@ -1073,7 +1168,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
    * Signup member RPC
    * Called by skillpassport via RPC
    */
-  async signupMember(params: SignupMemberBody & { ip?: string; ua?: string }): Promise<any> {
+  async legacySignupMember(params: SignupMemberBody & { ip?: string; ua?: string }): Promise<any> {
     const { performSignupMember } = await import('./routes/signup-member');
     const result = await performSignupMember(this.env, this.ctx, params);
 
@@ -1090,7 +1185,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
    * @param params Object containing email, password, ip, ua
    * @returns Successful login payload or throws error
    */
-  async login(params: { email?: string; password?: string; ip?: string; ua?: string }): Promise<any> {
+  async legacyLogin(params: { email?: string; password?: string; ip?: string; ua?: string }): Promise<any> {
     const { performLogin } = await import("./routes/login");
     const result = await performLogin(
       this.env,
@@ -1207,8 +1302,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       return { valid: false, roles: [] };
     }
 
-    const user = await database.queryOne<{ is_blocked: boolean }>(
-      `users?id=eq.${encodeURIComponent(session.user_id)}&select=is_blocked`
+    const user = await database.queryOne<{ is_blocked: boolean; user_metadata?: Record<string, unknown> }>(
+      `users?id=eq.${encodeURIComponent(session.user_id)}&select=is_blocked,user_metadata`
     );
 
     if (!user || user.is_blocked) {
@@ -1220,7 +1315,12 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       p_org_id: session.org_id,
     });
 
-    return { valid: true, roles: claims?.roles ?? [] };
+    const userRole = (user.user_metadata?.role as string | undefined) ?? (user.user_metadata?.roles as string[] | undefined)?.[0];
+    const effectiveRoles = (claims?.roles && claims.roles.length > 0)
+      ? claims.roles
+      : (userRole ? [userRole] : ["learner"]);
+
+    return { valid: true, roles: effectiveRoles };
   }
 
   async authenticateSharedSession(
@@ -1297,8 +1397,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         {
           sub: session.user_id,
           email: entitlement.user.email,
-          // Fallback to empty string for org-less personal accounts
-          org_id: session.org_id ?? "",
+          org_id: (session.org_id && session.org_id.length > 0) ? session.org_id : PLATFORM_ORG_ID,
           roles: claims.roles,
           products: lteProducts,
           membership_status: claims.membership_status,
@@ -1686,7 +1785,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     };
   }
 
-  async forgotPassword(params: { email?: string; redirect_url?: string }, ip?: string, ua?: string): Promise<{ success: boolean; message?: string; error?: string }> {
+  async legacyForgotPassword(params: { email?: string; redirect_url?: string }, ip?: string, ua?: string): Promise<{ success: boolean; message?: string; error?: string }> {
     const { performForgotPassword } = await import("./routes/password-reset");
     const result = await performForgotPassword(
       this.env,
@@ -1706,7 +1805,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return { success: true, message };
   }
 
-  async resetPassword(params: { token?: string; password?: string }, ip?: string, ua?: string): Promise<{ success: false; error: string } | { success: true; reset: boolean }> {
+  async legacyResetPassword(params: { token?: string; password?: string }, ip?: string, ua?: string): Promise<{ success: false; error: string } | { success: true; reset: boolean }> {
     const { performResetPassword } = await import("./routes/password-reset");
     const result = await performResetPassword(
       this.env,
@@ -1785,7 +1884,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
    * Create an invite for a user to join an organization.
    * Sends an invite email with a token that expires in 7 days.
    */
-  async createInvite(params: {
+  async legacyCreateInvite(params: {
     email: string;
     org_id: string;
     role: string[];
@@ -1863,7 +1962,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   /**
    * Accept an invite by token. Creates user if needed and adds them to the organization.
    */
-  async acceptInvite(params: {
+  async legacyAcceptInvite(params: {
     token: string;
     password?: string;
     ip?: string;
@@ -1928,7 +2027,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         );
       }
     } else {
-      const newMembership = await database.mutate("memberships", {
+      const newMembership = await database.mutate<{ id: string }>("memberships", {
         user_id: user.id,
         org_id: invite.org_id,
         status: "active",
@@ -2044,7 +2143,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   /**
    * Cancel a pending invite. Only the inviter (or org owner/admin) can cancel.
    */
-  async cancelInvite(params: {
+  async legacyCancelInvite(params: {
     invite_id: string;
     caller: AccessTokenPayload;
     ip?: string;
@@ -2092,7 +2191,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   /**
    * Resend an invite by generating a new token and extending the expiry.
    */
-  async resendInvite(params: {
+  async legacyResendInvite(params: {
     invite_id: string;
     redirect_url?: string;
     caller: AccessTokenPayload;
