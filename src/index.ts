@@ -2262,6 +2262,111 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       expires_at: newExpiry,
     };
   }
+
+  // ─── LTE Product Provisioning ──────────────────────────────────────────────
+  /**
+   * Idempotently provisions LTE product access for a user's org and membership.
+   * Called by the LTE exchange endpoint on first SSO code exchange so that
+   * get_jwt_claims() returns products: ["lte"] for all rotated tokens.
+   *
+   * Does NOT depend on pre-seeded products table data — it upserts the product
+   * row itself if missing, so it works in a blank local dev DB.
+   */
+  async provisionLteAccess(params: {
+    userId: string;
+    orgId: string;
+  }): Promise<{ success: boolean; alreadyProvisioned?: boolean }> {
+    const base = `${this.env.SUPABASE_URL}/rest/v1`;
+    const headers = {
+      "Content-Type": "application/json",
+      apikey: this.env.SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${this.env.SUPABASE_SERVICE_ROLE_KEY}`,
+      Prefer: "resolution=merge-duplicates,return=representation",
+    };
+    const database = db(this.env);
+
+    try {
+      // 1. Upsert the lte product (safe no-op if already exists).
+      //    We upsert instead of query so a blank dev DB is never a blocker.
+      //    PostgREST requires ?on_conflict=<col> in the URL for merge-duplicates to work.
+      const productRes = await fetch(`${base}/products?on_conflict=code`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ code: "lte", name: "LTE" }),
+      });
+      if (!productRes.ok) {
+        const text = await productRes.text();
+        console.error("[provisionLteAccess] Failed to upsert lte product", text);
+        return { success: false };
+      }
+      const productRows = await productRes.json() as { id: string }[];
+      const productId = productRows[0]?.id;
+      if (!productId) {
+        console.error("[provisionLteAccess] No product id returned after upsert");
+        return { success: false };
+      }
+
+      // 2. Resolve the membership id for this user + org pair
+      const membership = await database.queryOne<{ id: string }>(
+        `memberships?user_id=eq.${encodeURIComponent(params.userId)}&org_id=eq.${encodeURIComponent(params.orgId)}&select=id`,
+      );
+      if (!membership) {
+        console.error("[provisionLteAccess] No membership found for user/org pair", params);
+        return { success: false };
+      }
+      const membershipId = membership.id;
+
+      // 3. Check & provision organization_products (skip POST if already present and active)
+      const existingOrgProd = await database.queryOne<{ id: string }>(
+        `organization_products?org_id=eq.${encodeURIComponent(params.orgId)}&product_id=eq.${encodeURIComponent(productId)}&active=eq.true&select=id`,
+      );
+      if (!existingOrgProd) {
+        const opRes = await fetch(`${base}/organization_products?on_conflict=org_id,product_id`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ org_id: params.orgId, product_id: productId, active: true }),
+        });
+        if (!opRes.ok) {
+          const text = await opRes.text();
+          console.error("[provisionLteAccess] organization_products upsert failed", text);
+          return { success: false };
+        }
+      }
+
+      // 4. Check & provision membership_products (skip POST if already present)
+      const existingMemProd = await database.queryOne<{ id: string }>(
+        `membership_products?membership_id=eq.${encodeURIComponent(membershipId)}&product_id=eq.${encodeURIComponent(productId)}&select=id`,
+      );
+      if (!existingMemProd) {
+        const mpRes = await fetch(`${base}/membership_products?on_conflict=membership_id,product_id`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ membership_id: membershipId, product_id: productId }),
+        });
+        if (!mpRes.ok) {
+          const text = await mpRes.text();
+          console.error("[provisionLteAccess] membership_products upsert failed", text);
+          return { success: false };
+        }
+      }
+
+      const alreadyProvisioned = Boolean(existingOrgProd && existingMemProd);
+
+      if (!alreadyProvisioned) {
+        console.log("[provisionLteAccess] LTE product provisioned", {
+          userId: params.userId,
+          orgId: params.orgId,
+          membershipId,
+          productId,
+        });
+      }
+
+      return { success: true, alreadyProvisioned };
+    } catch (err) {
+      console.error("[provisionLteAccess] Unexpected error", err);
+      return { success: false };
+    }
+  }
 }
 
 export default SsoWorker;
