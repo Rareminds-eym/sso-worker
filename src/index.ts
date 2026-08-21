@@ -1057,7 +1057,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     let payload: AccessTokenPayload;
     try {
       payload = await verifyAccessToken(params.access_token, this.env);
-    } catch {
+    } catch (err) {
+      console.error("[SSO] Access token verification failed:", err);
       throw new Error("Invalid or expired access token");
     }
 
