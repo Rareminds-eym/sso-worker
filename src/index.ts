@@ -1040,22 +1040,33 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
   /**
    * Change password RPC
-   * Called by skillpassport via RPC
+   * Called by skillpassport and lte via RPC
    */
   async changePassword(params: {
-    user_id: string;
+    access_token: string;
     current_password: string;
     new_password: string;
     org_id?: string;
     ip?: string;
     ua?: string;
   }): Promise<{ success: true; message?: string }> {
+    if (!params.access_token) {
+      throw new Error("access_token is required");
+    }
+
+    let payload: AccessTokenPayload;
+    try {
+      payload = await verifyAccessToken(params.access_token, this.env);
+    } catch {
+      throw new Error("Invalid or expired access token");
+    }
+
     const { performChangePassword } = await import('./routes/change-password');
     const result = await performChangePassword(
       this.env,
       this.ctx,
       {
-        user_id: params.user_id,
+        user_id: payload.sub,
         current_password: params.current_password,
         new_password: params.new_password,
         org_id: params.org_id,
