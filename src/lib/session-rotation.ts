@@ -2,9 +2,7 @@ import type { Env, JwtClaims } from "../types";
 import { audit } from "./audit";
 import {
     ABSOLUTE_SESSION_LIFETIME_MS,
-    OVERLAP_GRACE_PERIOD_MS,
     PLATFORM_ORG_ID,
-    REFRESH_WINDOW_SLOP_MS,
     REUSE_GRACE_INTERVAL_SEC,
     SESSION_TTL_MS,
 } from "./constants";
