@@ -1,6 +1,7 @@
 /**
- * CSV Parser for Bulk Learner Import
- * Simple CSV parser without external dependencies
+ * Generic CSV Parser
+ * Simple CSV parser without external dependencies.
+ * Entity-specific row validation/mapping lives in the bulk-import adapters.
  */
 
 export interface CSVRow {
@@ -100,54 +101,4 @@ export function parseCSV(csvText: string): ParsedCSV {
   }
   
   return { headers, rows, errors };
-}
-
-/**
- * Validate required fields in CSV row
- */
-export function validateCSVRow(row: CSVRow, rowNumber: number): { valid: boolean; error?: string } {
-  // Required fields
-  if (!row.email || !row.email.includes('@')) {
-    return { valid: false, error: `Row ${rowNumber}: Invalid or missing email` };
-  }
-  
-  if (!row.name || row.name.trim().length < 2) {
-    return { valid: false, error: `Row ${rowNumber}: Invalid or missing name` };
-  }
-  
-  // Optional: Validate email format (reject consecutive dots, require valid TLD)
-  const emailRegex = /^(?!.*\.\.)[^\s@]+@[^\s@]+\.[a-zA-Z]{2,}$/;
-  if (!emailRegex.test(row.email)) {
-    return { valid: false, error: `Row ${rowNumber}: Invalid email format` };
-  }
-  
-  return { valid: true };
-}
-
-/**
- * Map CSV row to learner data structure
- */
-export function mapCSVRowToLearnerData(row: CSVRow): {
-  email: string;
-  name: string;
-  contact_number?: string;
-  enrollment_number?: string;
-  program_id?: string;
-  metadata?: Record<string, unknown>;
-} {
-  return {
-    email: row.email?.trim() || '',
-    name: row.name?.trim() || '',
-    contact_number: row.contact_number?.trim() || row.phone?.trim() || undefined,
-    enrollment_number: row.enrollment_number?.trim() || row.roll_number?.trim() || undefined,
-    program_id: row.program_id?.trim() || undefined,
-    metadata: {
-      // Store any additional columns in metadata
-      ...Object.fromEntries(
-        Object.entries(row).filter(([key]) => 
-          !['email', 'name', 'contact_number', 'phone', 'enrollment_number', 'roll_number', 'program_id'].includes(key)
-        )
-      )
-    }
-  };
 }

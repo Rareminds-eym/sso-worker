@@ -21,6 +21,11 @@ import { mintAccessToken, rotateRefreshToken } from "./lib/session-rotation";
 import { getLteSubscriptionSnapshot } from "./lib/subscription-snapshot";
 import { publishSyncEvent } from "./lib/sync-queue";
 import { handleQueueBatch } from "./queue/queue-router";
+import { performQueueBulkFacultyUpload, performQueueBulkLearnerUpload } from "./routes/bulk-upload";
+import { performCreateLearnerUser } from "./routes/learner-admission";
+import { performAssignMembershipRole, performCreateMember, performCreateMembership, performUpdateMembershipStatus } from "./routes/membership";
+import { performCreateOrganization, performUpdateOrganization, performUpdateOrganizationDetails } from "./routes/organization";
+import { performQueueUserSync } from "./routes/user-sync";
 import type {
   AccessTokenPayload,
   Env,
@@ -36,13 +41,8 @@ import type {
   GenerateAuthorizationCodeRequest,
   GenerateAuthorizationCodeResponse,
 } from "./types/sso-code";
-
 export { AuthorizationCodeStore } from "./durable-objects/AuthorizationCodeStore";
 
-import { performCreateLearnerUser, performQueueBulkLearnerUpload } from "./routes/learner-admission";
-import { performAssignMembershipRole, performCreateMember, performCreateMembership, performUpdateMembershipStatus } from "./routes/membership";
-import { performCreateOrganization, performUpdateOrganization, performUpdateOrganizationDetails } from "./routes/organization";
-import { performQueueUserSync } from "./routes/user-sync";
 import { createSsoAuthority } from "./rpc/authority";
 import type {
   AllLogoutRpcInput,
@@ -561,6 +561,35 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return transaction as Record<string, unknown>;
   }
 
+  async updateTransaction(transactionId: string, data: {
+    receipt_url?: string;
+    status?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<Record<string, unknown>> {
+    if (!transactionId) throw new Error("transactionId is required");
+
+    const database = db(this.env);
+
+    const fields: Record<string, unknown> = {};
+    if (data.receipt_url !== undefined) fields.receipt_url = data.receipt_url;
+    if (data.status !== undefined) fields.status = data.status;
+    if (data.metadata !== undefined) fields.metadata = data.metadata;
+
+    if (Object.keys(fields).length === 0) throw new Error("No fields to update");
+
+    await database.update("transactions", { id: `eq.${encodeURIComponent(transactionId)}` }, fields);
+
+    const updated = await database.queryOne<Record<string, unknown>>(
+      `transactions?id=eq.${encodeURIComponent(transactionId)}`
+    );
+
+    if (!updated) {
+      throw new Error(`Transaction not found: ${transactionId}`);
+    }
+
+    return updated;
+  }
+
   async getUserTransactions(userId: string, subscriptionId?: string): Promise<Record<string, unknown>[]> {
     if (!userId) throw new Error("user_id is required");
 
@@ -858,6 +887,14 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return performQueueBulkLearnerUpload(this.env, data);
   }
 
+  async queueBulkFacultyUpload(data: {
+    csv_data: string;
+    organization_id: string;
+    admin_id: string;
+  }): Promise<{ success: boolean; batch_id?: string; error?: string }> {
+    return performQueueBulkFacultyUpload(this.env, data);
+  }
+
   async getBulkUploadStatus(batchId: string): Promise<BatchMetadata | null> {
     if (!batchId) {
       throw new Error('batchId is required');
@@ -1000,22 +1037,35 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
   /**
    * Change password RPC
-   * Called by skillpassport via RPC
+   * Called by skillpassport and lte via RPC
    */
   async changePassword(params: {
-    user_id: string;
+    access_token: string;
     current_password: string;
     new_password: string;
     org_id?: string;
     ip?: string;
     ua?: string;
   }): Promise<{ success: true; message?: string }> {
+    if (!params.access_token) {
+      throw new Error("access_token is required");
+    }
+
+    let payload: AccessTokenPayload;
+    try {
+      payload = await verifyAccessToken(params.access_token, this.env);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[SSO] Access token verification failed:", msg);
+      throw new Error("Invalid or expired access token");
+    }
+
     const { performChangePassword } = await import('./routes/change-password');
     const result = await performChangePassword(
       this.env,
       this.ctx,
       {
-        user_id: params.user_id,
+        user_id: payload.sub,
         current_password: params.current_password,
         new_password: params.new_password,
         org_id: params.org_id,

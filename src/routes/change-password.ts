@@ -51,6 +51,12 @@ export async function performChangePassword(
     return { error: "Current password is incorrect", status: 401 };
   }
 
+  // Reject if new password matches the current password
+  const isSamePassword = await verifyPassword(params.new_password, users[0].password_hash);
+  if (isSamePassword) {
+    return { error: "New password must be different from current password", status: 400 };
+  }
+
   // Hash and update new password
   const newHash = await hashPassword(params.new_password);
   await database.update(
