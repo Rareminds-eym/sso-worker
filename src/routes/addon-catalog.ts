@@ -88,18 +88,18 @@ export async function performListBundles(
     query += `&target_roles=cs.{${encodeURIComponent(params.role)}}`;
   }
 
-  const bundles = await database.query(query);
+  const bundles = await database.query<Record<string, unknown>>(query);
 
   // Enrich each bundle with its feature_keys
   const enriched = await Promise.all(
     (bundles || []).map(async (bundle: Record<string, unknown>) => {
-      const features = await database.query(
+      const features = await database.query<{ feature_key: unknown }>(
         `bundle_features?bundle_id=eq.${encodeURIComponent(String(bundle.id))}&select=feature_key`,
       );
       return {
         ...bundle,
         feature_keys: (features || []).map(
-          (f: Record<string, unknown>) => f.feature_key,
+          (f) => f.feature_key,
         ),
       };
     }),

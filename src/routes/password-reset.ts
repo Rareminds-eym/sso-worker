@@ -11,6 +11,11 @@ import type { Env, User } from "../types";
 
 const RESET_TTL_MS = 1 * 60 * 60 * 1000; // 1 hour
 
+async function validationError(response: Response): Promise<{ error: string; status: number }> {
+  const parsed = (await response.json().catch(() => null)) as { error?: string } | null;
+  return { error: parsed?.error ?? "Invalid request", status: response.status };
+}
+
 /**
  * POST /auth/forgot-password
  * Sends a password reset email if the account exists.
@@ -26,10 +31,16 @@ export async function performForgotPassword(
   if (!body.email) return { error: "email is required", status: 400 };
 
   const emailErrResponse = validateEmail(body.email);
-  if (emailErrResponse) return { error: await emailErrResponse.text(), status: emailErrResponse.status };
+  if (emailErrResponse) {
+    const err = await validationError(emailErrResponse);
+    return { error: err.error, status: err.status };
+  }
 
   const redirectErrResponse = validateRedirectUrl(body.redirect_url, env);
-  if (redirectErrResponse) return { error: await redirectErrResponse.text(), status: redirectErrResponse.status };
+  if (redirectErrResponse) {
+    const err = await validationError(redirectErrResponse);
+    return { error: err.error, status: err.status };
+  }
 
   const email = body.email.toLowerCase().trim();
 
@@ -107,7 +118,8 @@ export async function performResetPassword(
 
   const passErrResponse = validatePassword(body.password);
   if (passErrResponse) {
-    return { error: await passErrResponse.text(), status: passErrResponse.status };
+    const err = await validationError(passErrResponse);
+    return { error: err.error, status: err.status };
   }
 
   const database = db(env);

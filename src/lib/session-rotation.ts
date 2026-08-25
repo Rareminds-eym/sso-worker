@@ -2,6 +2,7 @@ import type { Env, JwtClaims } from "../types";
 import { audit } from "./audit";
 import {
     ABSOLUTE_SESSION_LIFETIME_MS,
+    PLATFORM_ORG_ID,
     REUSE_GRACE_INTERVAL_SEC,
     SESSION_TTL_MS,
 } from "./constants";
@@ -336,13 +337,17 @@ export async function mintAccessToken(
     }
 
     const products = claims?.products ?? [];
+    const userRole = (user.user_metadata?.role as string | undefined) ?? (user.user_metadata?.roles as string[] | undefined)?.[0];
+    const effectiveRoles = (claims?.roles && claims.roles.length > 0)
+        ? claims.roles
+        : (userRole ? [userRole] : ["learner"]);
 
     const token = await signAccessToken(
         {
             sub: userId,
             email: user?.email ?? "",
-            org_id: orgId ?? "",
-            roles: claims?.roles ?? [],
+            org_id: (orgId && orgId.length > 0) ? orgId : PLATFORM_ORG_ID,
+            roles: effectiveRoles,
             products: products,
             membership_status: claims?.membership_status ?? "active",
             is_email_verified: user?.is_email_verified ?? false,

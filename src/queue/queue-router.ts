@@ -283,7 +283,7 @@ export async function handleQueueBatch(
 	// Route each message to appropriate handler
 	for (const message of batch.messages as readonly QueueMessage<QueueMessageBody>[]) {
 		try {
-			await routeQueueMessage(env, message, message.body);
+			await routeQueueMessage(env, message as QueueMessage<QueueMessageBody>, message.body as QueueMessageBody);
 		} catch (err) {
 			console.error("[SSO] Failed to process queue message:", err);
 			message.retry();
