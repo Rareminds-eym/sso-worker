@@ -123,6 +123,45 @@ function createMockSupabaseFetch(): ReturnType<typeof vi.fn> {
       return new Response(null, { status: 204 });
     }
 
+    if (collection === "users" && method === "POST") {
+      const row = JSON.parse(bodyStr ?? "{}") as { email: string; is_email_verified?: boolean; user_metadata?: Record<string, unknown>; password_hash?: string };
+      const newUser = {
+        id: crypto.randomUUID(),
+        email: row.email,
+        password_hash: row.password_hash,
+        is_email_verified: row.is_email_verified ?? false,
+        is_blocked: false,
+        last_login_at: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        user_metadata: row.user_metadata ?? {},
+      };
+      if (dbState.users.some((u) => u.email === newUser.email)) {
+        return Response.json({ code: "23505", message: "duplicate key value violates unique constraint \"users_email_key\"" }, { status: 409 });
+      }
+      dbState.insertedUsers.push(newUser);
+      dbState.users.push(newUser);
+      return Response.json([newUser], { status: 201 });
+    }
+
+    if (collection === "memberships" && method === "POST") {
+      const row = JSON.parse(bodyStr ?? "{}");
+      dbState.memberships.push({ ...row, id: crypto.randomUUID(), created_at: new Date().toISOString() });
+      return Response.json([dbState.memberships[dbState.memberships.length - 1]], { status: 201 });
+    }
+
+    if (collection === "roles" && method === "GET") {
+      return Response.json([{ id: "role-learner", name: "learner" }]);
+    }
+
+    if (collection === "membership_roles" && method === "POST") {
+      return Response.json([JSON.parse(bodyStr ?? "{}")], { status: 201 });
+    }
+
+    if (collection === "organizations") {
+      return Response.json([{ id: "00000000-0000-0000-0000-000000000001", name: "SkillPassport Platform" }]);
+    }
+
     if (collection === "oauth_accounts" && method === "GET") {
       const params = new URLSearchParams(url.split("?")[1] ?? "");
       const sub = params.get("provider_user_id")?.replace(/^eq\./, "");
@@ -271,25 +310,29 @@ describe("performOAuthLogin", () => {
     expect(seeded.is_email_verified).toBe(true);
   });
 
-  it("creates a verified learner for a brand-new identity", async () => {
+  it("creates a verified learner attached to the platform org", async () => {
     const result = await performOAuthLogin(createEnv(), createCtx(), GOOGLE_PROFILE, "1.2.3.4", "ua") as {
       error?: string; user?: { id: string };
     };
 
     expect(result.error).toBeUndefined();
 
-    const signupCall = dbState.rpcCalls.find((c) => c.fn === "signup_user");
-    expect(signupCall).toBeDefined();
-    expect(signupCall!.args).toMatchObject({ p_role: "learner" });
-    expect(String(signupCall!.args.p_password_hash)).toMatch(/^\$2[aby]\$/);
-
     const created = dbState.insertedUsers[0];
-    expect(created.is_email_verified).toBe(true); // patched after signup_user
+    expect(created.is_email_verified).toBe(true); // verified at insert time
     expect(created.user_metadata).toMatchObject({ role: "learner", firstName: "New", lastName: "Person" });
+    expect(String(created.password_hash)).toMatch(/^\$2[aby]\$/);
     expect(dbState.oauth_accounts).toHaveLength(1);
     expect(result.user!.id).toBe(created.id);
 
-    // New-user path publishes org + membership sync events immediately.
+    // Membership lands on the platform org; no temp org is ever created.
+    expect(dbState.memberships).toHaveLength(1);
+    expect(dbState.memberships[0]).toMatchObject({
+      user_id: created.id,
+      org_id: "00000000-0000-0000-0000-000000000001",
+      status: "active",
+    });
+
+    // New-user path publishes user.created + membership.created — never organization.created.
     const envWithQueue = createEnv() as Env & { SYNC_QUEUE: { sent: Array<{ type: string }> } };
     await performOAuthLogin(
       envWithQueue,
@@ -299,8 +342,8 @@ describe("performOAuthLogin", () => {
       "ua",
     );
     const eventTypes = envWithQueue.SYNC_QUEUE.sent.map((e) => e.type);
-    expect(eventTypes).toContain("organization.created");
     expect(eventTypes).toContain("membership.created");
+    expect(eventTypes).not.toContain("organization.created");
   });
 
   it("refuses a blocked account found by email", async () => {

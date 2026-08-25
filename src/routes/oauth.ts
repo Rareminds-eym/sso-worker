@@ -17,8 +17,9 @@ import type { Env, JwtClaims, Membership, OAuthLoginBody, User } from "../types"
  *   1. Existing oauth_accounts link → log in.
  *   2. No link, matching email → link identities (only safe because the
  *      caller guarantees the provider verified the email) and mark verified.
- *   3. Neither → create a learner via signup_user RPC with an unguessable
+ *   3. Neither → create a learner via direct inserts with an unguessable
  *      placeholder password hash (password login impossible until reset),
+ *      attach membership to the seeded PLATFORM org with the learner role,
  *      verify email immediately (provider-verified), then link.
  *
  * Session issuance and SkillPassport re-sync are identical to performLogin.
@@ -101,8 +102,18 @@ export async function performOAuthLogin(
     }
   }
 
-  // ─── Step 3: neither → provision learner ────────────────────────
+  // ─── Step 3: neither → provision learner on the platform org ─────
   if (!user) {
+    // Resolve the seeded platform organization ("RareMinds") — Google
+    // learners are members of it; no per-user temp orgs are created.
+    const platformOrg = await database.queryOne<{ id: string; name: string }>(
+      `organizations?id=eq.${PLATFORM_ORG_ID}&select=id,name`,
+    );
+    if (!platformOrg) {
+      console.error("[SSO] Platform organization missing from identity DB");
+      return { error: "Platform organization missing", status: 500 };
+    }
+
     const nameParts = (body.name ?? "").trim().split(/\s+/).filter(Boolean);
     const firstName = nameParts[0] ?? "";
     const lastName = nameParts.slice(1).join(" ");
@@ -114,25 +125,21 @@ export async function performOAuthLogin(
       ...(lastName ? { lastName } : {}),
     };
 
-    let result: { user_id: string; org_id: string; slug: string };
+    // Direct inserts (no signup_user RPC): schema-drift-proof and skips the
+    // temp-org creation entirely. ponytail: placeholder bcrypt hash satisfies
+    // NOT NULL; password login stays impossible until password-reset runs.
+    const createdAt = new Date().toISOString();
+    let createdUser: { id: string };
     try {
-      result = await database.rpc<{ user_id: string; org_id: string; slug: string }>(
-        "signup_user",
-        {
-          p_email: email,
-          // ponytail: unguessable placeholder satisfies NOT NULL; password login
-          // stays impossible until password-reset sets a real hash. Nullable
-          // column migration only worthwhile if more providers land.
-          p_password_hash: await hashPassword(crypto.randomUUID()),
-          p_org_name: null,
-          p_org_slug: `google-${crypto.randomUUID().split("-")[0]}`,
-          p_role: "learner",
-          p_user_metadata: user_metadata,
-        },
-      );
+      createdUser = await database.mutate<{ id: string }>("users", {
+        email,
+        password_hash: await hashPassword(crypto.randomUUID()),
+        is_email_verified: true,
+        user_metadata,
+      });
     } catch (err: unknown) {
       const errMessage = err instanceof Error ? err.message : String(err);
-      if (errMessage.includes("duplicate") || errMessage.includes("23505")) {
+      if (errMessage.includes("duplicate") || errMessage.includes("23505") || errMessage.includes("[409]")) {
         // Lost a race against a concurrent signup with the same email —
         // next attempt will hit the Step 2 link path.
         return { error: "An account with this email already exists. Please log in.", status: 409 };
@@ -140,21 +147,28 @@ export async function performOAuthLogin(
       throw err;
     }
 
-    // signup_user hardcodes is_email_verified=false; Google already verified it.
-    // The two writes are independent — run them concurrently. No user re-fetch:
-    // every field consumed downstream is known locally (saves a round trip).
-    const createdAt = new Date().toISOString();
-    await Promise.all([
-      database.update(
-        "users",
-        { id: `eq.${encodeURIComponent(result.user_id)}` },
-        { is_email_verified: true },
-      ),
-      insertOAuthLink(database, result.user_id, providerUserId),
-    ]);
+    // Membership on the platform org + learner role assignment are
+    // independent writes once the user exists.
+    const membership = await database.mutate<{ id: string }>("memberships", {
+      user_id: createdUser.id,
+      org_id: platformOrg.id,
+      status: "active",
+    });
+    const learnerRole = await database.queryOne<{ id: string }>(
+      `roles?name=eq.learner&select=id`,
+    );
+    if (!learnerRole) {
+      console.error("[SSO] 'learner' role missing from identity DB roles table");
+      return { error: "Learner role missing", status: 500 };
+    }
+    await database.mutate("membership_roles", {
+      membership_id: membership.id,
+      role_id: learnerRole.id,
+    });
+    await insertOAuthLink(database, createdUser.id, providerUserId);
 
     user = {
-      id: result.user_id,
+      id: createdUser.id,
       email,
       password_hash: "",
       is_email_verified: true,
@@ -166,17 +180,14 @@ export async function performOAuthLogin(
     };
     isNewUser = true;
 
-    publishSyncEvent(env.SYNC_QUEUE, ctx, 'organization.created', {
-      // Must match signup_user's COALESCE so consumers validate and the SP DB
-      // reflects the real temp-org name on first delivery.
-      name: `Organization for ${email}`,
-      id: result.org_id,
-      slug: result.slug,
-      created_by: result.user_id,
+    publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.created', {
+      id: createdUser.id,
+      email,
+      user_metadata,
     });
     publishSyncEvent(env.SYNC_QUEUE, ctx, 'membership.created', {
-      user_id: result.user_id,
-      organization_id: result.org_id,
+      user_id: createdUser.id,
+      organization_id: platformOrg.id,
       roles: ["learner"],
       status: "active",
     });
