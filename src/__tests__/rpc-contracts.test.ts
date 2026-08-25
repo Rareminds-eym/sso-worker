@@ -156,6 +156,7 @@ describe("private SSO RPC contract", () => {
         expect(SSO_RPC_METHODS).toEqual([
             "getJwks",
             "login",
+            "oauthAuthenticate",
             "signup",
             "signupMember",
             "refreshCurrentSession",

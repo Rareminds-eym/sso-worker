@@ -116,6 +116,63 @@ function dependencies(database: MemoryAuthorityDb): Partial<AuthorityDependencie
     };
 }
 
+describe("oauthAuthenticate authority adapter", () => {
+    it("issues a session for a successful OAuth performer and forwards the snake_case profile", async () => {
+        const captured: Array<{ email_verified?: boolean; provider_user_id?: string }> = [];
+        const oauthOverrides: Partial<AuthorityDependencies> = {
+            performOAuthLogin: async (_env, _ctx, body, _ip, _ua) => {
+                captured.push({ provider_user_id: body.provider_user_id, email_verified: body.email_verified });
+                return {
+                    access_token: "at-oauth",
+                    refresh_token: "rt-oauth",
+                    user: { id: "user-1", email: "learner@example.test" },
+                    active_org_id: "org-1",
+                    organizations: [{ org_id: "org-1" }],
+                };
+            },
+        };
+        const authority = createSsoAuthority(environment(), executionContext(), {
+            ...dependencies(new MemoryAuthorityDb([session("s-oauth", "rt-oauth")])),
+            ...oauthOverrides,
+        });
+
+        const outcome = await authority.oauthAuthenticate({
+            correlationId,
+            provider: "google",
+            providerUserId: "google-sub-1",
+            email: "learner@example.test",
+            emailVerified: true,
+            name: "Test Learner",
+        });
+
+        expect(outcome.kind).toBe("issued");
+        if (outcome.kind !== "issued") return;
+        expect(outcome.session.refreshToken).toBe("rt-oauth");
+        expect(outcome.session.identity.subject).toBe("user-1");
+        expect(captured[0]).toEqual({
+            provider_user_id: "google-sub-1",
+            email_verified: true,
+        });
+    });
+
+    it("maps a blocked-account rejection to account_blocked", async () => {
+        const authority = createSsoAuthority(environment(), executionContext(), {
+            ...dependencies(new MemoryAuthorityDb([])),
+            performOAuthLogin: async () => ({ error: "Account is blocked", status: 403 }),
+        } as Partial<AuthorityDependencies>);
+
+        const outcome = await authority.oauthAuthenticate({
+            correlationId,
+            provider: "google",
+            providerUserId: "google-sub-blocked",
+            email: "blocked@example.test",
+            emailVerified: true,
+        });
+
+        expect(outcome).toMatchObject({ kind: "rejected", code: "account_blocked" });
+    });
+});
+
 describe("SSO authority handlers", () => {
     it("should implement every approved private workflow handler", () => {
         const authority = createSsoAuthority(

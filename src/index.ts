@@ -51,6 +51,8 @@ import type {
   CurrentLogoutRpcInput,
   CurrentLogoutRpcOutcome,
   LoginRpcInput,
+  OAuthAuthenticateRpcInput,
+  OAuthAuthenticateRpcOutcome,
   SessionIssueRpcOutcome,
   SessionRotateRpcOutcome,
   SignupMemberRpcInput,
@@ -932,6 +934,18 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   /** Validate credentials and issue a new authoritative session. */
   async login(input: LoginRpcInput): Promise<SessionIssueRpcOutcome> {
     return createSsoAuthority(this.env, this.ctx).login(input);
+  }
+
+  /**
+   * Authenticate a Google OAuth identity via true RPC.
+   *
+   * Called by trusted gateways AFTER the OAuth authorization code has been
+   * exchanged server-side and the profile fetched from Google's userinfo
+   * endpoint. Links or provisions the user, then issues a session exactly
+   * like `login`.
+   */
+  async oauthAuthenticate(input: OAuthAuthenticateRpcInput): Promise<OAuthAuthenticateRpcOutcome> {
+    return createSsoAuthority(this.env, this.ctx).oauthAuthenticate(input);
   }
 
   /** Create an identity and issue its initial authoritative session. */

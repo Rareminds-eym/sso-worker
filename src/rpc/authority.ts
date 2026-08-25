@@ -6,6 +6,8 @@ import { endpointRateLimit } from "../lib/rate-limit";
 import { rotateRefreshToken, type RotationOutcome } from "../lib/session-rotation";
 import { performLogin } from "../routes/login";
 import { performSignup } from "../routes/signup";
+import type { OAuthAuthenticateRpcInput } from "./contracts";
+import { performOAuthLogin } from "../routes/oauth";
 import { performSignupMember } from "../routes/signup-member";
 import type { Env, JwtClaims } from "../types";
 import type {
@@ -48,6 +50,7 @@ export interface AuthorityDependencies extends PreservedWorkflowDependencies {
     readonly currentJwk: typeof getPublicJWK;
     readonly exportJwk: typeof exportPemAsJwk;
     readonly performLogin: typeof performLogin;
+    readonly performOAuthLogin: typeof performOAuthLogin;
     readonly performSignup: typeof performSignup;
     readonly performSignupMember: typeof performSignupMember;
     readonly now: () => number;
@@ -61,6 +64,7 @@ const defaultDependencies: AuthorityDependencies = {
     currentJwk: getPublicJWK,
     exportJwk: exportPemAsJwk,
     performLogin,
+    performOAuthLogin,
     performSignup,
     performSignupMember,
     hashPassword,
@@ -86,6 +90,7 @@ export function createSsoAuthority(
     return {
         getJwks: (input) => getJwks(env, input, dependencies),
         login: (input) => issueLogin(env, ctx, input, database, dependencies),
+        oauthAuthenticate: (input) => issueOAuthAuthenticate(env, ctx, input, database, dependencies),
         signup: (input) => issueSignup(env, ctx, input, database, dependencies),
         signupMember: (input) => issueSignupMember(env, ctx, input, database, dependencies),
         refreshCurrentSession: (input) => rotateSession(env, ctx, input, database, dependencies),
@@ -161,6 +166,35 @@ async function issueLogin(
         return adaptIssue(input, result, "login", input.currentRefreshToken, env, database, dependencies, undefined);
     } catch (error) {
         console.error("[SSO issueLogin Error]", error);
+        return transient(input, error);
+    }
+}
+
+async function issueOAuthAuthenticate(
+    env: Env,
+    ctx: ExecutionContext,
+    input: OAuthAuthenticateRpcInput,
+    database: DbClient,
+    dependencies: AuthorityDependencies,
+): Promise<SessionIssueRpcOutcome> {
+    try {
+        const result = await dependencies.performOAuthLogin(
+            env,
+            ctx,
+            {
+                provider: input.provider,
+                provider_user_id: input.providerUserId,
+                email: input.email,
+                email_verified: input.emailVerified,
+                name: input.name ?? null,
+                picture: input.picture ?? null,
+            },
+            null,
+            null,
+        ) as LegacySessionResult;
+        return adaptIssue(input, result, "login", undefined, env, database, dependencies);
+    } catch (error) {
+        console.error("[SSO issueOAuthAuthenticate Error]", error);
         return transient(input, error);
     }
 }

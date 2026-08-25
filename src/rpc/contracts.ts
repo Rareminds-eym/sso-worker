@@ -172,6 +172,19 @@ export interface SignupMemberRpcInput extends Correlated {
     readonly currentRefreshToken?: string;
 }
 
+/** Identity profile forwarded by a trusted gateway after OAuth code exchange. */
+export interface OAuthAuthenticateRpcInput extends Correlated {
+    /** Must be "google" (v1). */
+    readonly provider: string;
+    /** Provider-stable subject id (Google `sub`). */
+    readonly providerUserId: string;
+    readonly email: string;
+    /** Auto-linking is only allowed when the provider verified the email. */
+    readonly emailVerified: boolean;
+    readonly name?: string | null;
+    readonly picture?: string | null;
+}
+
 export interface RefreshCurrentRpcInput extends CurrentSessionCredential {
     readonly operation: "refresh_current_session";
 }
@@ -311,6 +324,7 @@ export type IdentityRpcOutcome = WorkflowRpcOutcome<RpcIdentity>;
 export interface GetJwksRpcInput extends Correlated { }
 export type GetJwksRpcOutcome = SsoJwksRpcOutcome;
 export type LoginRpcOutcome = SessionIssueRpcOutcome;
+export type OAuthAuthenticateRpcOutcome = SessionIssueRpcOutcome;
 export type SignupRpcOutcome = SessionIssueRpcOutcome;
 export type SignupMemberRpcOutcome = SessionIssueRpcOutcome;
 export type RefreshCurrentRpcOutcome = SessionRotateRpcOutcome;
@@ -326,6 +340,7 @@ export interface GetIdentityRpcInput extends AuthorizedRpcInput { }
 export interface SsoServiceBinding {
     getJwks(input: GetJwksRpcInput): Promise<GetJwksRpcOutcome>;
     login(input: LoginRpcInput): Promise<LoginRpcOutcome>;
+    oauthAuthenticate(input: OAuthAuthenticateRpcInput): Promise<OAuthAuthenticateRpcOutcome>;
     signup(input: SignupRpcInput): Promise<SignupRpcOutcome>;
     signupMember(input: SignupMemberRpcInput): Promise<SignupMemberRpcOutcome>;
     refreshCurrentSession(input: RefreshCurrentRpcInput): Promise<RefreshCurrentRpcOutcome>;
@@ -351,6 +366,7 @@ export type SsoRpcOutcome<Method extends SsoRpcMethod> = Awaited<ReturnType<SsoS
 export const SSO_RPC_METHODS = [
     "getJwks",
     "login",
+    "oauthAuthenticate",
     "signup",
     "signupMember",
     "refreshCurrentSession",
