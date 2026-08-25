@@ -9,6 +9,7 @@ import {
 import { db, type DbClient } from "./db";
 import { generateRefreshToken, hashToken } from "./hash";
 import { signAccessToken } from "./jwt";
+import { resolveEffectiveRoles } from "./roles";
 
 /**
  * Shared refresh-token rotation module.
@@ -337,10 +338,11 @@ export async function mintAccessToken(
     }
 
     const products = claims?.products ?? [];
-    const userRole = (user.user_metadata?.role as string | undefined) ?? (user.user_metadata?.roles as string[] | undefined)?.[0];
-    const effectiveRoles = (claims?.roles && claims.roles.length > 0)
-        ? claims.roles
-        : (userRole ? [userRole] : ["learner"]);
+    const effectiveRoles = resolveEffectiveRoles({
+        claims,
+        userMetadata: user.user_metadata,
+        fallbackRole: "learner",
+    });
 
     const token = await signAccessToken(
         {

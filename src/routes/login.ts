@@ -5,6 +5,7 @@ import { generateRefreshToken, hashToken, verifyPassword } from "../lib/hash";
 import { signAccessToken } from "../lib/jwt";
 import { checkAccountLockout, clearFailedLogins, endpointRateLimit, recordFailedLogin } from "../lib/rate-limit";
 import { validateEmail } from "../lib/validate";
+import { resolveEffectiveRoles } from "../lib/roles";
 import type { Env, JwtClaims, LoginBody, Membership, User } from "../types";
 
 // Pre-computed bcrypt hash (cost 12) for constant-time comparison
@@ -111,10 +112,11 @@ export async function performLogin(
     family_created_at: new Date().toISOString(),
   });
 
-  const userRole = (user.user_metadata?.role as string | undefined) ?? (user.user_metadata?.roles as string[] | undefined)?.[0];
-  const effectiveRoles = (claims?.roles && claims.roles.length > 0)
-    ? claims.roles
-    : (userRole ? [userRole] : ["learner"]);
+  const effectiveRoles = resolveEffectiveRoles({
+    claims,
+    userMetadata: user.user_metadata,
+    fallbackRole: "learner",
+  });
 
   const accessToken = await signAccessToken(
     {

@@ -6,6 +6,7 @@ import { signAccessToken } from "../lib/jwt";
 import { endpointRateLimit } from "../lib/rate-limit";
 import { publishSyncEvent } from "../lib/sync-queue";
 import { validateEmail } from "../lib/validate";
+import { resolveEffectiveRoles } from "../lib/roles";
 import type { Env, JwtClaims, Membership, OAuthLoginBody, User } from "../types";
 
 /**
@@ -227,11 +228,11 @@ export async function performOAuthLogin(
     family_created_at: new Date().toISOString(),
   });
 
-  const userRole = (authenticatedUser.user_metadata?.role as string | undefined)
-    ?? (authenticatedUser.user_metadata?.roles as string[] | undefined)?.[0];
-  const effectiveRoles = (claims?.roles && claims.roles.length > 0)
-    ? claims.roles
-    : (userRole ? [userRole] : ["learner"]);
+  const effectiveRoles = resolveEffectiveRoles({
+    claims,
+    userMetadata: authenticatedUser.user_metadata,
+    fallbackRole: "learner",
+  });
 
   const accessToken = await signAccessToken(
     {

@@ -8,6 +8,7 @@ import { signAccessToken, verifyAccessToken } from "../lib/jwt";
 import { publishSyncEvent } from "../lib/sync-queue";
 import { resolveAppUrl, validateEmail, validatePassword } from "../lib/validate";
 import { performForgotPassword, performResetPassword } from "../routes/password-reset";
+import { resolveEffectiveRoles } from "../lib/roles";
 import { performRequestVerification, performVerifyEmail } from "../routes/verify-email";
 import type { AccessTokenPayload, Env, Invite, JwtClaims, Membership, Organization } from "../types";
 import type {
@@ -139,10 +140,11 @@ async function loadIdentity(database: DbClient, user: UserRow, orgId: string): P
     if (!Array.isArray(claims.roles) || !Array.isArray(claims.products)) {
         throw new Error("Invalid authoritative claims");
     }
-    const userRole = (user.user_metadata?.role as string | undefined) ?? (user.user_metadata?.roles as string[] | undefined)?.[0];
-    const roles = claims.roles.length > 0
-        ? claims.roles
-        : (userRole ? [userRole] : ["learner"]);
+    const roles = resolveEffectiveRoles({
+        claims,
+        userMetadata: user.user_metadata,
+        fallbackRole: "learner",
+    });
 
     return {
         subject: user.id, email: user.email, organizationId: (orgId && orgId.length > 0) ? orgId : PLATFORM_ORG_ID,

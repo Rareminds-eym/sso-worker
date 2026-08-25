@@ -1,5 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { signLteAccessToken } from "./lib/app-token";
+import { resolveEffectiveRoles } from "./lib/roles";
 import { audit } from "./lib/audit";
 import {
   assertAllowedRedirectUri,
@@ -1236,10 +1237,11 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       p_org_id: session.org_id,
     });
 
-    const userRole = (user.user_metadata?.role as string | undefined) ?? (user.user_metadata?.roles as string[] | undefined)?.[0];
-    const effectiveRoles = (claims?.roles && claims.roles.length > 0)
-      ? claims.roles
-      : (userRole ? [userRole] : ["learner"]);
+    const effectiveRoles = resolveEffectiveRoles({
+      claims,
+      userMetadata: user.user_metadata,
+      fallbackRole: "learner",
+    });
 
     return { valid: true, roles: effectiveRoles };
   }

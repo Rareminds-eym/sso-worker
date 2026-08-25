@@ -11,6 +11,7 @@ import { endpointRateLimit } from "../lib/rate-limit";
 import { generateVerificationEmailTemplate } from "../lib/email-templates";
 import { publishSyncEvent } from "../lib/sync-queue";
 import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "../lib/validate";
+import { resolveEffectiveRoles } from "../lib/roles";
 import type { Env, JwtClaims, SignupMemberBody } from "../types";
 
 /**
@@ -111,6 +112,11 @@ async function signupMemberImpl(
       });
     }
 
+    const userRow = await database.queryOne<{ is_email_verified: boolean }>(
+      `users?id=eq.${encodeURIComponent(result.user_id)}&select=is_email_verified`
+    );
+    const isEmailVerified = userRow?.is_email_verified ?? false;
+
     const refreshToken = generateRefreshToken();
     const refreshHash = await hashToken(refreshToken);
     const sessionId = crypto.randomUUID();
@@ -128,9 +134,11 @@ async function signupMemberImpl(
       family_created_at: new Date().toISOString(),
     });
 
-    const effectiveRoles = (claims?.roles && claims.roles.length > 0)
-      ? claims.roles
-      : (params.role ? [params.role] : ["member"]);
+    const effectiveRoles = resolveEffectiveRoles({
+      claims,
+      explicitRole: params.role,
+      fallbackRole: "member",
+    });
 
     const accessToken = await signAccessToken(
       {
@@ -140,7 +148,7 @@ async function signupMemberImpl(
         roles: effectiveRoles,
         products: claims?.products ?? [],
         membership_status: claims?.membership_status ?? "active",
-        is_email_verified: false,
+        is_email_verified: isEmailVerified,
         user_metadata: params.user_metadata ?? {},
       },
       env,
