@@ -264,6 +264,19 @@ export interface LoginBody {
   password: string;
 }
 
+/** Identity profile forwarded by a trusted gateway after OAuth code exchange. */
+export interface OAuthLoginBody {
+  /** Must be "google" (v1). */
+  provider: string;
+  /** Provider-stable subject id (Google `sub`). */
+  provider_user_id: string;
+  email: string;
+  /** Auto-linking is only allowed when the provider verified the email. */
+  email_verified: boolean;
+  name?: string | null;
+  picture?: string | null;
+}
+
 export interface SwitchOrgBody {
   org_id: string;
 }

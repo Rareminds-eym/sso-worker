@@ -9,6 +9,7 @@ import { signAccessToken } from "../lib/jwt";
 import { endpointRateLimit } from "../lib/rate-limit";
 import { publishSyncEvent } from "../lib/sync-queue";
 import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "../lib/validate";
+import { resolveEffectiveRoles } from "../lib/roles";
 import type { Env, JwtClaims, SignupBody } from "../types";
 
 /**
@@ -150,6 +151,11 @@ export async function performSignup(
       p_org_id: result.org_id,
     });
 
+    const userRow = await database.queryOne<{ is_email_verified: boolean }>(
+      `users?id=eq.${encodeURIComponent(result.user_id)}&select=is_email_verified`
+    );
+    const isEmailVerified = userRow?.is_email_verified ?? false;
+
     const refreshToken = generateRefreshToken();
     const refreshHash = await hashToken(refreshToken);
     const sessionId = crypto.randomUUID();
@@ -167,9 +173,11 @@ export async function performSignup(
       family_created_at: new Date().toISOString(),
     });
 
-    const effectiveRoles = (claims?.roles && claims.roles.length > 0)
-      ? claims.roles
-      : (role ? [role] : ["learner"]);
+    const effectiveRoles = resolveEffectiveRoles({
+      claims,
+      explicitRole: role,
+      fallbackRole: "learner",
+    });
 
     const accessToken = await signAccessToken(
       {
@@ -179,7 +187,7 @@ export async function performSignup(
         roles: effectiveRoles,
         products: claims?.products ?? [],
         membership_status: claims?.membership_status ?? "active",
-        is_email_verified: false,
+        is_email_verified: isEmailVerified,
         user_metadata: body.user_metadata ?? {},
       },
       env,

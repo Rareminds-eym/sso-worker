@@ -1,4 +1,5 @@
 import { SESSION_TTL_MS, PLATFORM_ORG_ID } from "../lib/constants";
+import { resolveEffectiveRoles } from "../lib/roles";
 import { db, type DbClient } from "../lib/db";
 import { generateRefreshToken, hashPassword, hashToken } from "../lib/hash";
 import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "../lib/jwt";
@@ -6,6 +7,8 @@ import { endpointRateLimit } from "../lib/rate-limit";
 import { rotateRefreshToken, type RotationOutcome } from "../lib/session-rotation";
 import { performLogin } from "../routes/login";
 import { performSignup } from "../routes/signup";
+import type { OAuthAuthenticateRpcInput } from "./contracts";
+import { performOAuthLogin } from "../routes/oauth";
 import { performSignupMember } from "../routes/signup-member";
 import type { Env, JwtClaims } from "../types";
 import type {
@@ -48,6 +51,7 @@ export interface AuthorityDependencies extends PreservedWorkflowDependencies {
     readonly currentJwk: typeof getPublicJWK;
     readonly exportJwk: typeof exportPemAsJwk;
     readonly performLogin: typeof performLogin;
+    readonly performOAuthLogin: typeof performOAuthLogin;
     readonly performSignup: typeof performSignup;
     readonly performSignupMember: typeof performSignupMember;
     readonly now: () => number;
@@ -61,6 +65,7 @@ const defaultDependencies: AuthorityDependencies = {
     currentJwk: getPublicJWK,
     exportJwk: exportPemAsJwk,
     performLogin,
+    performOAuthLogin,
     performSignup,
     performSignupMember,
     hashPassword,
@@ -86,6 +91,7 @@ export function createSsoAuthority(
     return {
         getJwks: (input) => getJwks(env, input, dependencies),
         login: (input) => issueLogin(env, ctx, input, database, dependencies),
+        oauthAuthenticate: (input) => issueOAuthAuthenticate(env, ctx, input, database, dependencies),
         signup: (input) => issueSignup(env, ctx, input, database, dependencies),
         signupMember: (input) => issueSignupMember(env, ctx, input, database, dependencies),
         refreshCurrentSession: (input) => rotateSession(env, ctx, input, database, dependencies),
@@ -161,6 +167,35 @@ async function issueLogin(
         return adaptIssue(input, result, "login", input.currentRefreshToken, env, database, dependencies, undefined);
     } catch (error) {
         console.error("[SSO issueLogin Error]", error);
+        return transient(input, error);
+    }
+}
+
+async function issueOAuthAuthenticate(
+    env: Env,
+    ctx: ExecutionContext,
+    input: OAuthAuthenticateRpcInput,
+    database: DbClient,
+    dependencies: AuthorityDependencies,
+): Promise<SessionIssueRpcOutcome> {
+    try {
+        const result = await dependencies.performOAuthLogin(
+            env,
+            ctx,
+            {
+                provider: input.provider,
+                provider_user_id: input.providerUserId,
+                email: input.email,
+                email_verified: input.emailVerified,
+                name: input.name ?? null,
+                picture: input.picture ?? null,
+            },
+            null,
+            null,
+        ) as LegacySessionResult;
+        return adaptIssue(input, result, "login", undefined, env, database, dependencies);
+    } catch (error) {
+        console.error("[SSO issueOAuthAuthenticate Error]", error);
         return transient(input, error);
     }
 }
@@ -357,10 +392,11 @@ async function loadIdentity(database: DbClient, userId: string, orgId: string | 
         : { roles: [], products: [], membership_status: "active" as const };
     if (!isStringArray(claims.roles) || !isStringArray(claims.products)) throw new Error("Invalid identity claims");
 
-    const userRole = (user.user_metadata?.role as string | undefined) ?? (user.user_metadata?.roles as string[] | undefined)?.[0];
-    const roles = claims.roles.length > 0
-        ? claims.roles
-        : (userRole ? [userRole] : ["learner"]);
+    const roles = resolveEffectiveRoles({
+        claims,
+        userMetadata: user.user_metadata,
+        fallbackRole: "learner",
+    });
 
     return {
         subject: user.id,

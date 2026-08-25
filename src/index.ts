@@ -1,5 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { signLteAccessToken } from "./lib/app-token";
+import { resolveEffectiveRoles } from "./lib/roles";
 import { audit } from "./lib/audit";
 import {
   assertAllowedRedirectUri,
@@ -51,6 +52,8 @@ import type {
   CurrentLogoutRpcInput,
   CurrentLogoutRpcOutcome,
   LoginRpcInput,
+  OAuthAuthenticateRpcInput,
+  OAuthAuthenticateRpcOutcome,
   SessionIssueRpcOutcome,
   SessionRotateRpcOutcome,
   SignupMemberRpcInput,
@@ -934,6 +937,18 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return createSsoAuthority(this.env, this.ctx).login(input);
   }
 
+  /**
+   * Authenticate a Google OAuth identity via true RPC.
+   *
+   * Called by trusted gateways AFTER the OAuth authorization code has been
+   * exchanged server-side and the profile fetched from Google's userinfo
+   * endpoint. Links or provisions the user, then issues a session exactly
+   * like `login`.
+   */
+  async oauthAuthenticate(input: OAuthAuthenticateRpcInput): Promise<OAuthAuthenticateRpcOutcome> {
+    return createSsoAuthority(this.env, this.ctx).oauthAuthenticate(input);
+  }
+
   /** Create an identity and issue its initial authoritative session. */
   async signup(input: SignupRpcInput): Promise<SessionIssueRpcOutcome> {
     return createSsoAuthority(this.env, this.ctx).signup(input);
@@ -1222,10 +1237,11 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       p_org_id: session.org_id,
     });
 
-    const userRole = (user.user_metadata?.role as string | undefined) ?? (user.user_metadata?.roles as string[] | undefined)?.[0];
-    const effectiveRoles = (claims?.roles && claims.roles.length > 0)
-      ? claims.roles
-      : (userRole ? [userRole] : ["learner"]);
+    const effectiveRoles = resolveEffectiveRoles({
+      claims,
+      userMetadata: user.user_metadata,
+      fallbackRole: "learner",
+    });
 
     return { valid: true, roles: effectiveRoles };
   }
