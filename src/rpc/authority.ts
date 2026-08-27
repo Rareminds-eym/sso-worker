@@ -11,13 +11,13 @@ import type { OAuthAuthenticateRpcInput } from "./contracts";
 import { performOAuthLogin } from "../routes/oauth";
 import { performSignupMember } from "../routes/signup-member";
 import type { Env, JwtClaims } from "../types";
+import { normalizePublicMetadata } from "./public-metadata";
 import type {
     AllLogoutRpcInput,
     AllLogoutRpcOutcome,
     Correlated,
     CurrentLogoutRpcInput,
     CurrentLogoutRpcOutcome,
-    JsonValue,
     LoginRpcInput,
     RpcIdentity,
     RpcSession,
@@ -406,7 +406,7 @@ async function loadIdentity(database: DbClient, userId: string, orgId: string | 
         products: claims.products,
         membershipStatus: claims.membership_status,
         emailVerified: user.is_email_verified,
-        userMetadata: normalizeMetadata(user.user_metadata),
+        userMetadata: normalizePublicMetadata(user.user_metadata),
     };
 }
 interface AuthoritySessionRow {
@@ -544,13 +544,6 @@ function isTimeout(error: unknown): boolean {
     return error instanceof DOMException
         ? error.name === "AbortError" || error.name === "TimeoutError"
         : error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
-}
-
-function normalizeMetadata(value: Record<string, unknown> | undefined): Readonly<Record<string, JsonValue>> | undefined {
-    if (!value) return undefined;
-    const normalized = JSON.parse(JSON.stringify(value)) as unknown;
-    if (!isRecord(normalized)) throw new Error("Invalid identity metadata");
-    return normalized as Record<string, JsonValue>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

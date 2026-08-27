@@ -232,6 +232,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       id: (subscription as { id: string }).id,
       user_id: data.user_id,
       organization_id: data.organization_id || null,
+      organization_type: data.organization_type || null,
       plan_id: data.plan_id,
       plan_code: data.plan_code,
       plan_type: data.plan_type || data.plan_code,
@@ -242,6 +243,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       subscription_start_date: now.toISOString(),
       subscription_end_date: billingCycle === 'lifetime' ? null : endDate.toISOString(),
       is_organization_subscription: data.is_organization_subscription || false,
+      seat_count: data.seat_count || 1,
+      assigned_seats: 0,
       product_id: null,
       updated_at: now.toISOString(),
     });

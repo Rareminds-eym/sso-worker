@@ -11,6 +11,7 @@ import { performForgotPassword, performResetPassword } from "../routes/password-
 import { resolveEffectiveRoles } from "../lib/roles";
 import { performRequestVerification, performVerifyEmail } from "../routes/verify-email";
 import type { AccessTokenPayload, Env, Invite, JwtClaims, Membership, Organization } from "../types";
+import { normalizePublicMetadata } from "./public-metadata";
 import type {
     AcceptInviteRpcInput, AcceptInviteRpcOutcome,
     CancelInviteRpcInput, CancelInviteRpcOutcome,
@@ -150,7 +151,7 @@ async function loadIdentity(database: DbClient, user: UserRow, orgId: string): P
         subject: user.id, email: user.email, organizationId: (orgId && orgId.length > 0) ? orgId : PLATFORM_ORG_ID,
         roles, products: claims.products, membershipStatus: claims.membership_status,
         emailVerified: user.is_email_verified,
-        userMetadata: (user.user_metadata ?? {}) as RpcIdentity["userMetadata"],
+        userMetadata: normalizePublicMetadata(user.user_metadata),
     };
 }
 

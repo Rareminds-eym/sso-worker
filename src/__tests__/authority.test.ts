@@ -31,7 +31,15 @@ class MemoryAuthorityDb implements DbClient {
     async queryOne<T>(path: string): Promise<T | null> {
         if (path.startsWith("sessions?")) return (this.matchSessions(path)[0] as T | undefined) ?? null;
         if (path.startsWith("users?")) {
-            return { id: "user-1", email: "member@example.test", is_email_verified: true, user_metadata: {} } as T;
+            return {
+                id: "user-1",
+                email: "member@example.test",
+                is_email_verified: true,
+                user_metadata: {
+                    role: "member",
+                    certificate_1_credential_id: "cert-credential",
+                },
+            } as T;
         }
         return null;
     }
@@ -259,6 +267,7 @@ describe("SSO authority handlers", () => {
                 remainingLifetimeSeconds: 3600,
                 identity: { subject: "user-1", organizationId: "org-1" },
             });
+            expect(outcome.session.identity.userMetadata).toEqual({ role: "member" });
         }
     });
 
