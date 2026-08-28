@@ -616,7 +616,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     const database = db(this.env);
     const subscription = await database.queryOne<{ plan_id: string }>(
-      `subscriptions?user_id=eq.${encodeURIComponent(userId)}&status=in.(active,pending)&order=created_at.desc`,
+      `subscriptions?user_id=eq.${encodeURIComponent(userId)}&status=in.(active,paused,cancelled,pending)&order=created_at.desc`,
     );
 
     if (!subscription) {
