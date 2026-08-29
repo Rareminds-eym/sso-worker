@@ -204,6 +204,51 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const endDate = addMonths(now, parseDurationMonths(billingCycle));
 
     const database = db(this.env);
+    let organizationId = data.organization_id || null;
+    let organizationType = data.organization_type || null;
+    let isOrgSub = data.is_organization_subscription || false;
+
+    if (!organizationId && data.user_id) {
+      try {
+        const org = await database.queryOne<{ id: string; metadata?: Record<string, unknown> }>(
+          `organizations?created_by=eq.${encodeURIComponent(data.user_id)}`,
+        );
+        if (org?.id) {
+          organizationId = org.id;
+          organizationType = (org.metadata?.organization_type as string) || null;
+          isOrgSub = true;
+        } else {
+          const member = await database.queryOne<{ organization_id: string }>(
+            `organization_members?user_id=eq.${encodeURIComponent(data.user_id)}`,
+          );
+          if (member?.organization_id) {
+            organizationId = member.organization_id;
+            isOrgSub = true;
+          }
+        }
+      } catch (lookupErr) {
+        console.warn("[sso] Auto organization lookup warning:", lookupErr);
+      }
+    }
+
+    let seatCount = data.seat_count || 1;
+    if ((!data.seat_count || data.seat_count === 1) && data.plan_id) {
+      try {
+        const planRow = await database.queryOne<{ entity_config?: Record<string, any> }>(
+          `plans?id=eq.${encodeURIComponent(data.plan_id)}`,
+        );
+        if (planRow?.entity_config) {
+          const cfg = typeof planRow.entity_config === 'string' ? JSON.parse(planRow.entity_config) : planRow.entity_config;
+          for (const k in cfg) {
+            if (cfg[k]?.max_users) {
+              seatCount = Number(cfg[k].max_users);
+              break;
+            }
+          }
+        }
+      } catch (_) { }
+    }
+
     const subscription = await database.mutate("subscriptions", {
       user_id: data.user_id,
       plan_id: data.plan_id,
@@ -220,10 +265,10 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       subscription_end_date: billingCycle === "lifetime" ? null : endDate.toISOString(),
       razorpay_order_id: data.razorpay_order_id || null,
       razorpay_payment_id: data.razorpay_payment_id || null,
-      organization_id: data.organization_id || null,
-      organization_type: data.organization_type || null,
-      seat_count: data.seat_count || 1,
-      is_organization_subscription: data.is_organization_subscription || false,
+      organization_id: organizationId,
+      organization_type: organizationType,
+      seat_count: seatCount,
+      is_organization_subscription: isOrgSub,
       is_bulk_purchase: data.is_bulk_purchase || false,
       purchased_by: data.purchased_by || null,
     });
@@ -231,7 +276,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'subscription.created', {
       id: (subscription as { id: string }).id,
       user_id: data.user_id,
-      organization_id: data.organization_id || null,
+      organization_id: organizationId,
+      organization_type: organizationType,
       plan_id: data.plan_id,
       plan_code: data.plan_code,
       plan_type: data.plan_type || data.plan_code,
@@ -241,7 +287,9 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       status: 'active',
       subscription_start_date: now.toISOString(),
       subscription_end_date: billingCycle === 'lifetime' ? null : endDate.toISOString(),
-      is_organization_subscription: data.is_organization_subscription || false,
+      is_organization_subscription: isOrgSub,
+      seat_count: seatCount,
+      assigned_seats: 0,
       product_id: null,
       updated_at: now.toISOString(),
     });
@@ -491,6 +539,9 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     await database.update("subscriptions", { id: `eq.${encodeURIComponent(subscriptionId)}` }, updateData);
 
     const updated = await database.queryOne(`subscriptions?id=eq.${encodeURIComponent(subscriptionId)}`);
+    if (updated) {
+      publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'subscription.updated', updated);
+    }
     return updated as Record<string, unknown>;
   }
 
