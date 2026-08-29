@@ -1,19 +1,16 @@
 /**
  * Bug Condition Exploration Test - RPC Architecture
  *
- * Validates that internal endpoints are NOT accessible via the public fetch handler
- * and verifies the RPC methods work correctly through the WorkerEntrypoint.
- *
- * After the refactor:
- * - Internal endpoints (sync, subscription management) are removed from the fetch handler
- * - They're only callable via RPC methods on the WorkerEntrypoint class
- * - SERVICE_AUTH_SECRET is no longer needed — RPC binding is the trust boundary
+ * Validates that internal operations are NOT reachable via HTTP: the
+ * SsoWorker entrypoint exposes no fetch handler of its own, so every HTTP
+ * request falls through to the WorkerEntrypoint default (501 Not Implemented).
+ * Internal operations are only callable via RPC methods on the entrypoint.
  */
 
 import { describe, expect, it } from 'vitest';
-import type { Env } from '../types';
 import type { AuthorizationCodeStore } from '../durable-objects/AuthorizationCodeStore';
 import type { SyncEvent } from '../lib/sync-queue';
+import type { Env } from '../types';
 
 type FetchableWorker = {
   fetch: (request: Request) => Promise<Response>;
@@ -63,6 +60,7 @@ const mockEnv: Env = {
   JWT_PRIVATE_KEY: 'test-private-key',
   JWT_PUBLIC_KEY: 'test-public-key',
   JWT_KID: 'test-key-1',
+  JWKS_FRESHNESS_SECONDS: '300',
   ALLOWED_ORIGINS: 'http://localhost:3000',
   RATE_LIMIT_KV: {
     get: (k: string) => Promise.resolve(mockStore.get(k) ?? null),
@@ -85,9 +83,6 @@ async function createWorker() {
   const ctx: ExecutionContext = { waitUntil: () => { }, passThroughOnException: () => { }, props: undefined };
   const { default: SsoWorker } = await import('../index');
   const worker = new SsoWorker(ctx, mockEnv);
-  if (!worker.fetch) {
-    throw new Error("SsoWorker fetch handler is not configured");
-  }
   return worker as FetchableWorker;
 }
 
@@ -101,7 +96,7 @@ describe('RPC Architecture — Internal endpoints removed from fetch handler', (
     });
 
     const response = await worker.fetch(request);
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(501);
   });
 
   it('should return 404 for /api/subscriptions/create (RPC only)', async () => {
@@ -113,7 +108,7 @@ describe('RPC Architecture — Internal endpoints removed from fetch handler', (
     });
 
     const response = await worker.fetch(request);
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(501);
   });
 
   it('should return 404 for /api/addon-purchases/record (RPC only)', async () => {
@@ -125,7 +120,7 @@ describe('RPC Architecture — Internal endpoints removed from fetch handler', (
     });
 
     const response = await worker.fetch(request);
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(501);
   });
 
   it('should return 404 for /api/transactions/record (RPC only)', async () => {
@@ -137,10 +132,10 @@ describe('RPC Architecture — Internal endpoints removed from fetch handler', (
     });
 
     const response = await worker.fetch(request);
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(501);
   });
 
-  it('should still handle public auth endpoints correctly', async () => {
+  it('should not expose any HTTP routes on the entrypoint', async () => {
     const worker = await createWorker();
     const request = new Request('https://sso-api/auth/login', {
       method: 'POST',
@@ -152,13 +147,14 @@ describe('RPC Architecture — Internal endpoints removed from fetch handler', (
     });
 
     const response = await worker.fetch(request);
-    expect(response.status).not.toBe(404);
+    expect(response.status).toBe(501);
   });
 
-  it('should export a WorkerEntrypoint class with RPC methods', async () => {
+  it('should export a WorkerEntrypoint class with no own fetch handler and RPC methods', async () => {
     const { default: SsoWorker } = await import('../index');
     expect(typeof SsoWorker).toBe('function');
     expect(SsoWorker.name).toBe('SsoWorker');
+    expect(Object.getOwnPropertyNames(SsoWorker.prototype)).not.toContain('fetch');
     expect(typeof SsoWorker.prototype.recordTransaction).toBe('function');
     expect(typeof SsoWorker.prototype.syncPlans).toBe('function');
     expect(typeof SsoWorker.prototype.recordAddonPurchase).toBe('function');

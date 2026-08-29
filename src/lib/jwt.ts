@@ -1,6 +1,6 @@
-import { SignJWT, jwtVerify, importPKCS8, importSPKI } from "jose";
-import type { Env, AccessTokenPayload } from "../types";
-import { JWT_ISSUER, JWT_AUDIENCE } from "./constants";
+import { SignJWT, importPKCS8, importSPKI, jwtVerify } from "jose";
+import type { AccessTokenPayload, Env } from "../types";
+import { JWT_AUDIENCE, JWT_ISSUER } from "./constants";
 
 const ALG = "RS256";
 const ACCESS_TOKEN_TTL = "15m";
@@ -12,13 +12,13 @@ let cachedPublicKey: { pem: string; key: any } | null = null;
 async function getPrivateKey(env: Env): Promise<any> {
   if (!cachedPrivateKey || cachedPrivateKey.pem !== env.JWT_PRIVATE_KEY) {
     if (!env.JWT_PRIVATE_KEY) throw new Error("JWT_PRIVATE_KEY is missing from environment");
-    
+
     // Handle both literal string '\n' (from .dev.vars) and actual newlines
     let formattedKey = env.JWT_PRIVATE_KEY;
     if (typeof formattedKey === 'string' && formattedKey.includes('\\n')) {
       formattedKey = formattedKey.split('\\n').join('\n');
     }
-    
+
     try {
       const key = await importPKCS8(formattedKey, "RS256");
       cachedPrivateKey = {
@@ -35,7 +35,7 @@ async function getPrivateKey(env: Env): Promise<any> {
 async function getPublicKey(env: Env): Promise<any> {
   if (cachedPublicKey?.pem === env.JWT_PUBLIC_KEY) return cachedPublicKey.key;
   if (!env.JWT_PUBLIC_KEY) throw new Error("JWT_PUBLIC_KEY is missing from environment");
-  
+
   let formattedKey = env.JWT_PUBLIC_KEY;
   if (typeof formattedKey === 'string' && formattedKey.includes('\\n')) {
     formattedKey = formattedKey.split('\\n').join('\n');
@@ -67,6 +67,8 @@ export async function signAccessToken(
   const token = await new SignJWT(payload as unknown as Record<string, unknown>)
     .setProtectedHeader({ alg: ALG, kid: env.JWT_KID, typ: "JWT" })
     .setIssuedAt()
+    // Every issuance is a distinct credential even when identical claims are signed in the same second.
+    .setJti(crypto.randomUUID())
     .setExpirationTime(ACCESS_TOKEN_TTL)
     .setIssuer(JWT_ISSUER)
     .setAudience(JWT_AUDIENCE)

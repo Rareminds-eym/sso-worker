@@ -1,4 +1,3 @@
-import { createBatch } from "../lib/batch-kv";
 import { db } from "../lib/db";
 import { buildLearnerInvitationEmail } from "../lib/email-templates";
 import { getErrorMessage } from "../lib/error-utils";
@@ -323,80 +322,6 @@ export async function performCreateLearnerUser(
 	} catch (error) {
 		const errorMsg = getErrorMessage(error);
 		console.error(`[SSO] Error creating learner user for ${email}:`, errorMsg);
-		return { success: false, error: errorMsg };
-	}
-}
-
-/**
- * Queue bulk learner upload (RPC method)
- * Called by Skillpassport to initiate bulk CSV processing
- */
-export async function performQueueBulkLearnerUpload(
-	env: Env,
-	data: {
-		csv_data: string;
-		organization_id: string;
-		admin_id: string;
-	},
-): Promise<{ success: boolean; batch_id?: string; error?: string }> {
-	if (!data.csv_data || !data.csv_data.trim() || !data.organization_id) {
-		return {
-			success: false,
-			error: "csv_data and organization_id are required",
-		};
-	}
-
-	try {
-		// Generate batch ID
-		const batchId = `BATCH-${new Date().toISOString().split("T")[0]}-${Date.now()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
-
-		console.log(
-			`[SSO] Queueing bulk upload batch ${batchId} for org ${data.organization_id}`,
-		);
-
-		// Quick row count from CSV string (header is first line, data rows are the rest)
-		const csvLines = data.csv_data.trim().split("\n");
-		const estimatedRows = csvLines.length > 1 ? csvLines.length - 1 : 0;
-
-		// Create batch in KV immediately so frontend can start polling
-		await createBatch(
-			env,
-			batchId,
-			data.admin_id || "system",
-			data.organization_id,
-			estimatedRows,
-		).catch((err) => {
-			console.error(`[SSO] Failed to create batch in KV: ${err}`);
-		});
-
-		if (!env.LEARNER_ADMISSION_QUEUE) {
-			const errorMsg = "LEARNER_ADMISSION_QUEUE not bound";
-			console.error(`[SSO] ${errorMsg}`);
-			throw new Error(errorMsg);
-		}
-
-		try {
-			await env.LEARNER_ADMISSION_QUEUE.send({
-				type: "parse-csv",
-				batch_id: batchId,
-				csv_data: data.csv_data,
-				organization_id: data.organization_id,
-				admin_id: data.admin_id,
-			});
-		} catch (queueError) {
-			const errorMsg = getErrorMessage(queueError);
-			throw new Error(`Failed to queue bulk upload: ${errorMsg}`);
-		}
-
-		console.log(`[SSO] Queued parse-csv job for batch ${batchId}`);
-
-		return {
-			success: true,
-			batch_id: batchId,
-		};
-	} catch (error) {
-		const errorMsg = getErrorMessage(error);
-		console.error(`[SSO] Error queueing bulk upload:`, errorMsg);
 		return { success: false, error: errorMsg };
 	}
 }

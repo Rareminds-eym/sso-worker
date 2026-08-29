@@ -1,23 +1,19 @@
 /**
  * Preservation Property Tests - SSO Worker RPC Architecture
  *
- * Validates that:
- * - User authentication still works on public endpoints
- * - Public endpoints remain accessible without auth
- * - JWKS endpoint works
- * - The SsoWorker export is a proper WorkerEntrypoint class
+ * Validates against the private RPC binding surface that:
+ * - User authentication still works on protected RPC methods
+ * - Public RPC methods (getJwks) remain accessible without auth
+ * - Invalid/expired/missing credentials are rejected
  */
 
 import { SignJWT, importPKCS8 } from 'jose';
-import { beforeAll, describe, expect, it } from 'vitest';
-import { JWT_AUDIENCE, JWT_ISSUER } from '../lib/constants';
-import type { Env } from '../types';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthorizationCodeStore } from '../durable-objects/AuthorizationCodeStore';
+import { JWT_AUDIENCE, JWT_ISSUER } from '../lib/constants';
+import type { CorrelationId } from '../rpc/contracts';
 import type { SyncEvent } from '../lib/sync-queue';
-
-type FetchableWorker = {
-  fetch: (request: Request) => Promise<Response>;
-};
+import type { Env } from '../types';
 
 function createDurableObjectId(value: string): DurableObjectId {
   return {
@@ -46,7 +42,7 @@ function createMockQueue<T>(): Queue<T> {
   };
 }
 
-// Mock environment for testing
+const mockStore = new Map<string, string>();
 const mockSyncQueue = createMockQueue<SyncEvent>();
 const mockUnknownQueue = createMockQueue<unknown>();
 const mockEmailService: Env["EMAIL_SERVICE"] = {
@@ -98,8 +94,15 @@ Rjrsi+RT9/exhNF/0u71anWAKVAVNtn6aq6gZyrWxpKIi2nBvUDUXRuTlgpR0qx7
 UQIDAQAB
 -----END PUBLIC KEY-----`,
   JWT_KID: 'test-key-1',
+  JWKS_FRESHNESS_SECONDS: '300',
   ALLOWED_ORIGINS: 'http://localhost:3000',
-  RATE_LIMIT_KV: {} as KVNamespace,
+  RATE_LIMIT_KV: {
+    get: (k: string) => Promise.resolve(mockStore.get(k) ?? null),
+    put: (k: string, v: string) => { mockStore.set(k, v); return Promise.resolve(); },
+    delete: (k: string) => { mockStore.delete(k); return Promise.resolve(); },
+    list: () => Promise.resolve({ keys: [] }),
+    getWithMetadata: () => Promise.resolve({ value: null, metadata: null }),
+  } as unknown as KVNamespace,
   AUTH_CODE_STORE: createAuthorizationCodeNamespace(),
   EMAIL_SERVICE: mockEmailService,
   ALLOWED_APP_URLS: "https://skillpassport.rareminds.in",
@@ -110,17 +113,47 @@ UQIDAQAB
   INTERNAL_WEBHOOK_SECRET: "test_webhook_secret"
 };
 
+let supabaseFetch: ReturnType<typeof vi.fn>;
+
+beforeEach(() => {
+  supabaseFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const restPath = url.match(/\/rest\/v1\/([^?]+)/)?.[1] ?? "";
+    const method = (init?.method ?? "GET").toUpperCase();
+    if (restPath.startsWith("users") && method === "GET") {
+      return new Response(JSON.stringify([{
+        id: "test-user-123",
+        email: "test@example.com",
+        is_email_verified: true,
+        user_metadata: {},
+        is_blocked: false,
+      }]), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (restPath.startsWith("rpc/get_jwt_claims") && method === "POST") {
+      return new Response(JSON.stringify({
+        roles: ["user"],
+        products: [],
+        membership_status: "active",
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+  vi.spyOn(globalThis, "fetch").mockImplementation(supabaseFetch);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 async function createWorker() {
   const ctx: ExecutionContext = { waitUntil: () => { }, passThroughOnException: () => { }, props: undefined };
   const { default: SsoWorker } = await import('../index');
-  const worker = new SsoWorker(ctx, mockEnv);
-  if (!worker.fetch) {
-    throw new Error("SsoWorker fetch handler is not configured");
-  }
-  return worker as FetchableWorker;
+  return new SsoWorker(ctx, mockEnv);
 }
 
-describe('Property: Public Endpoints Work Correctly', () => {
+const correlationId = "corr_preservation_test" as CorrelationId;
+
+describe('Property: RPC Surface Works Correctly', () => {
   let validUserJWT: string;
   let expiredUserJWT: string;
 
@@ -160,82 +193,72 @@ describe('Property: Public Endpoints Work Correctly', () => {
       .sign(privateKey);
   });
 
-  it('should accept valid user JWT on /auth/me endpoint', async () => {
+  it('should accept valid user JWT on getIdentity', async () => {
     const worker = await createWorker();
-    const request = new Request('https://sso-api/auth/me', {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${validUserJWT}`,
-        'Origin': 'http://localhost:3000',
-      },
+    const outcome = await worker.getIdentity({
+      accessToken: validUserJWT,
+      correlationId,
     });
 
-    const response = await worker.fetch(request);
-    expect(response.status).not.toBe(401);
+    expect(outcome.kind).toBe("succeeded");
+    if (outcome.kind === "succeeded") {
+      expect(outcome.data.subject).toBe('test-user-123');
+      expect(outcome.data.email).toBe('test@example.com');
+    }
   });
 
-  it('should reject expired JWT on user-facing endpoints', async () => {
+  it('should reject expired JWT on protected RPC methods', async () => {
     const worker = await createWorker();
-    const request = new Request('https://sso-api/auth/me', {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${expiredUserJWT}`,
-        'Origin': 'http://localhost:3000',
-      },
+    const outcome = await worker.getIdentity({
+      accessToken: expiredUserJWT,
+      correlationId,
     });
 
-    const response = await worker.fetch(request);
-    expect(response.status).toBe(401);
+    expect(outcome.kind).toBe("rejected");
+    if (outcome.kind === "rejected") expect(outcome.code).toBe("authorization_denied");
   });
 
-  it('should reject invalid JWT on user-facing endpoints', async () => {
+  it('should reject invalid JWT on protected RPC methods', async () => {
     const worker = await createWorker();
-    const request = new Request('https://sso-api/auth/me', {
-      method: 'GET',
-      headers: {
-        'Authorization': 'Bearer invalid-jwt-token',
-        'Origin': 'http://localhost:3000',
-      },
+    const outcome = await worker.getIdentity({
+      accessToken: 'invalid-jwt-token',
+      correlationId,
     });
 
-    const response = await worker.fetch(request);
-    expect(response.status).toBe(401);
+    expect(outcome.kind).toBe("rejected");
+    if (outcome.kind === "rejected") expect(outcome.code).toBe("authorization_denied");
   });
 
-  it('should reject requests with no authentication on protected endpoints', async () => {
+  it('should reject requests with no authentication on protected RPC methods', async () => {
     const worker = await createWorker();
-    const request = new Request('https://sso-api/auth/me', {
-      method: 'GET',
-      headers: { 'Origin': 'http://localhost:3000' },
+    const outcome = await worker.getIdentity({
+      accessToken: '',
+      correlationId,
     });
 
-    const response = await worker.fetch(request);
-    expect(response.status).toBe(401);
+    expect(outcome.kind).toBe("rejected");
+    if (outcome.kind === "rejected") expect(outcome.code).toBe("authorization_denied");
   });
 
-  it('should allow access to public endpoints without authentication', async () => {
+  it('should allow access to public RPC methods without authentication', async () => {
     const worker = await createWorker();
-    const request = new Request('https://sso-api/health', {
-      method: 'GET',
-      headers: { 'Origin': 'http://localhost:3000' },
-    });
+    const outcome = await worker.getJwks({ correlationId });
 
-    const response = await worker.fetch(request);
-    expect(response.status).toBe(200);
+    expect(outcome.kind).toBe("succeeded");
+    if (outcome.kind === "succeeded") {
+      expect(outcome.keys).toBeDefined();
+      expect(Array.isArray(outcome.keys)).toBe(true);
+      expect(outcome.keys.length).toBeGreaterThan(0);
+    }
   });
 
-  it('should allow access to JWKS endpoint without authentication', async () => {
+  it('should expose the authoritative JWKS key with the configured kid', async () => {
     const worker = await createWorker();
-    const request = new Request('https://sso-api/.well-known/jwks.json', {
-      method: 'GET',
-      headers: { 'Origin': 'http://localhost:3000' },
-    });
+    const outcome = await worker.getJwks({ correlationId });
 
-    const response = await worker.fetch(request);
-    expect(response.status).toBe(200);
-
-    const body = await response.json() as { keys: unknown[] };
-    expect(body).toHaveProperty('keys');
-    expect(Array.isArray(body.keys)).toBe(true);
+    expect(outcome.kind).toBe("succeeded");
+    if (outcome.kind === "succeeded") {
+      expect(outcome.keys[0]).toMatchObject({ kid: mockEnv.JWT_KID, alg: 'RS256' });
+    }
   });
 });

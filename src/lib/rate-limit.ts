@@ -9,6 +9,7 @@ export async function checkAccountLockout(
   env: Env,
   email: string,
 ): Promise<Response | null> {
+  if (!env?.RATE_LIMIT_KV) return null;
   const key = `lockout:${email}`;
   const current = parseInt((await env.RATE_LIMIT_KV.get(key)) ?? "0", 10);
 
@@ -21,6 +22,7 @@ export async function checkAccountLockout(
 
 /** Increment the failed login counter for an email */
 export async function recordFailedLogin(env: Env, email: string): Promise<void> {
+  if (!env?.RATE_LIMIT_KV) return;
   const key = `lockout:${email}`;
   const current = parseInt((await env.RATE_LIMIT_KV.get(key)) ?? "0", 10);
   await env.RATE_LIMIT_KV.put(key, String(current + 1), {
@@ -30,6 +32,7 @@ export async function recordFailedLogin(env: Env, email: string): Promise<void> 
 
 /** Clear the failed login counter on successful login */
 export async function clearFailedLogins(env: Env, email: string): Promise<void> {
+  if (!env?.RATE_LIMIT_KV) return;
   await env.RATE_LIMIT_KV.delete(`lockout:${email}`);
 }
 
@@ -51,6 +54,7 @@ export async function endpointRateLimit(
   maxRequests: number,
   windowSeconds: number = 60,
 ): Promise<Response | null> {
+  if (!env?.RATE_LIMIT_KV) return null;
   const kvKey = `rl:${key}`;
   const current = parseInt((await env.RATE_LIMIT_KV.get(kvKey)) ?? "0", 10);
 

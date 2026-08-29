@@ -1,7 +1,9 @@
 /**
- * Comprehensive tests for forgot-password and reset-password endpoints.
+ * Tests for the forgot-password and reset-password route handlers, which the
+ * RPC layer (forgotPassword / resetPassword on the private binding) wraps.
  *
- * Tests both route handlers directly with mocked dependencies:
+ * Exercises performForgotPassword / performResetPassword directly with mocked
+ * dependencies:
  * - Supabase REST API (via global fetch mock)
  * - KV store (email throttle)
  * - Email service binding
@@ -215,11 +217,11 @@ function createMockEnv(kv?: ReturnType<typeof createMockKV>): Env {
     ALLOWED_ORIGINS: "http://localhost:3000",
     RATE_LIMIT_KV: (kv ?? createMockKV()) as unknown as KVNamespace,
     EMAIL_SERVICE: {
-      fetch: vi.fn(async (_req: Request) => {
-        mailSent.push({ url: _req.url, body: await _req.json().catch(() => ({})) });
-        return new Response("OK", { status: 200 });
+      fetch: vi.fn(async (_req: Request) => new Response("OK", { status: 200 })),
+      sendEmail: vi.fn(async (payload: { to: string; subject: string; html: string; text: string }) => {
+        mailSent.push({ body: payload });
+        return { success: true };
       }),
-      sendEmail: vi.fn(async () => ({ success: true })),
     } as unknown as Fetcher,
     ALLOWED_APP_URLS: "http://localhost:3000,https://*.rareminds.in",
   } as Env;
@@ -239,6 +241,36 @@ async function flushWaitUntil(): Promise<void> {
   const promises = [..._waitUntilPromises];
   _waitUntilPromises = [];
   await Promise.all(promises);
+}
+
+async function invokeForgotPassword(
+  req: Request,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<{ status: number; json: () => Promise<any> }> {
+  const { performForgotPassword } = await import("../routes/password-reset");
+  const body = await req.json().catch(() => null);
+  if (body === null) return { status: 400, json: async () => ({ error: "Invalid JSON body" }) };
+  const ip = req.headers.get("CF-Connecting-IP") ?? "unknown";
+  const ua = req.headers.get("User-Agent") ?? null;
+  const result = await performForgotPassword(env, ctx, body as { email?: string; redirect_url?: string }, ip, ua);
+  if (result.error) return { status: result.status ?? 400, json: async () => ({ error: result.error }) };
+  return { status: result.status ?? 200, json: async () => ({ message: result.message }) };
+}
+
+async function invokeResetPassword(
+  req: Request,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<{ status: number; json: () => Promise<any> }> {
+  const { performResetPassword } = await import("../routes/password-reset");
+  const body = await req.json().catch(() => null);
+  if (body === null) return { status: 400, json: async () => ({ error: "Invalid JSON body" }) };
+  const ip = req.headers.get("CF-Connecting-IP") ?? null;
+  const ua = req.headers.get("User-Agent") ?? null;
+  const result = await performResetPassword(env, ctx, body as { token?: string; password?: string }, ip, ua);
+  if (result.error) return { status: result.status ?? 400, json: async () => ({ error: result.error }) };
+  return { status: result.status ?? 200, json: async () => ({ reset: result.reset ?? true }) };
 }
 
 // ── Tests ───────────────────────────────────────────────────────
@@ -265,7 +297,6 @@ describe("forgotPassword", () => {
   it("should send reset email for existing user and return 200", async () => {
     setupUser("user@example.com");
 
-    const { forgotPassword } = await import("../routes/password-reset");
     const body = JSON.stringify({ email: "user@example.com" });
     const req = new Request("https://sso-api/auth/forgot-password", {
       method: "POST",
@@ -277,7 +308,7 @@ describe("forgotPassword", () => {
       body,
     });
 
-    const res = await forgotPassword(req, env, ctx);
+    const res = await invokeForgotPassword(req, env, ctx);
     const data = await res.json();
 
     expect(res.status).toBe(200);
@@ -311,14 +342,13 @@ describe("forgotPassword", () => {
   it("should normalize email to lowercase before lookup", async () => {
     setupUser("user@example.com");
 
-    const { forgotPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/forgot-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: "USER@EXAMPLE.COM" }),
     });
 
-    const res = await forgotPassword(req, env, ctx);
+    const res = await invokeForgotPassword(req, env, ctx);
     expect(res.status).toBe(200);
 
     await flushWaitUntil();
@@ -331,14 +361,13 @@ describe("forgotPassword", () => {
   it("should reject emails with leading/trailing whitespace at validation", async () => {
     setupUser("spaced@example.com");
 
-    const { forgotPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/forgot-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: "  spaced@example.com  " }),
     });
 
-    const res = await forgotPassword(req, env, ctx);
+    const res = await invokeForgotPassword(req, env, ctx);
     expect(res.status).toBe(400);
     const data = (await res.json()) as any;
     expect(data.error).toBe("Invalid email format");
@@ -349,14 +378,13 @@ describe("forgotPassword", () => {
   });
 
   it("should return 400 for missing email field", async () => {
-    const { forgotPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/forgot-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
     });
 
-    const res = await forgotPassword(req, env, ctx);
+    const res = await invokeForgotPassword(req, env, ctx);
     const data = await res.json();
 
     expect(res.status).toBe(400);
@@ -364,14 +392,13 @@ describe("forgotPassword", () => {
   });
 
   it("should return 400 for invalid email format", async () => {
-    const { forgotPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/forgot-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: "not-an-email" }),
     });
 
-    const res = await forgotPassword(req, env, ctx);
+    const res = await invokeForgotPassword(req, env, ctx);
     const data = await res.json();
 
     expect(res.status).toBe(400);
@@ -379,14 +406,13 @@ describe("forgotPassword", () => {
   });
 
   it("should validate email type (not a string)", async () => {
-    const { forgotPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/forgot-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: 123 }),
     });
 
-    const res = await forgotPassword(req, env, ctx);
+    const res = await invokeForgotPassword(req, env, ctx);
     const data = await res.json();
 
     expect(res.status).toBe(400);
@@ -394,14 +420,13 @@ describe("forgotPassword", () => {
   });
 
   it("should return 400 for invalid JSON body", async () => {
-    const { forgotPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/forgot-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "not json",
     });
 
-    const res = await forgotPassword(req, env, ctx);
+    const res = await invokeForgotPassword(req, env, ctx);
     const data = await res.json();
 
     expect(res.status).toBe(400);
@@ -409,7 +434,6 @@ describe("forgotPassword", () => {
   });
 
   it("should return 400 for invalid redirect_url", async () => {
-    const { forgotPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/forgot-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -419,7 +443,7 @@ describe("forgotPassword", () => {
       }),
     });
 
-    const res = await forgotPassword(req, env, ctx);
+    const res = await invokeForgotPassword(req, env, ctx);
     const data = await res.json();
 
     expect(res.status).toBe(400);
@@ -432,7 +456,6 @@ describe("forgotPassword", () => {
       ALLOWED_APP_URLS: undefined as unknown as string,
     };
 
-    const { forgotPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/forgot-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -442,7 +465,7 @@ describe("forgotPassword", () => {
       }),
     });
 
-    const res = await forgotPassword(req, envNoUrls, ctx);
+    const res = await invokeForgotPassword(req, envNoUrls, ctx);
     expect(res.status).toBe(500);
     const data = (await res.json()) as any;
     expect(data.error).toContain("Server misconfiguration");
@@ -455,7 +478,6 @@ describe("forgotPassword", () => {
     };
     setupUser("user@example.com");
 
-    const { forgotPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/forgot-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -464,13 +486,12 @@ describe("forgotPassword", () => {
 
     // resolveAppUrl throws Error when ALLOWED_APP_URLS is missing
     // This propagates up as an unhandled exception → 500 in the fetch handler
-    await expect(forgotPassword(req, envNoUrls, ctx)).rejects.toThrow("ALLOWED_APP_URLS is required");
+    await expect(invokeForgotPassword(req, envNoUrls, ctx)).rejects.toThrow("ALLOWED_APP_URLS is required");
   });
 
   it("should accept valid redirect_url from allowlist", async () => {
     setupUser("user@example.com");
 
-    const { forgotPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/forgot-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -480,7 +501,7 @@ describe("forgotPassword", () => {
       }),
     });
 
-    const res = await forgotPassword(req, env, ctx);
+    const res = await invokeForgotPassword(req, env, ctx);
     expect(res.status).toBe(200);
 
     await flushWaitUntil();
@@ -490,14 +511,13 @@ describe("forgotPassword", () => {
   });
 
   it("should return 200 for non-existent user (prevent email enumeration)", async () => {
-    const { forgotPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/forgot-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: "nonexistent@example.com" }),
     });
 
-    const res = await forgotPassword(req, env, ctx);
+    const res = await invokeForgotPassword(req, env, ctx);
     const data = await res.json();
 
     // Always returns same message
@@ -513,14 +533,13 @@ describe("forgotPassword", () => {
   it("should return 200 for blocked user (prevent email enumeration)", async () => {
     setupUser("blocked@example.com", { is_blocked: true });
 
-    const { forgotPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/forgot-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: "blocked@example.com" }),
     });
 
-    const res = await forgotPassword(req, env, ctx);
+    const res = await invokeForgotPassword(req, env, ctx);
     const data = await res.json();
 
     expect(res.status).toBe(200);
@@ -533,7 +552,6 @@ describe("forgotPassword", () => {
   });
 
   it("should return same response whether user exists or not (timing protection)", async () => {
-    const { forgotPassword } = await import("../routes/password-reset");
 
     // Request for existing user
     setupUser("exists@example.com");
@@ -542,18 +560,17 @@ describe("forgotPassword", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: "exists@example.com" }),
     });
-    const res1 = await forgotPassword(req1, env, ctx);
+    const res1 = await invokeForgotPassword(req1, env, ctx);
 
     // Request for non-existing user (different kv to avoid throttle)
     const kv2 = createMockKV();
     const env2 = createMockEnv(kv2);
-    const { forgotPassword: forgotPw2 } = await import("../routes/password-reset");
     const req2 = new Request("https://sso-api/auth/forgot-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: "noone@example.com" }),
     });
-    const res2 = await forgotPassword(req2, env2, { waitUntil: vi.fn(), passThroughOnException: vi.fn() } as unknown as ExecutionContext);
+    const res2 = await invokeForgotPassword(req2, env2, { waitUntil: vi.fn(), passThroughOnException: vi.fn() } as unknown as ExecutionContext);
 
     const data1 = await res1.json();
     const data2 = await res2.json();
@@ -570,17 +587,44 @@ describe("forgotPassword", () => {
     const windowSlot = Math.floor(Date.now() / 3600000);
     await kv.put(`et:reset:throttle@example.com:${windowSlot}`, "3");
 
-    const { forgotPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/forgot-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: "throttle@example.com" }),
     });
-    const res = await forgotPassword(req, env, ctx);
+    const res = await invokeForgotPassword(req, env, ctx);
 
     expect(res.status).toBe(429);
     const data = (await res.json()) as any;
     expect(data.error).toContain("Too many");
+  });
+
+  it("should return 429 when IP-based rate limit is exceeded", async () => {
+    setupUser("ip1@example.com");
+    setupUser("ip2@example.com");
+    setupUser("ip3@example.com");
+
+    // 3 distinct emails, same IP: each request increments the shared IP counter
+    for (const email of ["ip1@example.com", "ip2@example.com", "ip3@example.com"]) {
+      const req = new Request("https://sso-api/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.9" },
+        body: JSON.stringify({ email }),
+      });
+      const res = await invokeForgotPassword(req, env, ctx);
+      expect(res.status).toBe(200);
+    }
+
+    const req4 = new Request("https://sso-api/auth/forgot-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.9" },
+      body: JSON.stringify({ email: "ip1@example.com" }),
+    });
+    const res4 = await invokeForgotPassword(req4, env, ctx);
+
+    expect(res4.status).toBe(429);
+    const data4 = (await res4.json()) as any;
+    expect(data4.error).toContain("Rate limit");
   });
 
   it("should invalidate previous unused reset tokens for same user", async () => {
@@ -597,14 +641,13 @@ describe("forgotPassword", () => {
       created_at: new Date().toISOString(),
     });
 
-    const { forgotPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/forgot-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: "user@example.com" }),
     });
 
-    const res = await forgotPassword(req, env, ctx);
+    const res = await invokeForgotPassword(req, env, ctx);
     expect(res.status).toBe(200);
 
     // Old token should now be marked as used
@@ -650,7 +693,6 @@ describe("forgotPassword", () => {
     vi.restoreAllMocks();
     vi.spyOn(globalThis, "fetch").mockImplementation(mockFetch);
 
-    const { forgotPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/forgot-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -658,7 +700,7 @@ describe("forgotPassword", () => {
     });
 
     // Should NOT throw - the catch handler should swallow the error
-    const res = await forgotPassword(req, env, ctx);
+    const res = await invokeForgotPassword(req, env, ctx);
     expect(res.status).toBe(200);
 
     await flushWaitUntil();
@@ -682,14 +724,13 @@ describe("forgotPassword", () => {
     vi.restoreAllMocks();
     vi.spyOn(globalThis, "fetch").mockImplementation(mockFetch);
 
-    const { forgotPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/forgot-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: "user@example.com" }),
     });
 
-    await expect(forgotPassword(req, env2, ctx)).rejects.toThrow();
+    await expect(invokeForgotPassword(req, env2, ctx)).rejects.toThrow();
   });
 
   it("should not send email if token storage fails", async () => {
@@ -709,14 +750,13 @@ describe("forgotPassword", () => {
     vi.restoreAllMocks();
     vi.spyOn(globalThis, "fetch").mockImplementation(mockFetch);
 
-    const { forgotPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/forgot-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: "user@example.com" }),
     });
 
-    await expect(forgotPassword(req, env, ctx)).rejects.toThrow();
+    await expect(invokeForgotPassword(req, env, ctx)).rejects.toThrow();
   });
 });
 
@@ -754,7 +794,6 @@ describe("resetPassword", () => {
       created_at: new Date().toISOString(),
     });
 
-    const { resetPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/reset-password", {
       method: "POST",
       headers: {
@@ -765,7 +804,7 @@ describe("resetPassword", () => {
       body: JSON.stringify({ token: rawToken, password: "NewStr0ng!Pass" }),
     });
 
-    const res = await resetPassword(req, env, ctx);
+    const res = await invokeResetPassword(req, env, ctx);
     const data = await res.json();
 
     expect(res.status).toBe(200);
@@ -793,14 +832,13 @@ describe("resetPassword", () => {
   });
 
   it("should return 400 for missing token", async () => {
-    const { resetPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/reset-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password: "NewStr0ng!Pass" }),
     });
 
-    const res = await resetPassword(req, env, ctx);
+    const res = await invokeResetPassword(req, env, ctx);
     const data = await res.json();
 
     expect(res.status).toBe(400);
@@ -808,14 +846,13 @@ describe("resetPassword", () => {
   });
 
   it("should return 400 for missing password", async () => {
-    const { resetPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/reset-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: "some-token" }),
     });
 
-    const res = await resetPassword(req, env, ctx);
+    const res = await invokeResetPassword(req, env, ctx);
     const data = await res.json();
 
     expect(res.status).toBe(400);
@@ -823,14 +860,13 @@ describe("resetPassword", () => {
   });
 
   it("should return 400 for weak password (too short)", async () => {
-    const { resetPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/reset-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: "some-token", password: "Ab1!" }),
     });
 
-    const res = await resetPassword(req, env, ctx);
+    const res = await invokeResetPassword(req, env, ctx);
     const data = (await res.json()) as any;
 
     expect(res.status).toBe(400);
@@ -838,14 +874,13 @@ describe("resetPassword", () => {
   });
 
   it("should return 400 for weak password (doesn't meet complexity)", async () => {
-    const { resetPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/reset-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: "some-token", password: "abcdefghijklmnop" }),
     });
 
-    const res = await resetPassword(req, env, ctx);
+    const res = await invokeResetPassword(req, env, ctx);
     const data = (await res.json()) as any;
 
     expect(res.status).toBe(400);
@@ -853,7 +888,6 @@ describe("resetPassword", () => {
   });
 
   it("should return 400 for password exceeding max length", async () => {
-    const { resetPassword } = await import("../routes/password-reset");
     const longPw = "Ab1!" + "x".repeat(72);
     const req = new Request("https://sso-api/auth/reset-password", {
       method: "POST",
@@ -861,7 +895,7 @@ describe("resetPassword", () => {
       body: JSON.stringify({ token: "some-token", password: longPw }),
     });
 
-    const res = await resetPassword(req, env, ctx);
+    const res = await invokeResetPassword(req, env, ctx);
     const data = (await res.json()) as any;
 
     expect(res.status).toBe(400);
@@ -869,14 +903,13 @@ describe("resetPassword", () => {
   });
 
   it("should return 400 for invalid JSON body", async () => {
-    const { resetPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/reset-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "not json",
     });
 
-    const res = await resetPassword(req, env, ctx);
+    const res = await invokeResetPassword(req, env, ctx);
     const data = await res.json();
 
     expect(res.status).toBe(400);
@@ -884,14 +917,13 @@ describe("resetPassword", () => {
   });
 
   it("should return 404 for token not found in database", async () => {
-    const { resetPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/reset-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: crypto.randomUUID(), password: "NewStr0ng!Pass" }),
     });
 
-    const res = await resetPassword(req, env, ctx);
+    const res = await invokeResetPassword(req, env, ctx);
     const data = await res.json();
 
     expect(res.status).toBe(404);
@@ -913,14 +945,13 @@ describe("resetPassword", () => {
       created_at: new Date().toISOString(),
     });
 
-    const { resetPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/reset-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: rawToken, password: "NewStr0ng!Pass" }),
     });
 
-    const res = await resetPassword(req, env, ctx);
+    const res = await invokeResetPassword(req, env, ctx);
     const data = await res.json();
 
     expect(res.status).toBe(410);
@@ -942,14 +973,13 @@ describe("resetPassword", () => {
       created_at: new Date(Date.now() - 7200_000).toISOString(),
     });
 
-    const { resetPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/reset-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: rawToken, password: "NewStr0ng!Pass" }),
     });
 
-    const res = await resetPassword(req, env, ctx);
+    const res = await invokeResetPassword(req, env, ctx);
     const data = await res.json();
 
     expect(res.status).toBe(410);
@@ -975,14 +1005,13 @@ describe("resetPassword", () => {
     dbState.sessions.set("sess-1", { id: "sess-1", user_id: user.id, revoked: false });
     dbState.sessions.set("sess-2", { id: "sess-2", user_id: user.id, revoked: false });
 
-    const { resetPassword } = await import("../routes/password-reset");
     const req = new Request("https://sso-api/auth/reset-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: rawToken, password: "NewStr0ng!Pass" }),
     });
 
-    const res = await resetPassword(req, env, ctx);
+    const res = await invokeResetPassword(req, env, ctx);
     expect(res.status).toBe(200);
 
     // All sessions should be revoked
@@ -1006,7 +1035,6 @@ describe("resetPassword", () => {
       created_at: new Date().toISOString(),
     });
 
-    const { resetPassword } = await import("../routes/password-reset");
 
     // First reset should succeed
     const req1 = new Request("https://sso-api/auth/reset-password", {
@@ -1014,7 +1042,7 @@ describe("resetPassword", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: rawToken, password: "NewStr0ng!Pass" }),
     });
-    const res1 = await resetPassword(req1, env, ctx);
+    const res1 = await invokeResetPassword(req1, env, ctx);
     expect(res1.status).toBe(200);
 
     // Second reset with same token should fail (410 - already used)
@@ -1023,7 +1051,7 @@ describe("resetPassword", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: rawToken, password: "AnotherStr0ng!Pass" }),
     });
-    const res2 = await resetPassword(req2, env, ctx);
+    const res2 = await invokeResetPassword(req2, env, ctx);
     expect(res2.status).toBe(410);
     const data2 = await res2.json();
     expect(data2).toEqual({ error: "Token already used" });
@@ -1053,14 +1081,13 @@ describe("forgotPassword + resetPassword integration", () => {
     setupUser("flow@example.com");
 
     // Step 1: Request password reset
-    const { forgotPassword, resetPassword } = await import("../routes/password-reset");
     const forgotReq = new Request("https://sso-api/auth/forgot-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: "flow@example.com" }),
     });
 
-    const forgotRes = await forgotPassword(forgotReq, env, ctx);
+    const forgotRes = await invokeForgotPassword(forgotReq, env, ctx);
     expect(forgotRes.status).toBe(200);
 
     // Flush background tasks to ensure email is sent
@@ -1080,7 +1107,7 @@ describe("forgotPassword + resetPassword integration", () => {
       body: JSON.stringify({ token: resetToken, password: "NewStr0ng!Pass" }),
     });
 
-    const resetRes = await resetPassword(resetReq, env, ctx);
+    const resetRes = await invokeResetPassword(resetReq, env, ctx);
     const resetData = await resetRes.json();
 
     expect(resetRes.status).toBe(200);
@@ -1090,71 +1117,5 @@ describe("forgotPassword + resetPassword integration", () => {
     const auditActions = dbState.audit_logs.map((l: any) => l.action);
     expect(auditActions).toContain("password_reset_requested");
     expect(auditActions).toContain("password_reset_completed");
-  });
-});
-
-describe("rate limiting middleware for password endpoints", () => {
-  beforeEach(async () => {
-    resetDbState();
-    mailSent = [];
-    mockFetch = createMockSupabaseFetch();
-    vi.spyOn(globalThis, "fetch").mockImplementation(mockFetch);
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("should bypass in-memory rate limit when cf-connecting-ip is missing (internal/service requests)", async () => {
-    const kv2 = createMockKV();
-    const env2 = createMockEnv(kv2);
-    const { default: SsoWorker } = await import("../index");
-    const worker = new SsoWorker(
-      { waitUntil: vi.fn(), passThroughOnException: vi.fn() } as unknown as ExecutionContext,
-      env2 as any,
-    );
-
-    // Request without CF-Connecting-IP should bypass rate limiter
-    const req = new Request("https://sso-api/auth/forgot-password", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Origin": "http://localhost:3000" },
-      body: JSON.stringify({ email: "nobody@example.com" }),
-    });
-
-    const res = await worker.fetch(req);
-    // Should reach the handler and return 200 (generic message since user doesn't exist)
-    expect(res.status).toBe(200);
-  });
-
-  it("should apply rate limiting when cf-connecting-ip is present", async () => {
-    const kv2 = createMockKV();
-    const env2 = createMockEnv(kv2);
-    const { default: SsoWorker } = await import("../index");
-
-    // Create multiple requests with the same IP to trigger rate limit
-    for (let i = 0; i < 4; i++) {
-      const worker = new SsoWorker(
-        { waitUntil: vi.fn(), passThroughOnException: vi.fn() } as unknown as ExecutionContext,
-        env2 as any,
-      );
-
-      const req = new Request("https://sso-api/auth/forgot-password", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Origin": "http://localhost:3000",
-          "CF-Connecting-IP": "192.168.1.1",
-        },
-        body: JSON.stringify({ email: `test${i}@example.com` }),
-      });
-
-      const res = await worker.fetch(req);
-      if (i < 3) {
-        expect(res.status).toBe(200);
-      } else {
-        // 4th request should be rate limited (forgotPassword limit is 3/hr)
-        expect(res.status).toBe(429);
-      }
-    }
   });
 });

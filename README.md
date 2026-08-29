@@ -274,9 +274,22 @@ Resets password and revokes ALL sessions (forces re-login everywhere).
 ```
 Errors: `400`, `404`, `410` (expired/used).
 
-### OAuth Endpoints (Placeholder)
+### Google OAuth (`oauthAuthenticate` RPC)
 
-`GET /auth/oauth/google`, `/auth/oauth/github`, and their `/callback` routes return `501 Not Configured` until a provider is wired up. The `oauth_accounts` table is ready in the schema.
+Google login/signup is implemented as an **RPC method** consumed by
+SkillPassport Pages Functions via the `SSO_SERVICE` binding — browser-facing
+redirect routes live in SkillPassport (`functions/api/oauth/google/*`), not here.
+
+- **Contract:** see `skillpassport/.kiro/adr/ADR-043-google-oauth-authority-layer.md`
+  and the shared types in `src/rpc/contracts.ts`
+  (`OAuthAuthenticateRpcInput → SessionIssueRpcOutcome`).
+- **Performer:** `src/routes/oauth.ts::performOAuthLogin` — link-or-provision
+  logic (auto-link on provider-verified email; new identities become learners
+  attached to the platform org), then session issuance identical to `login`.
+- **Required data:** seeded platform organization (`PLATFORM_ORG_ID`) and a
+  `learner` row in `roles`. Missing either fails loud (`500`) rather than
+  mis-provisioning.
+- **Audit:** emits `login` audit events with `metadata.provider = "google"`.
 
 ---
 
