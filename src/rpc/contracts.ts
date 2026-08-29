@@ -159,6 +159,7 @@ export interface SignupRpcInput extends Correlated {
     readonly password: string;
     readonly organizationName: string;
     readonly role: string;
+    readonly redirectUrl?: string;
     readonly userMetadata?: Readonly<Record<string, JsonValue>>;
     readonly currentRefreshToken?: string;
 }
@@ -168,6 +169,7 @@ export interface SignupMemberRpcInput extends Correlated {
     readonly password: string;
     readonly role: string;
     readonly organizationId?: string;
+    readonly redirectUrl?: string;
     readonly userMetadata?: Readonly<Record<string, JsonValue>>;
     readonly currentRefreshToken?: string;
 }

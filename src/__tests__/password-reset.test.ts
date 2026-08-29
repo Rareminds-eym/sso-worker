@@ -223,7 +223,8 @@ function createMockEnv(kv?: ReturnType<typeof createMockKV>): Env {
         return { success: true };
       }),
     } as unknown as Fetcher,
-    ALLOWED_APP_URLS: "http://localhost:3000,https://*.rareminds.in",
+    SKILLPASSPORT_URL: "https://skillpassport.rareminds.in",
+    ALLOWED_APP_URLS: "https://skillpassport.rareminds.in,http://localhost:3000,https://*.rareminds.in",
   } as Env;
 }
 
@@ -471,9 +472,10 @@ describe("forgotPassword", () => {
     expect(data.error).toContain("Server misconfiguration");
   });
 
-  it("should throw when ALLOWED_APP_URLS is not configured and no redirect_url given", async () => {
+  it("should throw when SKILLPASSPORT_URL is not configured and no redirect_url given", async () => {
     const envNoUrls = {
       ...env,
+      SKILLPASSPORT_URL: undefined as unknown as string,
       ALLOWED_APP_URLS: undefined as unknown as string,
     };
     setupUser("user@example.com");
@@ -484,9 +486,9 @@ describe("forgotPassword", () => {
       body: JSON.stringify({ email: "user@example.com" }),
     });
 
-    // resolveAppUrl throws Error when ALLOWED_APP_URLS is missing
+    // resolveAppUrl throws Error when SKILLPASSPORT_URL is missing and no redirect_url given
     // This propagates up as an unhandled exception → 500 in the fetch handler
-    await expect(invokeForgotPassword(req, envNoUrls, ctx)).rejects.toThrow("ALLOWED_APP_URLS is required");
+    await expect(invokeForgotPassword(req, envNoUrls, ctx)).rejects.toThrow("SKILLPASSPORT_URL is required for email delivery");
   });
 
   it("should accept valid redirect_url from allowlist", async () => {
