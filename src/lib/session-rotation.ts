@@ -2,12 +2,14 @@ import type { Env, JwtClaims } from "../types";
 import { audit } from "./audit";
 import {
     ABSOLUTE_SESSION_LIFETIME_MS,
+    PLATFORM_ORG_ID,
     REUSE_GRACE_INTERVAL_SEC,
     SESSION_TTL_MS,
 } from "./constants";
 import { db, type DbClient } from "./db";
 import { generateRefreshToken, hashToken } from "./hash";
 import { signAccessToken } from "./jwt";
+import { resolveEffectiveRoles } from "./roles";
 
 /**
  * Shared refresh-token rotation module.
@@ -336,13 +338,18 @@ export async function mintAccessToken(
     }
 
     const products = claims?.products ?? [];
+    const effectiveRoles = resolveEffectiveRoles({
+        claims,
+        userMetadata: user.user_metadata,
+        fallbackRole: "learner",
+    });
 
     const token = await signAccessToken(
         {
             sub: userId,
             email: user?.email ?? "",
-            org_id: orgId ?? "",
-            roles: claims?.roles ?? [],
+            org_id: (orgId && orgId.length > 0) ? orgId : PLATFORM_ORG_ID,
+            roles: effectiveRoles,
             products: products,
             membership_status: claims?.membership_status ?? "active",
             is_email_verified: user?.is_email_verified ?? false,

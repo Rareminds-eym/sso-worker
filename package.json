@@ -4,21 +4,22 @@
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
+    "dev:stack": "wrangler dev -c wrangler.toml -c ../auth-sync-consumer/wrangler.toml",
     "deploy": "wrangler deploy",
     "generate-keys": "node scripts/generate-keys.mjs",
     "test": "vitest",
     "test:run": "vitest run"
   },
   "dependencies": {
-    "bcryptjs": "^2.4.3",
-    "jose": "^6.2.3"
+    "bcryptjs": "2.4.3",
+    "jose": "6.2.8"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250109.0",
-    "@types/bcryptjs": "^2.4.6",
-    "supabase": "^2.104.0",
-    "typescript": "^5.7.0",
-    "vitest": "^2.1.8",
-    "wrangler": "^4.94.0"
+    "@cloudflare/workers-types": "5.20260811.1",
+    "@types/bcryptjs": "2.4.6",
+    "supabase": "2.104.0",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7",
+    "wrangler": "4.120.1"
   }
 }

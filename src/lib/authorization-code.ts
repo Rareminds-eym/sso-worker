@@ -92,7 +92,8 @@ function sameLocalAwareUrlPrefix(redirect: URL, allowed: URL): boolean {
 
   const allowedPath = normalizePath(allowed.pathname);
   const redirectPath = normalizePath(redirect.pathname);
-  return redirectPath === allowedPath || redirectPath.startsWith(`${allowedPath}/`);
+  const prefix = allowedPath === "/" ? "/" : `${allowedPath}/`;
+  return redirectPath === allowedPath || redirectPath.startsWith(prefix);
 }
 
 function equivalentLocalHost(left: string, right: string): boolean {

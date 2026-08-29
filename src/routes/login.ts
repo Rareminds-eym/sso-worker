@@ -1,10 +1,11 @@
 import { audit } from "../lib/audit";
-import { SESSION_TTL_MS } from "../lib/constants";
+import { SESSION_TTL_MS, PLATFORM_ORG_ID } from "../lib/constants";
 import { db } from "../lib/db";
 import { generateRefreshToken, hashToken, verifyPassword } from "../lib/hash";
 import { signAccessToken } from "../lib/jwt";
 import { checkAccountLockout, clearFailedLogins, endpointRateLimit, recordFailedLogin } from "../lib/rate-limit";
 import { validateEmail } from "../lib/validate";
+import { resolveEffectiveRoles } from "../lib/roles";
 import type { Env, JwtClaims, LoginBody, Membership, User } from "../types";
 
 // Pre-computed bcrypt hash (cost 12) for constant-time comparison
@@ -84,14 +85,15 @@ export async function performLogin(
   );
 
   const activeMembership = memberships[0] ?? null;
+  const dbOrgId = activeMembership?.org_id
+    ?? (user.user_metadata?.org_id as string | undefined)
+    ?? (user.user_metadata?.organizationId as string | undefined)
+    ?? PLATFORM_ORG_ID;
 
-  let claims: JwtClaims | null = null;
-  if (activeMembership) {
-    claims = await database.rpc<JwtClaims>("get_jwt_claims", {
-      p_user_id: user.id,
-      p_org_id: activeMembership.org_id,
-    });
-  }
+  const claims = await database.rpc<JwtClaims>("get_jwt_claims", {
+    p_user_id: user.id,
+    p_org_id: dbOrgId,
+  }).catch(() => null);
 
   const refreshToken = generateRefreshToken();
   const refreshHash = await hashToken(refreshToken);
@@ -100,7 +102,7 @@ export async function performLogin(
   await database.mutate("sessions", {
     id: sessionId,
     user_id: user.id,
-    org_id: activeMembership?.org_id ?? null,
+    org_id: dbOrgId,
     refresh_token_hash: refreshHash,
     user_agent: ua,
     ip_address: ip,
@@ -110,12 +112,18 @@ export async function performLogin(
     family_created_at: new Date().toISOString(),
   });
 
+  const effectiveRoles = resolveEffectiveRoles({
+    claims,
+    userMetadata: user.user_metadata,
+    fallbackRole: "learner",
+  });
+
   const accessToken = await signAccessToken(
     {
       sub: user.id,
       email: user.email,
-      org_id: activeMembership?.org_id ?? "",
-      roles: claims?.roles ?? [],
+      org_id: dbOrgId,
+      roles: effectiveRoles,
       products: claims?.products ?? [],
       membership_status: claims?.membership_status ?? "active",
       is_email_verified: user.is_email_verified,
@@ -134,6 +142,7 @@ export async function performLogin(
   ctx.waitUntil(
     (async () => {
       try {
+        if (!env?.RATE_LIMIT_KV) return;
         const cacheKey = `login:user-synced:${user.id}`;
         const cached = await env.RATE_LIMIT_KV.get(cacheKey);
         

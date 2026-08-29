@@ -50,7 +50,13 @@ export async function checkUserExistsInSkillpassport(
   try {
     response = await fetch(`${env.SKILLPASSPORT_URL}/api/sync/check-user`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        // Required by the receiver's internal-webhook gate (401 otherwise).
+        ...(env.INTERNAL_WEBHOOK_SECRET
+          ? { Authorization: `Bearer ${env.INTERNAL_WEBHOOK_SECRET}` }
+          : {}),
+      },
       body: JSON.stringify({ userId }),
       signal: controller.signal,
     });

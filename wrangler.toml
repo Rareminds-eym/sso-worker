@@ -5,7 +5,6 @@ compatibility_flags = ["nodejs_compat"]
 
 [dev]
 port = 8787
-host = "127.0.0.1"
 inspector_port = 9227
 
 [observability]
@@ -23,10 +22,11 @@ crons = ["0 3 * * *"]
 
 [vars]
 ENVIRONMENT = "production"
+JWKS_FRESHNESS_SECONDS = "300"
 SUPABASE_URL = "https://quvdgaydpctuspzeqknc.supabase.co"
 SKILLPASSPORT_URL = "https://skillpassport.rareminds.in"
 ALLOWED_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://localhost:8788,http://localhost:8789,https://*.rareminds.in,https://*.pages.dev,http://127.0.0.1:8788,http://127.0.0.1:8789"
-ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:3000/,http://localhost:3000/auth/callback,http://127.0.0.1:3000,http://127.0.0.1:3000/auth/callback,http://localhost:5173,http://localhost:8788,http://localhost:8789,http://127.0.0.1:8788,http://127.0.0.1:8789,https://skillpassport.rareminds.in,https://*.rareminds.in,https://*.pages.dev"
+ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:3000/,http://localhost:3000/auth/callback,http://127.0.0.1:3000,http://127.0.0.1:3000/auth/callback,http://localhost:5173,http://localhost:8788,http://localhost:8789,http://localhost:8789/auth/callback,http://127.0.0.1:8788,http://127.0.0.1:8789,http://127.0.0.1:8789/auth/callback,https://skillpassport.rareminds.in,https://*.rareminds.in,https://*.pages.dev"
 
 # Secrets (set via `wrangler secret put`):
 # SUPABASE_SERVICE_ROLE_KEY

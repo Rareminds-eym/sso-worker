@@ -1,16 +1,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { audit } from "./lib/audit";
-import { INVITE_TTL_MS, SESSION_TTL_MS } from "./lib/constants";
-import { addMonths, parseDurationMonths } from "./lib/date";
-import { db } from "./lib/db";
-import { inviteEmail, sendEmail } from "./lib/email";
-import { checkEmailThrottle } from "./lib/email-throttle";
-import { generateRefreshToken, hashPassword, hashToken } from "./lib/hash";
-import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "./lib/jwt";
 import { signLteAccessToken } from "./lib/app-token";
-import { endpointRateLimit } from "./lib/rate-limit";
-import { mintAccessToken, rotateRefreshToken } from "./lib/session-rotation";
-import { publishSyncEvent } from "./lib/sync-queue";
+import { resolveEffectiveRoles } from "./lib/roles";
+import { audit } from "./lib/audit";
 import {
   assertAllowedRedirectUri,
   assertTargetApp,
@@ -18,22 +9,32 @@ import {
   getAuthorizationCodeStub,
   hashAuthorizationValue,
 } from "./lib/authorization-code";
-import { requireLteEntitlement } from "./lib/lte-entitlement";
-import { getLteSubscriptionSnapshot } from "./lib/subscription-snapshot";
-import { resolveAppUrl, validateEmail, validatePassword, validateRedirectUrl } from "./lib/validate";
-import { fetchWithTimeout } from "./lib/fetch-timeout";
 import { getBatch, type BatchMetadata } from "./lib/batch-kv";
+import { PLATFORM_ORG_ID, SESSION_TTL_MS } from "./lib/constants";
+import { addMonths, parseDurationMonths } from "./lib/date";
+import { db } from "./lib/db";
+import { fetchWithTimeout } from "./lib/fetch-timeout";
+import { generateRefreshToken, hashToken } from "./lib/hash";
+import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "./lib/jwt";
+import { requireLteEntitlement } from "./lib/lte-entitlement";
+import { endpointRateLimit } from "./lib/rate-limit";
+import { mintAccessToken, rotateRefreshToken } from "./lib/session-rotation";
+import { getLteSubscriptionSnapshot } from "./lib/subscription-snapshot";
+import { publishSyncEvent } from "./lib/sync-queue";
 import { handleQueueBatch } from "./queue/queue-router";
+import { performQueueBulkFacultyUpload, performQueueBulkLearnerUpload } from "./routes/bulk-upload";
+import { performCreateLearnerUser } from "./routes/learner-admission";
+import { performAssignMembershipRole, performCreateMember, performCreateMembership, performUpdateMembershipStatus } from "./routes/membership";
+import { performCreateOrganization, performUpdateOrganization, performUpdateOrganizationDetails } from "./routes/organization";
+import { performQueueUserSync } from "./routes/user-sync";
 import type {
   AccessTokenPayload,
   Env,
-  Invite,
   JwtClaims,
   Membership,
   MessageBatch,
   Organization,
   Session,
-  SignupMemberBody,
 } from "./types";
 import type {
   ExchangeAuthorizationCodeRequest,
@@ -41,13 +42,25 @@ import type {
   GenerateAuthorizationCodeRequest,
   GenerateAuthorizationCodeResponse,
 } from "./types/sso-code";
-
 export { AuthorizationCodeStore } from "./durable-objects/AuthorizationCodeStore";
 
-import { performQueueUserSync } from "./routes/user-sync";
-import { performCreateOrganization, performUpdateOrganization, performUpdateOrganizationDetails } from "./routes/organization";
-import { performCreateLearnerUser, performQueueBulkLearnerUpload } from "./routes/learner-admission";
-import { performCreateMember, performCreateMembership, performUpdateMembershipStatus, performAssignMembershipRole } from "./routes/membership";
+import { createSsoAuthority } from "./rpc/authority";
+import type {
+  AllLogoutRpcInput,
+  AllLogoutRpcOutcome,
+  Correlated,
+  CurrentLogoutRpcInput,
+  CurrentLogoutRpcOutcome,
+  LoginRpcInput,
+  OAuthAuthenticateRpcInput,
+  OAuthAuthenticateRpcOutcome,
+  SessionIssueRpcOutcome,
+  SessionRotateRpcOutcome,
+  SignupMemberRpcInput,
+  SignupRpcInput,
+  SsoJwksRpcOutcome,
+  SsoServiceBinding
+} from "./rpc/contracts";
 
 // ─── WorkerEntrypoint ─────────────────────────────────────────
 export class SsoWorker extends WorkerEntrypoint<Env> {
@@ -247,7 +260,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     const database = db(this.env);
 
-    const freemiumPlan = await database.queryOne(
+    const freemiumPlan = await database.queryOne<{ id: string; base_features?: string[] }>(
       "plans?plan_code=eq.freemium&is_active=eq.true",
     );
     if (!freemiumPlan) {
@@ -327,7 +340,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     if (!userId) throw new Error("User ID required");
 
     const database = db(this.env);
-    const subscription = await database.queryOne(
+    const subscription = await database.queryOne<{ plan_id: string }>(
       `subscriptions?user_id=eq.${encodeURIComponent(userId)}&status=in.(active,pending)&order=created_at.desc`,
     );
 
@@ -551,6 +564,35 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return transaction as Record<string, unknown>;
   }
 
+  async updateTransaction(transactionId: string, data: {
+    receipt_url?: string;
+    status?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<Record<string, unknown>> {
+    if (!transactionId) throw new Error("transactionId is required");
+
+    const database = db(this.env);
+
+    const fields: Record<string, unknown> = {};
+    if (data.receipt_url !== undefined) fields.receipt_url = data.receipt_url;
+    if (data.status !== undefined) fields.status = data.status;
+    if (data.metadata !== undefined) fields.metadata = data.metadata;
+
+    if (Object.keys(fields).length === 0) throw new Error("No fields to update");
+
+    await database.update("transactions", { id: `eq.${encodeURIComponent(transactionId)}` }, fields);
+
+    const updated = await database.queryOne<Record<string, unknown>>(
+      `transactions?id=eq.${encodeURIComponent(transactionId)}`
+    );
+
+    if (!updated) {
+      throw new Error(`Transaction not found: ${transactionId}`);
+    }
+
+    return updated;
+  }
+
   async getUserTransactions(userId: string, subscriptionId?: string): Promise<Record<string, unknown>[]> {
     if (!userId) throw new Error("user_id is required");
 
@@ -573,7 +615,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     if (!userId) throw new Error("user_id is required");
 
     const database = db(this.env);
-    const subscription = await database.queryOne(
+    const subscription = await database.queryOne<{ plan_id: string }>(
       `subscriptions?user_id=eq.${encodeURIComponent(userId)}&status=in.(active,pending)&order=created_at.desc`,
     );
 
@@ -652,7 +694,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     const database = db(this.env);
-    const addon = await database.queryOne(
+    const addon = await database.queryOne<{ product_id?: string | null }>(
       `addon_catalog?feature_key=eq.${encodeURIComponent(data.feature_key)}`,
     );
 
@@ -699,7 +741,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     const database = db(this.env);
-    const bundle = await database.queryOne(
+    const bundle = await database.queryOne<{ product_id?: string | null; discount_percentage?: number }>(
       `bundles?id=eq.${encodeURIComponent(data.bundle_id)}`,
     );
 
@@ -848,6 +890,14 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return performQueueBulkLearnerUpload(this.env, data);
   }
 
+  async queueBulkFacultyUpload(data: {
+    csv_data: string;
+    organization_id: string;
+    admin_id: string;
+  }): Promise<{ success: boolean; batch_id?: string; error?: string }> {
+    return performQueueBulkFacultyUpload(this.env, data);
+  }
+
   async getBulkUploadStatus(batchId: string): Promise<BatchMetadata | null> {
     if (!batchId) {
       throw new Error('batchId is required');
@@ -877,100 +927,99 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return { keys };
   }
 
-  /**
-   * Signup RPC - creates user, org, membership
-   * Called by skillpassport via RPC
-   */
-  async signup(params: {
-    email: string;
-    password: string;
-    org_name: string;
-    role: string;
-    redirect_url?: string;
-    ip?: string;
-    ua?: string;
-  }): Promise<any> {
-    const { performSignup } = await import("./routes/signup");
+  /** Private clean-contract JWKS publication with finite authoritative metadata. */
+  async getJwks(input: Correlated): Promise<SsoJwksRpcOutcome> {
+    return createSsoAuthority(this.env, this.ctx).getJwks(input);
+  }
 
-    try {
-      const result = await performSignup(
-        this.env,
-        this.ctx,
-        params,
-        params.ip,
-        params.ua
-      );
-
-      if (result.error) {
-        return { success: false, error: result.error, status: result.status ?? 400 };
-      }
-
-      return {
-        success: true,
-        access_token: result.access_token,
-        refresh_token: result.refresh_token,
-        user: result.user,
-        org: result.org,
-        email_sent: result.email_sent
-      };
-    } catch (err: unknown) {
-      const errMessage = err instanceof Error ? err.message : String(err);
-      return {
-        success: false,
-        error: errMessage || 'Signup failed',
-        status: 500
-      };
-    }
+  /** Validate credentials and issue a new authoritative session. */
+  async login(input: LoginRpcInput): Promise<SessionIssueRpcOutcome> {
+    return createSsoAuthority(this.env, this.ctx).login(input);
   }
 
   /**
-   * Request verification email RPC
-   * Called by skillpassport via RPC
+   * Authenticate a Google OAuth identity via true RPC.
+   *
+   * Called by trusted gateways AFTER the OAuth authorization code has been
+   * exchanged server-side and the profile fetched from Google's userinfo
+   * endpoint. Links or provisions the user, then issues a session exactly
+   * like `login`.
    */
-  async requestVerification(params: {
-    user_id: string;
-    email: string;
-    redirect_url?: string;
-    org_id?: string;
-  }): Promise<{ message?: string; already_verified?: boolean }> {
-    const { performRequestVerification } = await import('./routes/verify-email');
-    const result = await performRequestVerification(
-      this.env,
-      this.ctx,
-      params
-    );
-
-    if (result.error) {
-      throw new Error(result.error);
-    }
-
-    return result;
+  async oauthAuthenticate(input: OAuthAuthenticateRpcInput): Promise<OAuthAuthenticateRpcOutcome> {
+    return createSsoAuthority(this.env, this.ctx).oauthAuthenticate(input);
   }
 
-  /**
-   * Verify email RPC
-   * Called by skillpassport via RPC
-   */
-  async verifyEmail(params: {
-    token: string;
-    ip?: string;
-    ua?: string;
-  }): Promise<{ success: false; error: string } | { success: true; verified?: boolean }> {
-    const { performVerifyEmail } = await import('./routes/verify-email');
-    const result = await performVerifyEmail(
-      this.env,
-      this.ctx,
-      { token: params.token },
-      params.ip || null,
-      params.ua || null
-    );
-
-    if (result.error) {
-      return { success: false, error: result.error };
-    }
-
-    return { success: true, verified: result.verified };
+  /** Create an identity and issue its initial authoritative session. */
+  async signup(input: SignupRpcInput): Promise<SessionIssueRpcOutcome> {
+    return createSsoAuthority(this.env, this.ctx).signup(input);
   }
+
+  /** Create a member identity and issue its initial authoritative session. */
+  async signupMember(input: SignupMemberRpcInput): Promise<SessionIssueRpcOutcome> {
+    return createSsoAuthority(this.env, this.ctx).signupMember(input);
+  }
+
+  /** Atomically rotate the current refresh session and classify overlap or replay. */
+  async refreshCurrentSession(input: import("./rpc/contracts").RefreshCurrentRpcInput): Promise<SessionRotateRpcOutcome> {
+    return createSsoAuthority(this.env, this.ctx).refreshCurrentSession(input);
+  }
+
+  /** Revoke only the session row represented by the supplied opaque credential. */
+  async logoutCurrentSession(input: CurrentLogoutRpcInput): Promise<CurrentLogoutRpcOutcome> {
+    return createSsoAuthority(this.env, this.ctx).logoutCurrentSession(input);
+  }
+
+  /** Derive identity from the active session and revoke all of its active sessions. */
+  async logoutAllSessions(input: AllLogoutRpcInput): Promise<AllLogoutRpcOutcome> {
+    return createSsoAuthority(this.env, this.ctx).logoutAllSessions(input);
+  }
+
+  /** Replace the current session after an authoritative organization change. */
+  async changeOrganization(input: Parameters<SsoServiceBinding["changeOrganization"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["changeOrganization"]>>> {
+    return createSsoAuthority(this.env, this.ctx).changeOrganization(input);
+  }
+
+  async listOrganizations(input: Parameters<SsoServiceBinding["listOrganizations"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["listOrganizations"]>>> {
+    return createSsoAuthority(this.env, this.ctx).listOrganizations(input);
+  }
+
+  async createInvite(input: Parameters<SsoServiceBinding["createInvite"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["createInvite"]>>> {
+    return createSsoAuthority(this.env, this.ctx).createInvite(input);
+  }
+
+  async acceptInvite(input: Parameters<SsoServiceBinding["acceptInvite"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["acceptInvite"]>>> {
+    return createSsoAuthority(this.env, this.ctx).acceptInvite(input);
+  }
+
+  async cancelInvite(input: Parameters<SsoServiceBinding["cancelInvite"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["cancelInvite"]>>> {
+    return createSsoAuthority(this.env, this.ctx).cancelInvite(input);
+  }
+
+  async resendInvite(input: Parameters<SsoServiceBinding["resendInvite"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["resendInvite"]>>> {
+    return createSsoAuthority(this.env, this.ctx).resendInvite(input);
+  }
+
+  async requestVerification(input: Parameters<SsoServiceBinding["requestVerification"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["requestVerification"]>>> {
+    return createSsoAuthority(this.env, this.ctx).requestVerification(input);
+  }
+
+  async verifyEmail(input: Parameters<SsoServiceBinding["verifyEmail"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["verifyEmail"]>>> {
+    return createSsoAuthority(this.env, this.ctx).verifyEmail(input);
+  }
+
+  async forgotPassword(input: Parameters<SsoServiceBinding["forgotPassword"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["forgotPassword"]>>> {
+    return createSsoAuthority(this.env, this.ctx).forgotPassword(input);
+  }
+
+  async resetPassword(input: Parameters<SsoServiceBinding["resetPassword"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["resetPassword"]>>> {
+    return createSsoAuthority(this.env, this.ctx).resetPassword(input);
+  }
+
+  async getIdentity(input: Parameters<SsoServiceBinding["getIdentity"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["getIdentity"]>>> {
+    return createSsoAuthority(this.env, this.ctx).getIdentity(input);
+  }
+
+
 
   /**
    * Delete account RPC
@@ -1003,22 +1052,35 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
   /**
    * Change password RPC
-   * Called by skillpassport via RPC
+   * Called by skillpassport and lte via RPC
    */
   async changePassword(params: {
-    user_id: string;
+    access_token: string;
     current_password: string;
     new_password: string;
     org_id?: string;
     ip?: string;
     ua?: string;
   }): Promise<{ success: true; message?: string }> {
+    if (!params.access_token) {
+      throw new Error("access_token is required");
+    }
+
+    let payload: AccessTokenPayload;
+    try {
+      payload = await verifyAccessToken(params.access_token, this.env);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[SSO] Access token verification failed:", msg);
+      throw new Error("Invalid or expired access token");
+    }
+
     const { performChangePassword } = await import('./routes/change-password');
     const result = await performChangePassword(
       this.env,
       this.ctx,
       {
-        user_id: params.user_id,
+        user_id: payload.sub,
         current_password: params.current_password,
         new_password: params.new_password,
         org_id: params.org_id,
@@ -1069,52 +1131,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return { success: true, message: result.message };
   }
 
-  /**
-   * Signup member RPC
-   * Called by skillpassport via RPC
-   */
-  async signupMember(params: SignupMemberBody & { ip?: string; ua?: string }): Promise<any> {
-    const { performSignupMember } = await import('./routes/signup-member');
-    const result = await performSignupMember(this.env, this.ctx, params);
 
-    if (result.error) {
-      return { success: false, error: result.error, status: result.status };
-    }
-
-    return { success: true, ...result };
-  }
-
-  /**
-   * Log in user via true RPC.
-   *
-   * @param params Object containing email, password, ip, ua
-   * @returns Successful login payload or throws error
-   */
-  async login(params: { email?: string; password?: string; ip?: string; ua?: string }): Promise<any> {
-    const { performLogin } = await import("./routes/login");
-    const result = await performLogin(
-      this.env,
-      this.ctx,
-      { email: params.email ?? "", password: params.password ?? "" },
-      params.ip ?? null,
-      params.ua ?? null
-    );
-
-    // If error exists, return failure response
-    if (result.error) {
-      return { success: false, error: result.error, status: result.status ?? 401 };
-    }
-
-    // Return success response with all login data
-    return {
-      success: true,
-      access_token: result.access_token,
-      refresh_token: result.refresh_token,
-      user: result.user,
-      active_org_id: result.active_org_id,
-      organizations: result.organizations
-    };
-  }
 
   /**
    * RPC entry point for refresh-token rotation, callable via service binding.
@@ -1207,8 +1224,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       return { valid: false, roles: [] };
     }
 
-    const user = await database.queryOne<{ is_blocked: boolean }>(
-      `users?id=eq.${encodeURIComponent(session.user_id)}&select=is_blocked`
+    const user = await database.queryOne<{ is_blocked: boolean; user_metadata?: Record<string, unknown> }>(
+      `users?id=eq.${encodeURIComponent(session.user_id)}&select=is_blocked,user_metadata`
     );
 
     if (!user || user.is_blocked) {
@@ -1220,7 +1237,13 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       p_org_id: session.org_id,
     });
 
-    return { valid: true, roles: claims?.roles ?? [] };
+    const effectiveRoles = resolveEffectiveRoles({
+      claims,
+      userMetadata: user.user_metadata,
+      fallbackRole: "learner",
+    });
+
+    return { valid: true, roles: effectiveRoles };
   }
 
   async authenticateSharedSession(
@@ -1297,8 +1320,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
         {
           sub: session.user_id,
           email: entitlement.user.email,
-          // Fallback to empty string for org-less personal accounts
-          org_id: session.org_id ?? "",
+          org_id: (session.org_id && session.org_id.length > 0) ? session.org_id : PLATFORM_ORG_ID,
           roles: claims.roles,
           products: lteProducts,
           membership_status: claims.membership_status,
@@ -1686,44 +1708,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     };
   }
 
-  async forgotPassword(params: { email?: string; redirect_url?: string }, ip?: string, ua?: string): Promise<{ success: boolean; message?: string; error?: string }> {
-    const { performForgotPassword } = await import("./routes/password-reset");
-    const result = await performForgotPassword(
-      this.env,
-      this.ctx,
-      { email: params.email, redirect_url: params.redirect_url },
-      ip ?? "unknown",
-      ua ?? null
-    );
 
-    if (result.error) {
-      return { success: false, error: result.error };
-    }
-
-    const message =
-      result.message ?? "If an account exists, a reset email has been sent.";
-
-    return { success: true, message };
-  }
-
-  async resetPassword(params: { token?: string; password?: string }, ip?: string, ua?: string): Promise<{ success: false; error: string } | { success: true; reset: boolean }> {
-    const { performResetPassword } = await import("./routes/password-reset");
-    const result = await performResetPassword(
-      this.env,
-      this.ctx,
-      { token: params.token, password: params.password },
-      ip ?? null,
-      ua ?? null
-    );
-
-    if (result.error) {
-      return { success: false, error: result.error };
-    }
-
-    const reset = result.reset ?? true;
-
-    return { success: true, reset };
-  }
 
   async listAddonCatalog(params?: { category?: string; role?: string; product?: string }): Promise<any> {
     const { performListAddonCatalog } = await import("./routes/addon-catalog");
@@ -1779,389 +1764,111 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return { success: true };
   }
 
-  // ── Invite Management RPC Methods ─────────────────────────────
 
+
+  // ─── LTE Product Provisioning ──────────────────────────────────────────────
   /**
-   * Create an invite for a user to join an organization.
-   * Sends an invite email with a token that expires in 7 days.
+   * Idempotently provisions LTE product access for a user's org and membership.
+   * Called by the LTE exchange endpoint on first SSO code exchange so that
+   * get_jwt_claims() returns products: ["lte"] for all rotated tokens.
+   *
+   * Does NOT depend on pre-seeded products table data — it upserts the product
+   * row itself if missing, so it works in a blank local dev DB.
    */
-  async createInvite(params: {
-    email: string;
-    org_id: string;
-    role: string[];
-    redirect_url?: string;
-    caller: AccessTokenPayload;
-    ip?: string;
-    ua?: string;
-  }): Promise<{ invite_id: string; email: string; expires_at: string }> {
-    if (!params.email || !params.org_id || !params.role || !params.caller) {
-      throw new Error("email, org_id, role, and caller are required");
-    }
-
-    const emailErr = validateEmail(params.email);
-    if (emailErr) throw new Error(await emailErr.text());
-
-    const redirectErr = validateRedirectUrl(params.redirect_url, this.env);
-    if (redirectErr) throw new Error(await redirectErr.text());
-
-    const database = db(this.env);
-    const inviteEmailAddress = params.email.toLowerCase().trim();
-
-    // Check for existing pending invite
-    const existing = await database.queryOne<{ id: string }>(
-      `invites?email=eq.${encodeURIComponent(inviteEmailAddress)}&org_id=eq.${encodeURIComponent(params.org_id)}&accepted=eq.false&select=id`,
-    );
-    if (existing) {
-      throw new Error("An invite for this email already exists");
-    }
-
-    const throttled = await checkEmailThrottle(this.env, "invite", params.org_id);
-    if (throttled) throw new Error("Too many invite requests. Please try again later.");
-
-    const inviteToken = crypto.randomUUID();
-    const inviteTokenHash = await hashToken(inviteToken);
-    const invite = await database.mutate<Invite>("invites", {
-      email: inviteEmailAddress,
-      org_id: params.org_id,
-      role: params.role,
-      token_hash: inviteTokenHash,
-      invited_by: params.caller.sub,
-      expires_at: new Date(Date.now() + INVITE_TTL_MS).toISOString(),
-      accepted: false,
-    });
-
-    // Fetch org name for the email template
-    const org = await database.queryOne<{ name: string }>(
-      `organizations?id=eq.${encodeURIComponent(params.org_id)}&select=name`,
-    );
-
-    // Send invite email
-    const appUrl = resolveAppUrl(params.redirect_url, this.env);
-    const acceptUrl = `${appUrl}/invite/accept?token=${inviteToken}`;
-    const { subject, html, text } = inviteEmail(
-      params.caller.email,
-      org?.name ?? "an organization",
-      acceptUrl,
-    );
-    this.ctx.waitUntil(sendEmail(this.env, { to: inviteEmailAddress, subject, html, text }, this.ctx));
-
-    audit(this.ctx, this.env, "invite_created", {
-      user_id: params.caller.sub,
-      org_id: params.org_id,
-      ip_address: params.ip,
-      user_agent: params.ua,
-      metadata: { invited_email: inviteEmailAddress, roles: params.role },
-    });
-
-    return {
-      invite_id: invite.id,
-      email: inviteEmailAddress,
-      expires_at: invite.expires_at || "",
+  async provisionLteAccess(params: {
+    userId: string;
+    orgId: string;
+  }): Promise<{ success: boolean; alreadyProvisioned?: boolean }> {
+    const base = `${this.env.SUPABASE_URL}/rest/v1`;
+    const headers = {
+      "Content-Type": "application/json",
+      apikey: this.env.SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${this.env.SUPABASE_SERVICE_ROLE_KEY}`,
+      Prefer: "resolution=merge-duplicates,return=representation",
     };
-  }
-
-  /**
-   * Accept an invite by token. Creates user if needed and adds them to the organization.
-   */
-  async acceptInvite(params: {
-    token: string;
-    password?: string;
-    ip?: string;
-    ua?: string;
-  }): Promise<{ access_token: string; user: { id: string; email: string }; org_id: string }> {
-    if (!params.token) {
-      throw new Error("token is required");
-    }
-
     const database = db(this.env);
-    const tokenHash = await hashToken(params.token);
-    const invite = await database.queryOne<Invite>(
-      `invites?token_hash=eq.${encodeURIComponent(tokenHash)}&select=*`,
-    );
 
-    if (!invite) throw new Error("Invalid invite token");
-    if (invite.accepted) throw new Error("Invite has already been accepted");
-    if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
-      throw new Error("Invite has expired");
-    }
-
-    let user = await database.queryOne<{ id: string; email: string; is_email_verified: boolean; user_metadata: Record<string, unknown> | null }>(
-      `users?email=eq.${encodeURIComponent(invite.email)}&select=*`,
-    );
-
-    let isNewUser = false;
-    if (!user) {
-      isNewUser = true;
-      if (!params.password) {
-        throw new Error("password is required for new users");
-      }
-
-      const passErr = validatePassword(params.password);
-      if (passErr) throw new Error(await passErr.text());
-
-      const password_hash = await hashPassword(params.password);
-      user = await database.mutate("users", {
-        email: invite.email,
-        password_hash,
-        is_email_verified: false,
+    try {
+      // 1. Upsert the lte product (safe no-op if already exists).
+      //    We upsert instead of query so a blank dev DB is never a blocker.
+      //    PostgREST requires ?on_conflict=<col> in the URL for merge-duplicates to work.
+      const productRes = await fetch(`${base}/products?on_conflict=code`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ code: "lte", name: "LTE" }),
       });
-
-      if (!user) {
-        throw new Error("Failed to create user");
+      if (!productRes.ok) {
+        const text = await productRes.text();
+        console.error("[provisionLteAccess] Failed to upsert lte product", text);
+        return { success: false };
       }
-    }
-
-    const existingMembership = await database.queryOne<{ id: string; status: string }>(
-      `memberships?user_id=eq.${encodeURIComponent(user.id)}&org_id=eq.${encodeURIComponent(invite.org_id)}&select=id,status`,
-    );
-
-    let membershipId: string;
-
-    if (existingMembership) {
-      membershipId = existingMembership.id;
-      // Reactivate if deactivated
-      if (existingMembership.status !== "active") {
-        await database.update(
-          "memberships",
-          { id: `eq.${encodeURIComponent(existingMembership.id)}` },
-          { status: "active" },
-        );
+      const productRows = await productRes.json() as { id: string }[];
+      const productId = productRows[0]?.id;
+      if (!productId) {
+        console.error("[provisionLteAccess] No product id returned after upsert");
+        return { success: false };
       }
-    } else {
-      const newMembership = await database.mutate("memberships", {
-        user_id: user.id,
-        org_id: invite.org_id,
-        status: "active",
-      });
-      membershipId = newMembership.id;
-    }
 
-    // Assign roles from invite via join table
-    const inviteRoles = invite.role?.length ? invite.role : ["member"];
-    const roleRows = await database.query<{ id: string; name: string }>(
-      `roles?name=in.(${inviteRoles.map(r => encodeURIComponent(r)).join(",")})&select=id,name`,
-    );
+      // 2. Resolve the membership id for this user + org pair
+      const membership = await database.queryOne<{ id: string }>(
+        `memberships?user_id=eq.${encodeURIComponent(params.userId)}&org_id=eq.${encodeURIComponent(params.orgId)}&select=id`,
+      );
+      if (!membership) {
+        console.error("[provisionLteAccess] No membership found for user/org pair", params);
+        return { success: false };
+      }
+      const membershipId = membership.id;
 
-    for (const role of roleRows) {
-      try {
-        await database.mutate("membership_roles", {
-          membership_id: membershipId,
-          role_id: role.id,
+      // 3. Check & provision organization_products (skip POST if already present and active)
+      const existingOrgProd = await database.queryOne<{ id: string }>(
+        `organization_products?org_id=eq.${encodeURIComponent(params.orgId)}&product_id=eq.${encodeURIComponent(productId)}&active=eq.true&select=id`,
+      );
+      if (!existingOrgProd) {
+        const opRes = await fetch(`${base}/organization_products?on_conflict=org_id,product_id`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ org_id: params.orgId, product_id: productId, active: true }),
         });
-      } catch (err: unknown) {
-        // Ignore duplicate — role already assigned
-        const errMessage = err instanceof Error ? err.message : String(err);
-        const isDuplicate = errMessage.includes("23505") || errMessage.includes("duplicate");
-        if (!isDuplicate) {
-          throw err;
+        if (!opRes.ok) {
+          const text = await opRes.text();
+          console.error("[provisionLteAccess] organization_products upsert failed", text);
+          return { success: false };
         }
       }
+
+      // 4. Check & provision membership_products (skip POST if already present)
+      const existingMemProd = await database.queryOne<{ id: string }>(
+        `membership_products?membership_id=eq.${encodeURIComponent(membershipId)}&product_id=eq.${encodeURIComponent(productId)}&select=id`,
+      );
+      if (!existingMemProd) {
+        const mpRes = await fetch(`${base}/membership_products?on_conflict=membership_id,product_id`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ membership_id: membershipId, product_id: productId }),
+        });
+        if (!mpRes.ok) {
+          const text = await mpRes.text();
+          console.error("[provisionLteAccess] membership_products upsert failed", text);
+          return { success: false };
+        }
+      }
+
+      const alreadyProvisioned = Boolean(existingOrgProd && existingMemProd);
+
+      if (!alreadyProvisioned) {
+        console.log("[provisionLteAccess] LTE product provisioned", {
+          userId: params.userId,
+          orgId: params.orgId,
+          membershipId,
+          productId,
+        });
+      }
+
+      return { success: true, alreadyProvisioned };
+    } catch (err) {
+      console.error("[provisionLteAccess] Unexpected error", err);
+      return { success: false };
     }
-
-    // Mark invite as accepted
-    await database.update("invites", { id: `eq.${encodeURIComponent(invite.id)}` }, {
-      accepted: true,
-      accepted_at: new Date().toISOString(),
-    });
-
-    // Get RBAC claims for the new membership
-    const claims = await database.rpc<{ roles: string[]; products: string[]; membership_status: string }>("get_jwt_claims", {
-      p_user_id: user.id,
-      p_org_id: invite.org_id,
-    });
-
-    const refreshToken = generateRefreshToken();
-    const refreshHash = await hashToken(refreshToken);
-    const sessionId = crypto.randomUUID();
-
-    await database.mutate("sessions", {
-      id: sessionId,
-      user_id: user.id,
-      org_id: invite.org_id,
-      refresh_token_hash: refreshHash,
-      user_agent: params.ua,
-      ip_address: params.ip,
-      revoked: false,
-      expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
-      family_id: sessionId,
-      family_created_at: new Date().toISOString(),
-    });
-
-    const accessToken = await signAccessToken(
-      {
-        sub: user.id,
-        email: user.email,
-        org_id: invite.org_id,
-        roles: claims?.roles ?? inviteRoles,
-        products: claims?.products ?? [],
-        membership_status: (claims?.membership_status ?? "active") as "active" | "inactive" | "suspended" | "expired",
-        is_email_verified: user.is_email_verified,
-        // user_metadata is nullable at the DB level; default to an empty object
-        user_metadata: user.user_metadata !== null ? user.user_metadata : {},
-      },
-      this.env,
-    );
-
-    // Emit sync events (non-blocking, post-response)
-    if (isNewUser) {
-      publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'user.created', {
-        id: user.id,
-        email: user.email,
-        user_metadata: {},
-      });
-    }
-    if (existingMembership && existingMembership.status !== 'active') {
-      publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'membership.role_changed', {
-        user_id: user.id,
-        organization_id: invite.org_id,
-        roles: inviteRoles,
-        status: 'active',
-      });
-    } else if (!existingMembership) {
-      publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'membership.created', {
-        user_id: user.id,
-        organization_id: invite.org_id,
-        roles: inviteRoles,
-        status: 'active',
-      });
-    }
-
-    audit(this.ctx, this.env, "invite_accepted", {
-      user_id: user.id,
-      org_id: invite.org_id,
-      ip_address: params.ip,
-      user_agent: params.ua,
-      metadata: { invite_id: invite.id },
-    });
-
-    return {
-      access_token: accessToken,
-      user: { id: user.id, email: user.email },
-      org_id: invite.org_id,
-    };
-  }
-
-  /**
-   * Cancel a pending invite. Only the inviter (or org owner/admin) can cancel.
-   */
-  async cancelInvite(params: {
-    invite_id: string;
-    caller: AccessTokenPayload;
-    ip?: string;
-    ua?: string;
-  }): Promise<{ cancelled: boolean }> {
-    if (!params.invite_id || !params.caller) {
-      throw new Error("invite_id and caller are required");
-    }
-
-    const database = db(this.env);
-    const invite = await database.queryOne<Invite>(
-      `invites?id=eq.${encodeURIComponent(params.invite_id)}&select=*`,
-    );
-
-    if (!invite) throw new Error("Invite not found");
-    if (invite.accepted) throw new Error("Cannot cancel an accepted invite");
-    if (invite.org_id !== params.caller.org_id) {
-      throw new Error("You can only cancel invites for your active organization");
-    }
-
-    // Only owner, admin, or the original inviter can cancel
-    const isOwnerOrAdmin = params.caller.roles.includes("owner") || params.caller.roles.includes("admin");
-    const isInviter = invite.invited_by === params.caller.sub;
-    if (!isOwnerOrAdmin && !isInviter) {
-      throw new Error("Insufficient permissions to cancel this invite");
-    }
-
-    // Delete the invite
-    await database.query(
-      `invites?id=eq.${encodeURIComponent(params.invite_id)}`,
-      { method: "DELETE" },
-    );
-
-    audit(this.ctx, this.env, "invite_cancelled", {
-      user_id: params.caller.sub,
-      org_id: params.caller.org_id,
-      ip_address: params.ip,
-      user_agent: params.ua,
-      metadata: { invite_id: params.invite_id, invited_email: invite.email },
-    });
-
-    return { cancelled: true };
-  }
-
-  /**
-   * Resend an invite by generating a new token and extending the expiry.
-   */
-  async resendInvite(params: {
-    invite_id: string;
-    redirect_url?: string;
-    caller: AccessTokenPayload;
-    ip?: string;
-    ua?: string;
-  }): Promise<{ invite_id: string; email: string; expires_at: string }> {
-    if (!params.invite_id || !params.caller) {
-      throw new Error("invite_id and caller are required");
-    }
-
-    const redirectErr = validateRedirectUrl(params.redirect_url, this.env);
-    if (redirectErr) throw new Error(await redirectErr.text());
-
-    const database = db(this.env);
-    const invite = await database.queryOne<Invite>(
-      `invites?id=eq.${encodeURIComponent(params.invite_id)}&select=*`,
-    );
-
-    if (!invite) throw new Error("Invite not found");
-    if (invite.accepted) throw new Error("Cannot resend an accepted invite");
-    if (invite.org_id !== params.caller.org_id) {
-      throw new Error("You can only resend invites for your active organization");
-    }
-
-    if (!params.caller.roles.includes("owner") && !params.caller.roles.includes("admin")) {
-      throw new Error("Only owners and admins can resend invites");
-    }
-
-    const throttled = await checkEmailThrottle(this.env, "invite", params.caller.org_id);
-    if (throttled) throw new Error("Too many invite requests. Please try again later.");
-
-    // Generate new token and extend expiry
-    const newToken = crypto.randomUUID();
-    const newTokenHash = await hashToken(newToken);
-    const newExpiry = new Date(Date.now() + INVITE_TTL_MS).toISOString();
-    await database.update(
-      "invites",
-      { id: `eq.${encodeURIComponent(invite.id)}` },
-      { token_hash: newTokenHash, expires_at: newExpiry },
-    );
-
-    // Fetch org name for the email template
-    const org = await database.queryOne<{ name: string }>(
-      `organizations?id=eq.${encodeURIComponent(params.caller.org_id)}&select=name`,
-    );
-
-    // Send invite email
-    const appUrl = resolveAppUrl(params.redirect_url, this.env);
-    const acceptUrl = `${appUrl}/invite/accept?token=${newToken}`;
-    const { subject, html, text } = inviteEmail(
-      params.caller.email,
-      org?.name ?? "an organization",
-      acceptUrl,
-    );
-    this.ctx.waitUntil(sendEmail(this.env, { to: invite.email, subject, html, text }, this.ctx));
-
-    audit(this.ctx, this.env, "invite_resent", {
-      user_id: params.caller.sub,
-      org_id: params.caller.org_id,
-      ip_address: params.ip,
-      user_agent: params.ua,
-      metadata: { invite_id: invite.id, invited_email: invite.email },
-    });
-
-    return {
-      invite_id: invite.id,
-      email: invite.email,
-      expires_at: newExpiry,
-    };
   }
 }
 
