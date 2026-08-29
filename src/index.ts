@@ -1,65 +1,83 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { signLteAccessToken } from "./lib/app-token";
-import { resolveEffectiveRoles } from "./lib/roles";
 import { audit } from "./lib/audit";
 import {
-  assertAllowedRedirectUri,
-  assertTargetApp,
-  createAuthorizationCode,
-  getAuthorizationCodeStub,
-  hashAuthorizationValue,
+	assertAllowedRedirectUri,
+	assertTargetApp,
+	createAuthorizationCode,
+	getAuthorizationCodeStub,
+	hashAuthorizationValue,
 } from "./lib/authorization-code";
-import { getBatch, type BatchMetadata } from "./lib/batch-kv";
+import { type BatchMetadata, getBatch } from "./lib/batch-kv";
 import { PLATFORM_ORG_ID, SESSION_TTL_MS } from "./lib/constants";
 import { addMonths, parseDurationMonths } from "./lib/date";
 import { db } from "./lib/db";
 import { fetchWithTimeout } from "./lib/fetch-timeout";
 import { generateRefreshToken, hashToken } from "./lib/hash";
-import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "./lib/jwt";
+import {
+	exportPemAsJwk,
+	getPublicJWK,
+	signAccessToken,
+	verifyAccessToken,
+} from "./lib/jwt";
 import { requireLteEntitlement } from "./lib/lte-entitlement";
 import { endpointRateLimit } from "./lib/rate-limit";
+import { resolveEffectiveRoles } from "./lib/roles";
 import { mintAccessToken, rotateRefreshToken } from "./lib/session-rotation";
 import { getLteSubscriptionSnapshot } from "./lib/subscription-snapshot";
 import { publishSyncEvent } from "./lib/sync-queue";
 import { handleQueueBatch } from "./queue/queue-router";
-import { performQueueBulkFacultyUpload, performQueueBulkLearnerUpload } from "./routes/bulk-upload";
+import {
+	performQueueBulkFacultyUpload,
+	performQueueBulkLearnerUpload,
+} from "./routes/bulk-upload";
 import { performCreateLearnerUser } from "./routes/learner-admission";
-import { performAssignMembershipRole, performCreateMember, performCreateMembership, performUpdateMembershipStatus } from "./routes/membership";
-import { performCreateOrganization, performUpdateOrganization, performUpdateOrganizationDetails } from "./routes/organization";
+import {
+	performAssignMembershipRole,
+	performCreateMember,
+	performCreateMembership,
+	performUpdateMembershipStatus,
+} from "./routes/membership";
+import {
+	performCreateOrganization,
+	performUpdateOrganization,
+	performUpdateOrganizationDetails,
+} from "./routes/organization";
 import { performQueueUserSync } from "./routes/user-sync";
 import type {
-  AccessTokenPayload,
-  Env,
-  JwtClaims,
-  Membership,
-  MessageBatch,
-  Organization,
-  Session,
+	AccessTokenPayload,
+	Env,
+	JwtClaims,
+	Membership,
+	MessageBatch,
+	Organization,
+	Session,
 } from "./types";
 import type {
-  ExchangeAuthorizationCodeRequest,
-  ExchangeAuthorizationCodeResponse,
-  GenerateAuthorizationCodeRequest,
-  GenerateAuthorizationCodeResponse,
+	ExchangeAuthorizationCodeRequest,
+	ExchangeAuthorizationCodeResponse,
+	GenerateAuthorizationCodeRequest,
+	GenerateAuthorizationCodeResponse,
 } from "./types/sso-code";
+
 export { AuthorizationCodeStore } from "./durable-objects/AuthorizationCodeStore";
 
 import { createSsoAuthority } from "./rpc/authority";
 import type {
-  AllLogoutRpcInput,
-  AllLogoutRpcOutcome,
-  Correlated,
-  CurrentLogoutRpcInput,
-  CurrentLogoutRpcOutcome,
-  LoginRpcInput,
-  OAuthAuthenticateRpcInput,
-  OAuthAuthenticateRpcOutcome,
-  SessionIssueRpcOutcome,
-  SessionRotateRpcOutcome,
-  SignupMemberRpcInput,
-  SignupRpcInput,
-  SsoJwksRpcOutcome,
-  SsoServiceBinding
+	AllLogoutRpcInput,
+	AllLogoutRpcOutcome,
+	Correlated,
+	CurrentLogoutRpcInput,
+	CurrentLogoutRpcOutcome,
+	LoginRpcInput,
+	OAuthAuthenticateRpcInput,
+	OAuthAuthenticateRpcOutcome,
+	SessionIssueRpcOutcome,
+	SessionRotateRpcOutcome,
+	SignupMemberRpcInput,
+	SignupRpcInput,
+	SsoJwksRpcOutcome,
+	SsoServiceBinding,
 } from "./rpc/contracts";
 
 // ─── WorkerEntrypoint ─────────────────────────────────────────
@@ -670,7 +688,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const database = db(this.env);
     const userIdList = userIds.map((id) => encodeURIComponent(id)).join(",");
     const subscriptions = await database.query(
-      `subscriptions?user_id=in.(${userIdList})&status=in.(active,pending)&order=created_at.desc`,
+      `subscriptions?user_id=in.(${userIdList})&status=in.(active,paused,cancelled,pending)&order=created_at.desc`,
     );
 
     return { subscriptions: (subscriptions || []) as Record<string, unknown>[] };
