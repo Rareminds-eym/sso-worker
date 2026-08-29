@@ -14,7 +14,7 @@ BEGIN
   IF EXISTS (SELECT 1 FROM public.organizations AS org WHERE lower(org.name) = lower('Soundarya Institute of Management and Science') AND org.id <> v_org_id) THEN
     RAISE EXCEPTION 'Soundarya organization already exists under a different ID';
   END IF;
-  IF EXISTS (SELECT 1 FROM public.users AS usr WHERE lower(usr.email) = 'soundarya.admin@rareminds.in' AND usr.id <> v_admin_id) THEN
+  IF EXISTS (SELECT 1 FROM public.users AS usr WHERE lower(usr.email) = 'sims.info@soundaryainstitutions.in' AND usr.id <> v_admin_id) THEN
     RAISE EXCEPTION 'Soundarya admin email already exists under a different ID';
   END IF;
 
@@ -55,7 +55,7 @@ BEGIN
   ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, slug=EXCLUDED.slug, metadata=EXCLUDED.metadata;
 
   INSERT INTO public.users (id,email,password_hash,is_email_verified,created_at,updated_at,last_login_at,is_blocked)
-  VALUES (v_admin_id,'soundarya.admin@rareminds.in','$2b$12$TXc2NhMMjYxKuPoQYdI8UeRRzw5v/XEtEjpcYbYIwomWAZGBeWpny',true,NOW(),NOW(),NULL,false)
+  VALUES (v_admin_id,'sims.info@soundaryainstitutions.in','$2b$12$TXc2NhMMjYxKuPoQYdI8UeRRzw5v/XEtEjpcYbYIwomWAZGBeWpny',true,NOW(),NOW(),NULL,false)
   ON CONFLICT (id) DO UPDATE SET email=EXCLUDED.email,password_hash=EXCLUDED.password_hash,is_email_verified=true,updated_at=NOW(),is_blocked=false;
 
   UPDATE public.organizations SET created_by=v_admin_id WHERE id=v_org_id;
@@ -94,7 +94,7 @@ VALUES ('a0000000-0000-4000-8000-000000000023','college_enterprise','College Ent
 ON CONFLICT (id) DO UPDATE SET plan_code=EXCLUDED.plan_code,name=EXCLUDED.name,pricing_matrix=EXCLUDED.pricing_matrix,base_features=EXCLUDED.base_features,entity_config=EXCLUDED.entity_config,is_active=true,updated_at=NOW();
 
 INSERT INTO public.subscriptions (id,user_id,plan_id,organization_id,full_name,email,plan_code,plan_type,plan_amount,billing_cycle,features,status,subscription_start_date,subscription_end_date,is_organization_subscription,organization_type,purchased_by,seat_count,is_bulk_purchase,metadata,created_at,updated_at,product_id)
-VALUES ('d3876903-b74e-55d7-910f-90907ea3e11f','783d8431-a034-5369-ae47-3aca2c4ec618','a0000000-0000-4000-8000-000000000023','284c9ed9-cd13-584d-b5bc-e198866b917b','Soundarya College Admin','soundarya.admin@rareminds.in','college_enterprise','College Enterprise',49999,'yearly','["up_to_5000_learners_or_custom","multi_department_analytics","recruiter_access","advanced_placement_dashboard","bulk_onboarding","dedicated_success_manager"]'::jsonb,'active',NOW(),NOW()+INTERVAL '1 year',true,'college','783d8431-a034-5369-ae47-3aca2c4ec618',5000,true,'{"institution_name":"Soundarya Institute of Management and Science","short_name":"SIMS","package":"highest","seeded_subscription":true}'::jsonb,NOW(),NOW(),'912d5049-e195-46e9-a319-49e3502bf7e7')
+VALUES ('d3876903-b74e-55d7-910f-90907ea3e11f','783d8431-a034-5369-ae47-3aca2c4ec618','a0000000-0000-4000-8000-000000000023','284c9ed9-cd13-584d-b5bc-e198866b917b','Soundarya College Admin','sims.info@soundaryainstitutions.in','college_enterprise','College Enterprise',49999,'yearly','["up_to_5000_learners_or_custom","multi_department_analytics","recruiter_access","advanced_placement_dashboard","bulk_onboarding","dedicated_success_manager"]'::jsonb,'active',NOW(),NOW()+INTERVAL '1 year',true,'college','783d8431-a034-5369-ae47-3aca2c4ec618',5000,true,'{"institution_name":"Soundarya Institute of Management and Science","short_name":"SIMS","package":"highest","seeded_subscription":true}'::jsonb,NOW(),NOW(),'912d5049-e195-46e9-a319-49e3502bf7e7')
 ON CONFLICT (id) DO UPDATE SET user_id=EXCLUDED.user_id,organization_id=EXCLUDED.organization_id,plan_id=EXCLUDED.plan_id,plan_code=EXCLUDED.plan_code,plan_type=EXCLUDED.plan_type,plan_amount=EXCLUDED.plan_amount,features=EXCLUDED.features,status='active',subscription_end_date=EXCLUDED.subscription_end_date,seat_count=EXCLUDED.seat_count,metadata=EXCLUDED.metadata,updated_at=NOW();
 
 COMMIT;

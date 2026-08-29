@@ -251,7 +251,7 @@ SET
 -- 9. SCHOOL ADMIN SUBSCRIPTION
 -- ------------------------------------------------------------
 INSERT INTO "public"."subscriptions"
-  ("id", "user_id", "plan_id", "organization_id", "full_name", "email", "phone", "plan_code", "plan_type", "plan_amount", "billing_cycle", "features", "status", "razorpay_subscription_id", "razorpay_customer_id", "razorpay_payment_id", "razorpay_order_id", "auto_renew", "receipt_url", "subscription_start_date", "subscription_end_date", "cancelled_at", "paused_at", "paused_until", "last_webhook_at", "cancellation_reason", "cancellation_feedback", "cancelled_by", "is_organization_subscription", "organization_type", "purchased_by", "seat_count", "is_bulk_purchase", "metadata", "created_at", "updated_at", "product_id")
+  ("id", "user_id", "plan_id", "organization_id", "full_name", "email", "plan_code", "plan_type", "plan_amount", "billing_cycle", "features", "status", "razorpay_subscription_id", "razorpay_customer_id", "razorpay_payment_id", "razorpay_order_id", "auto_renew", "receipt_url", "subscription_start_date", "subscription_end_date", "cancelled_at", "paused_at", "paused_until", "last_webhook_at", "cancellation_reason", "cancellation_feedback", "cancelled_by", "is_organization_subscription", "organization_type", "purchased_by", "seat_count", "is_bulk_purchase", "metadata", "created_at", "updated_at", "product_id")
 VALUES
   ('8c8f6c10-8e7a-4f66-9a20-a75cd6fd80c1',
    (SELECT "id" FROM "public"."users" WHERE "email" = 'admin@cambridgeschool.edu.in' LIMIT 1),
@@ -259,7 +259,6 @@ VALUES
    '8c8f6c10-8e7a-4f66-9a20-a75cd6fd8001',
    'Cambridge School Admin',
    'admin@cambridgeschool.edu.in',
-   '+91-80-12345678',
    'school_enterprise',
    'School Enterprise',
    '29999.00',
@@ -349,7 +348,7 @@ SET
 -- 11. R AMRUTHA STUDENT SUBSCRIPTION (Premium - Career Accelerator)
 -- ------------------------------------------------------------
 INSERT INTO "public"."subscriptions"
-  ("id", "user_id", "plan_id", "organization_id", "full_name", "email", "phone", "plan_code", "plan_type", "plan_amount", "billing_cycle", "features", "status", "razorpay_subscription_id", "razorpay_customer_id", "razorpay_payment_id", "razorpay_order_id", "auto_renew", "receipt_url", "subscription_start_date", "subscription_end_date", "cancelled_at", "paused_at", "paused_until", "last_webhook_at", "cancellation_reason", "cancellation_feedback", "cancelled_by", "is_organization_subscription", "organization_type", "purchased_by", "seat_count", "is_bulk_purchase", "metadata", "created_at", "updated_at", "product_id")
+  ("id", "user_id", "plan_id", "organization_id", "full_name", "email", "plan_code", "plan_type", "plan_amount", "billing_cycle", "features", "status", "razorpay_subscription_id", "razorpay_customer_id", "razorpay_payment_id", "razorpay_order_id", "auto_renew", "receipt_url", "subscription_start_date", "subscription_end_date", "cancelled_at", "paused_at", "paused_until", "last_webhook_at", "cancellation_reason", "cancellation_feedback", "cancelled_by", "is_organization_subscription", "organization_type", "purchased_by", "seat_count", "is_bulk_purchase", "metadata", "created_at", "updated_at", "product_id")
 VALUES
   ('8c8f6c10-8e7a-4f66-9a20-a75cd6fd80d1',
    '8c8f6c10-8e7a-4f66-9a20-a75cd6fd8002',
@@ -357,7 +356,6 @@ VALUES
    '8c8f6c10-8e7a-4f66-9a20-a75cd6fd8001',
    'R Amrutha',
    'amrutha.grade8@cambridgeschool.edu.in',
-   NULL,
    'premium',
    'Career Accelerator',
    '999.00',
