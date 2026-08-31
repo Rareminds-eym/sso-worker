@@ -159,7 +159,11 @@ SET row_security = off;
 
 INSERT INTO "public"."products" ("id", "code", "name", "description", "created_at") VALUES
 	('912d5049-e195-46e9-a319-49e3502bf7e7', 'skillpassport', 'SkillPassport', 'Skill development and career advancement platform', '2026-05-22 04:01:09.763845+00'),
-	('7352d0f4-88a6-4e14-9421-6c5706791973', 'lte', 'Learning Transformation Engine', 'Enterprise learning transformation and training management system', '2026-05-22 04:01:09.763845+00');
+	('7352d0f4-88a6-4e14-9421-6c5706791973', 'lte', 'Learning Transformation Engine', 'Enterprise learning transformation and training management system', '2026-05-22 04:01:09.763845+00')
+ON CONFLICT ("id") DO UPDATE SET
+	"code" = EXCLUDED."code",
+	"name" = EXCLUDED."name",
+	"description" = EXCLUDED."description";
 
 
 --
@@ -306,7 +310,10 @@ INSERT INTO "public"."roles" ("id", "name", "description", "created_at") VALUES
 	('ebad8db9-bd7c-4ccb-8018-c0b021726bf7', 'university_admin', 'University administrator', '2026-04-27 10:24:25.55545+00'),
 	('c53c6293-b1fc-43c5-a488-09a5b875f7f9', 'recruiter', 'Recruiter', '2026-04-27 10:24:25.55545+00'),
 	('9d60ef12-be85-4d08-9588-d2699a3235a4', 'hr', 'Human resources', '2026-05-05 06:39:13.566845+00'),
-	('8d018d55-46f4-4e67-b6a5-8c216737a374', 'learner', 'Self-directed learner', '2026-04-27 10:52:33.399156+00');
+	('8d018d55-46f4-4e67-b6a5-8c216737a374', 'learner', 'Self-directed learner', '2026-04-27 10:52:33.399156+00')
+ON CONFLICT ("id") DO UPDATE SET
+	"name" = EXCLUDED."name",
+	"description" = EXCLUDED."description";
 
 
 --
