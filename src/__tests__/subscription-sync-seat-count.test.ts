@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SsoWorker } from "../index";
 import { publishSyncEvent } from "../lib/sync-queue";
+import type { Env } from "../types";
 
 vi.mock("../lib/sync-queue", () => ({
   publishSyncEvent: vi.fn(),
@@ -39,10 +40,10 @@ describe("Subscription seat_count Sync Verification", () => {
       SYNC_QUEUE: {} as Queue,
     };
 
-    const worker = new SsoWorker({} as ExecutionContext, mockEnv as any);
+    const worker = new SsoWorker({} as ExecutionContext, mockEnv as unknown as Env);
 
     // Mock internal db call on worker
-    vi.spyOn(worker as any, "createSubscription").mockImplementation(async (data: any) => {
+    vi.spyOn(worker, "createSubscription").mockImplementation(async (data) => {
       let seatCount = data.seat_count || 1;
       if ((!data.seat_count || data.seat_count === 1) && data.plan_id) {
         const planRow = await mockDbQueryOne(`plans?id=${data.plan_id}`);

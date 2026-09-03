@@ -234,11 +234,16 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     let seatCount = data.seat_count || 1;
     if ((!data.seat_count || data.seat_count === 1) && data.plan_id) {
       try {
-        const planRow = await database.queryOne<{ entity_config?: Record<string, any> }>(
+        const planRow = await database.queryOne<{
+          entity_config?: Record<string, { max_users?: number } | undefined> | string;
+        }>(
           `plans?id=eq.${encodeURIComponent(data.plan_id)}`,
         );
         if (planRow?.entity_config) {
-          const cfg = typeof planRow.entity_config === 'string' ? JSON.parse(planRow.entity_config) : planRow.entity_config;
+          const cfg: Record<string, { max_users?: number } | undefined> =
+            typeof planRow.entity_config === 'string'
+              ? JSON.parse(planRow.entity_config)
+              : planRow.entity_config;
           for (const k in cfg) {
             if (cfg[k]?.max_users) {
               seatCount = Number(cfg[k].max_users);
@@ -246,7 +251,9 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
             }
           }
         }
-      } catch (_) { }
+      } catch (planErr) {
+        console.warn("[sso] Failed to resolve seat count from plan:", planErr instanceof Error ? planErr.message : String(planErr));
+      }
     }
 
     const subscription = await database.mutate("subscriptions", {
