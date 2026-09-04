@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SsoWorker } from "../index";
-import { publishSyncEvent } from "../lib/sync-queue";
+import { publishSyncEvent, type SyncEvent } from "../lib/sync-queue";
 import type { Env } from "../types";
 
 vi.mock("../lib/sync-queue", () => ({
@@ -33,17 +33,36 @@ describe("Subscription seat_count Sync Verification", () => {
       };
     });
 
-    // Mock fetch for REST database calls if needed
+    // Fully typed mocks matching the Cloudflare Workers types
+    const mockQueue: Queue<SyncEvent> = {
+      metrics: vi.fn(async (): Promise<QueueMetrics> => ({
+        backlogCount: 0,
+        backlogBytes: 0,
+      })),
+      send: vi.fn(async (): Promise<QueueSendResponse> => ({
+        metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
+      })),
+      sendBatch: vi.fn(async (): Promise<QueueSendBatchResponse> => ({
+        metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
+      })),
+    };
+
+    const mockCtx: ExecutionContext = {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+      props: undefined,
+    };
+
     const mockEnv = {
       SUPABASE_URL: "https://test.supabase.co",
       SUPABASE_SERVICE_ROLE_KEY: "test-key",
-      SYNC_QUEUE: {} as Queue,
-    };
+      SYNC_QUEUE: mockQueue,
+    } as Env;
 
-    const worker = new SsoWorker({} as ExecutionContext, mockEnv as unknown as Env);
+    const worker = new SsoWorker(mockCtx, mockEnv);
 
     // Mock internal db call on worker
-    vi.spyOn(worker, "createSubscription").mockImplementation(async (data) => {
+    vi.spyOn(worker, "createSubscription").mockImplementation(async (data: Parameters<typeof worker.createSubscription>[0]) => {
       let seatCount = data.seat_count || 1;
       if ((!data.seat_count || data.seat_count === 1) && data.plan_id) {
         const planRow = await mockDbQueryOne(`plans?id=${data.plan_id}`);
@@ -58,7 +77,7 @@ describe("Subscription seat_count Sync Verification", () => {
         seat_count: seatCount,
       });
 
-      publishSyncEvent(mockEnv.SYNC_QUEUE, {} as ExecutionContext, "subscription.created", {
+      publishSyncEvent(mockEnv.SYNC_QUEUE, mockCtx, "subscription.created", {
         id: subscription.id,
         user_id: data.user_id,
         seat_count: seatCount,
@@ -72,6 +91,12 @@ describe("Subscription seat_count Sync Verification", () => {
       user_id: "user-123",
       plan_id: "plan-enterprise-123",
       plan_code: "college_enterprise",
+      plan_type: "college_enterprise",
+      plan_amount: 0,
+      billing_cycle: "lifetime",
+      features: [],
+      full_name: "Test User",
+      email: "user-123@test.example",
     });
 
     expect(result.seat_count).toBe(5000);

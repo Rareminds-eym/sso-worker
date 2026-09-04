@@ -240,15 +240,22 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           `plans?id=eq.${encodeURIComponent(data.plan_id)}`,
         );
         if (planRow?.entity_config) {
-          const cfg: Record<string, { max_users?: number } | undefined> =
-            typeof planRow.entity_config === 'string'
-              ? JSON.parse(planRow.entity_config)
-              : planRow.entity_config;
-          for (const k in cfg) {
-            if (cfg[k]?.max_users) {
-              seatCount = Number(cfg[k].max_users);
-              break;
+          let entityConfig: Record<string, { max_users?: number } | undefined> = {};
+          if (typeof planRow.entity_config === 'string') {
+            try {
+              entityConfig = JSON.parse(planRow.entity_config);
+            } catch (parseErr) {
+              console.warn('[sso] Failed to parse entity_config JSON:', parseErr instanceof Error ? parseErr.message : String(parseErr));
+              entityConfig = {};
             }
+          } else {
+            entityConfig = planRow.entity_config;
+          }
+          const firstEntityWithSeats = Object.values(entityConfig).find(
+            (config) => config?.max_users,
+          );
+          if (firstEntityWithSeats?.max_users) {
+            seatCount = Number(firstEntityWithSeats.max_users);
           }
         }
       } catch (planErr) {
@@ -545,7 +552,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const database = db(this.env);
     await database.update("subscriptions", { id: `eq.${encodeURIComponent(subscriptionId)}` }, updateData);
 
-    const updated = await database.queryOne(`subscriptions?id=eq.${encodeURIComponent(subscriptionId)}`);
+    const updated = await database.queryOne<Record<string, unknown>>(`subscriptions?id=eq.${encodeURIComponent(subscriptionId)}`);
     if (updated) {
       publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'subscription.updated', updated);
     }
@@ -874,7 +881,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       `users?email=eq.${encodeURIComponent(normalized)}&select=id,email,is_email_verified`,
     );
 
-    return users && users.length > 0 ? users[0] : null;
+    return users?.[0] ?? null;
   }
 
   // ── Membership RPC Methods ────────────────────────────────────
