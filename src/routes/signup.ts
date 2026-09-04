@@ -258,6 +258,9 @@ export async function performSignup(
         status: string;
         subscription_start_date: string;
         subscription_end_date: string | null;
+        organization_id: string | null;
+        seat_count: number;
+        is_organization_subscription: boolean;
         product_id: string | null;
         updated_at: string;
       }>(`subscriptions?user_id=eq.${encodeURIComponent(result.user_id)}&order=created_at.desc&limit=1`)
@@ -267,7 +270,7 @@ export async function performSignup(
             publishSyncEvent(env.SYNC_QUEUE, ctx, 'subscription.created', {
               id: sub.id,
               user_id: result.user_id,
-              organization_id: null,
+              organization_id: sub.organization_id ?? null,
               plan_id: sub.plan_id,
               plan_code: sub.plan_code,
               plan_type: sub.plan_type,
@@ -277,7 +280,8 @@ export async function performSignup(
               status: sub.status,
               subscription_start_date: sub.subscription_start_date,
               subscription_end_date: sub.subscription_end_date,
-              is_organization_subscription: false,
+              is_organization_subscription: sub.is_organization_subscription ?? false,
+              seat_count: sub.seat_count ?? 1,
               product_id: sub.product_id,
               updated_at: sub.updated_at,
             });
