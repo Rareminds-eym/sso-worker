@@ -819,6 +819,28 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return users && users.length > 0 ? users[0] : null;
   }
 
+  /**
+   * Look up a user by ID with metadata.
+   * Returns full user row for app DB self-heal (role/org from user_metadata).
+   */
+  async getUserById(userId: string): Promise<{ id: string; email: string; is_email_verified: boolean; is_blocked: boolean; user_metadata: Record<string, unknown> | null; created_at: string; last_login_at: string | null } | null> {
+    if (!userId) throw new Error("userId is required");
+    const database = db(this.env);
+    const user = await database.queryOne<{ id: string; email: string; is_email_verified: boolean; is_blocked: boolean; user_metadata: Record<string, unknown> | null; created_at: string; last_login_at: string | null }>(
+      `users?id=eq.${encodeURIComponent(userId)}&select=id,email,is_email_verified,is_blocked,user_metadata,created_at,last_login_at`,
+    );
+    return (user as any) || null;
+  }
+
+  async getOrganizationById(orgId: string): Promise<{ id: string; name: string; slug: string | null; metadata: Record<string, unknown> | null; created_at: string } | null> {
+    if (!orgId) throw new Error("orgId is required");
+    const database = db(this.env);
+    const org = await database.queryOne<{ id: string; name: string; slug: string | null; metadata: Record<string, unknown> | null; created_at: string }>(
+      `organizations?id=eq.${encodeURIComponent(orgId)}&select=id,name,slug,metadata,created_at`,
+    );
+    return (org as any) || null;
+  }
+
   // ── Membership RPC Methods ────────────────────────────────────
 
   async createMembership(data: {
