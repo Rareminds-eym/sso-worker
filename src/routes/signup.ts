@@ -228,21 +228,26 @@ export async function performSignup(
         role: body.role,
       },
     });
-    publishSyncEvent(env.SYNC_QUEUE, ctx, 'organization.created', {
-      id: result.org_id,
-      name: body.org_name,
-      slug: result.slug,
-      created_by: result.user_id,
-    });
-    
-    // Publish dependent events (membership and subscription)
-    // Consumer should handle these idempotently and retry if dependencies not ready
-    publishSyncEvent(env.SYNC_QUEUE, ctx, 'membership.created', {
-      user_id: result.user_id,
-      organization_id: result.org_id,
-      roles: claims?.roles ?? [],  // Use actual roles from DB, empty if claims failed
-      status: 'active',
-    });
+
+    // Only sync organization if org_name is provided
+    // For recruiter_admin, org creation happens during onboarding
+    if (body.org_name) {
+      publishSyncEvent(env.SYNC_QUEUE, ctx, 'organization.created', {
+        id: result.org_id,
+        name: body.org_name,
+        slug: result.slug,
+        created_by: result.user_id,
+      });
+
+      // Publish membership only if org was synced
+      // For recruiter_admin, membership creation happens during onboarding
+      publishSyncEvent(env.SYNC_QUEUE, ctx, 'membership.created', {
+        user_id: result.user_id,
+        organization_id: result.org_id,
+        roles: claims?.roles ?? [],  // Use actual roles from DB, empty if claims failed
+        status: 'active',
+      });
+    }
 
     // ponytail: Best-effort sync of pre-existing subscription
     // Non-blocking; login re-sync path serves as backstop if this fails
