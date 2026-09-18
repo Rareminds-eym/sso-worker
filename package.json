@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
-    "dev:stack": "wrangler dev -c wrangler.toml -c ../auth-sync-consumer/wrangler.toml",
+    "dev:stack": "wrangler dev -c wrangler.toml -c ../auth-sync-consumer/wrangler.toml -c ../email-worker/wrangler.toml -c ../payments-worker/wrangler.toml -c ../realtime-worker/wrangler.toml",
     "deploy": "wrangler deploy",
     "generate-keys": "node scripts/generate-keys.mjs",
     "test": "vitest",
