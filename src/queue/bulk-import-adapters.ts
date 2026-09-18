@@ -15,13 +15,99 @@ import { createBatchHandler, createCsvParseHandler, type BulkImportAdapter, type
 
 // ─── Entity data shapes ────────────────────────────────────────────
 
+/**
+ * Canonical learner profile. Keys match the SkillPassport `learners` table
+ * columns consumed by the learner Settings page (see
+ * skillpassport/src/entities/learner/api/learnerSettingsService.js
+ * `fieldMapping`), so bulk-imported rows render exactly like manually added
+ * learners. `program_id` is only populated when the CSV value is a UUID
+ * (the column is uuid-typed).
+ */
 export interface LearnerData {
 	email: string;
 	name: string;
-	contact_number?: string;
-	enrollment_number?: string;
+	contactNumber?: string;
+	alternate_number?: string;
+	dateOfBirth?: string;
+	gender?: string;
+	enrollmentNumber?: string;
+	registration_number?: string;
+	roll_number?: string;
+	admission_number?: string;
+	category?: string;
+	quota?: string;
+	admission_academic_year?: string;
+	bloodGroup?: string;
+	district_name?: string;
+	university?: string;
+	profilePicture?: string;
+	guardianName?: string;
+	guardianPhone?: string;
+	guardianEmail?: string;
+	guardianRelation?: string;
+	address?: string;
+	city?: string;
+	state?: string;
+	country?: string;
+	pincode?: string;
 	program_id?: string;
-	metadata?: Record<string, unknown>;
+	grade?: string;
+	section?: string;
+}
+
+/**
+ * Normalize a raw CSV row the same way the college-admin preview does
+ * (Papa `transformHeader`: trim, lowercase, strip non-alphanumeric), so
+ * `Email`, `Contact Number`, `contactNumber` and `contact_number` all map
+ * to the same key. Without this, Excel-saved files pass the frontend
+ * preview but fail/mis-map in this backend parser.
+ */
+export function normalizeCsvHeaders(row: CSVRow): CSVRow {
+	const out: CSVRow = {};
+	for (const [key, value] of Object.entries(row)) {
+		out[key.trim().toLowerCase().replace(/[^a-z0-9]/g, "")] = value;
+	}
+	return out;
+}
+
+/** First non-empty trimmed value across candidate normalized keys. */
+function pick(row: CSVRow, ...keys: string[]): string | undefined {
+	for (const key of keys) {
+		const value = row[key]?.trim();
+		if (value) return value;
+	}
+	return undefined;
+}
+
+/**
+ * Convert DD-MM-YYYY / DD/MM/YYYY / YYYY-MM-DD to YYYY-MM-DD (the
+ * `learners.dateOfBirth` column is date-typed). Mirrors the college-admin
+ * modal `convertDateFormat`. Returns undefined when unparseable so the
+ * column stays NULL instead of failing the insert.
+ */
+function toISODate(value: string | undefined): string | undefined {
+	if (!value) return undefined;
+	const trimmed = value.trim();
+	if (!trimmed) return undefined;
+	if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+	const match = trimmed.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
+	if (match) {
+		const [, day, month, year] = match;
+		const iso = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+		const date = new Date(iso);
+		if (
+			date.getFullYear() === Number(year) &&
+			date.getMonth() === Number(month) - 1 &&
+			date.getDate() === Number(day)
+		) {
+			return iso;
+		}
+	}
+	return undefined;
+}
+
+function isUUID(value: string | undefined): value is string {
+	return !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
 export interface FacultyData {
@@ -53,15 +139,17 @@ const EMAIL_REGEX = /^(?!.*\.\.)[^\s@]+@[^\s@]+\.[a-zA-Z]{2,}$/;
 // ─── Learner ───────────────────────────────────────────────────────
 
 function validateLearnerRow(row: CSVRow, rowNumber: number): { valid: boolean; error?: string } {
-	if (!row.email || !row.email.includes("@")) {
+	const email = row.email?.trim() || "";
+	const name = row.name?.trim() || "";
+	if (!email || !email.includes("@")) {
 		return { valid: false, error: `Row ${rowNumber}: Invalid or missing email` };
 	}
 
-	if (!row.name || row.name.trim().length < 2) {
+	if (name.length < 2) {
 		return { valid: false, error: `Row ${rowNumber}: Invalid or missing name` };
 	}
 
-	if (!EMAIL_REGEX.test(row.email)) {
+	if (!EMAIL_REGEX.test(email)) {
 		return { valid: false, error: `Row ${rowNumber}: Invalid email format` };
 	}
 
@@ -69,21 +157,82 @@ function validateLearnerRow(row: CSVRow, rowNumber: number): { valid: boolean; e
 }
 
 function mapLearnerRow(row: CSVRow): LearnerData {
+	const programId = pick(row, "programid");
 	return {
 		email: row.email?.trim() || "",
 		name: row.name?.trim() || "",
-		contact_number: row.contact_number?.trim() || row.phone?.trim() || undefined,
-		enrollment_number: row.enrollment_number?.trim() || row.roll_number?.trim() || undefined,
-		program_id: row.program_id?.trim() || undefined,
-		metadata: {
-			...Object.fromEntries(
-				Object.entries(row).filter(
-					([key]) =>
-						!["email", "name", "contact_number", "phone", "enrollment_number", "roll_number", "program_id"].includes(key),
-				),
-			),
-		},
+		contactNumber: pick(row, "contactnumber", "phone"),
+		alternate_number: pick(row, "alternatenumber"),
+		dateOfBirth: toISODate(pick(row, "dateofbirth")),
+		gender: pick(row, "gender"),
+		enrollmentNumber: pick(row, "enrollmentnumber"),
+		registration_number: pick(row, "registrationnumber"),
+		roll_number: pick(row, "rollnumber"),
+		admission_number: pick(row, "admissionnumber"),
+		category: pick(row, "category"),
+		quota: pick(row, "quota"),
+		admission_academic_year: pick(row, "academicyear"),
+		bloodGroup: pick(row, "bloodgroup"),
+		district_name: pick(row, "district", "districtname"),
+		university: pick(row, "university"),
+		profilePicture: pick(row, "profilepicture"),
+		guardianName: pick(row, "guardianname"),
+		guardianPhone: pick(row, "guardianphone"),
+		guardianEmail: pick(row, "guardianemail"),
+		guardianRelation: pick(row, "guardianrelation"),
+		address: pick(row, "address"),
+		city: pick(row, "city"),
+		state: pick(row, "state"),
+		country: pick(row, "country"),
+		pincode: pick(row, "pincode"),
+		program_id: isUUID(programId) ? programId : undefined,
+		grade: pick(row, "grade", "class"),
+		section: pick(row, "section", "division"),
 	};
+}
+
+/**
+ * Learner profile keyed by SkillPassport `learners` column names — the same
+ * reference the Settings page reads/writes
+ * (learnerSettingsService.js `fieldMapping`). Sent inside the
+ * `membership.created` sync event so the shadow `learners` row is created
+ * with every displayed field, not just name/email.
+ */
+function buildLearnerProfile(data: LearnerData): Record<string, unknown> {
+	const profile: Record<string, unknown> = {};
+	const set = (key: string, value: unknown) => {
+		if (value !== undefined && value !== null && value !== "") {
+			profile[key] = value;
+		}
+	};
+	set("contactNumber", data.contactNumber);
+	set("alternate_number", data.alternate_number);
+	set("dateOfBirth", data.dateOfBirth);
+	set("gender", data.gender);
+	set("enrollmentNumber", data.enrollmentNumber);
+	set("registration_number", data.registration_number);
+	set("roll_number", data.roll_number);
+	set("admission_number", data.admission_number);
+	set("category", data.category);
+	set("quota", data.quota);
+	set("admission_academic_year", data.admission_academic_year);
+	set("bloodGroup", data.bloodGroup);
+	set("district_name", data.district_name);
+	set("university", data.university);
+	set("profilePicture", data.profilePicture);
+	set("guardianName", data.guardianName);
+	set("guardianPhone", data.guardianPhone);
+	set("guardianEmail", data.guardianEmail);
+	set("guardianRelation", data.guardianRelation);
+	set("address", data.address);
+	set("city", data.city);
+	set("state", data.state);
+	set("country", data.country);
+	set("pincode", data.pincode);
+	set("program_id", data.program_id);
+	set("grade", data.grade);
+	set("section", data.section);
+	return profile;
 }
 
 export const learnerBulkImport: BulkImportAdapter<LearnerData> = {
@@ -92,6 +241,7 @@ export const learnerBulkImport: BulkImportAdapter<LearnerData> = {
 	parseMessageType: "parse-csv",
 	createMessageType: "create-learner-batch",
 	jobIdPrefix: "batch-",
+	normalizeRow: normalizeCsvHeaders,
 	validateRow: validateLearnerRow,
 	mapRow: mapLearnerRow,
 	roleName: "learner",
@@ -104,11 +254,13 @@ export const learnerBulkImport: BulkImportAdapter<LearnerData> = {
 			user_metadata: {
 				first_name,
 				last_name,
-				contact_number: data.contact_number,
-				enrollment_number: data.enrollment_number,
+				// Snake-case aliases kept for syncUser (users.phone) compat.
+				contact_number: data.contactNumber,
+				enrollment_number: data.enrollmentNumber,
 				program_id: data.program_id,
 				role: "learner",
-				...data.metadata,
+				// Canonical learners-column keys (Settings reference).
+				...buildLearnerProfile(data),
 			},
 			is_email_verified: true, // Bulk imports are trusted
 		};
@@ -118,11 +270,15 @@ export const learnerBulkImport: BulkImportAdapter<LearnerData> = {
 		return {
 			first_name,
 			last_name,
-			contact_number: data.contact_number,
-			enrollment_number: data.enrollment_number,
+			contact_number: data.contactNumber,
+			enrollment_number: data.enrollmentNumber,
 			program_id: data.program_id,
 			role: "learner",
+			...buildLearnerProfile(data),
 		};
+	},
+	buildLearnerProfile(data) {
+		return buildLearnerProfile(data);
 	},
 	buildEmail(item, user, loginUrl) {
 		return buildLearnerInvitationEmail((item as LearnerBatchItem).learner_data.name, user.email, item.temp_password, loginUrl);
@@ -132,59 +288,58 @@ export const learnerBulkImport: BulkImportAdapter<LearnerData> = {
 // ─── Faculty ───────────────────────────────────────────────────────
 
 function validateFacultyRow(row: CSVRow, rowNumber: number): { valid: boolean; error?: string } {
-	if (!row.email || !EMAIL_REGEX.test(row.email)) {
+	const email = row.email?.trim() || "";
+	if (!email || !EMAIL_REGEX.test(email)) {
 		return { valid: false, error: `Row ${rowNumber}: Invalid or missing email` };
 	}
 
-	const firstName =
-		row.firstName?.trim() || row.first_name?.trim() || row.name?.trim()?.split(" ")[0] || "";
-	const lastName =
-		row.lastName?.trim() || row.last_name?.trim() || row.name?.trim()?.split(" ").slice(1).join(" ") || "";
+	const nameParts = (row.name?.trim() || "").split(" ").filter(Boolean);
+	const firstName = row.firstname?.trim() || nameParts[0] || "";
+	const lastName = row.lastname?.trim() || nameParts.slice(1).join(" ") || "";
 
 	if (!firstName && !lastName) {
 		return { valid: false, error: `Row ${rowNumber}: Missing name (firstName or name required)` };
 	}
 
-	if (row.experienceYears !== undefined && row.experienceYears !== "" && Number.isNaN(Number(row.experienceYears))) {
+	if (row.experienceyears !== undefined && row.experienceyears !== "" && Number.isNaN(Number(row.experienceyears))) {
 		return { valid: false, error: `Row ${rowNumber}: experienceYears must be a number` };
 	}
 
 	return { valid: true };
 }
 
+// Normalized (lowercased, non-alphanumeric stripped) header keys consumed above.
 const FACULTY_METADATA_KEYS = [
 	"email",
 	"name",
-	"firstName",
-	"lastName",
-	"first_name",
-	"last_name",
+	"firstname",
+	"lastname",
 	"phone",
-	"contactNumber",
-	"employeeId",
-	"employee_id",
+	"contactnumber",
+	"employeeid",
 	"department",
-	"department_id",
+	"departmentid",
 	"specialization",
 	"qualification",
-	"experienceYears",
+	"experienceyears",
 	"role",
 ];
 
 function mapFacultyRow(row: CSVRow): FacultyData {
 	const name = row.name?.trim() || "";
-	const firstName = row.firstName?.trim() || row.first_name?.trim() || name.split(" ")[0] || "";
-	const lastName = row.lastName?.trim() || row.last_name?.trim() || name.split(" ").slice(1).join(" ") || "";
+	const nameParts = name.split(" ").filter(Boolean);
+	const firstName = row.firstname?.trim() || nameParts[0] || "";
+	const lastName = row.lastname?.trim() || nameParts.slice(1).join(" ") || "";
 	const experienceYears =
-		row.experienceYears && row.experienceYears !== "" ? Number(row.experienceYears) : undefined;
+		row.experienceyears && row.experienceyears !== "" ? Number(row.experienceyears) : undefined;
 
 	return {
 		email: row.email?.trim()?.toLowerCase() || "",
 		first_name: firstName,
 		last_name: lastName,
-		phone: row.phone?.trim() || row.contactNumber?.trim() || undefined,
-		employee_id: row.employeeId?.trim() || row.employee_id?.trim() || undefined,
-		department: row.department?.trim() || row.department_id?.trim() || undefined,
+		phone: row.phone?.trim() || row.contactnumber?.trim() || undefined,
+		employee_id: row.employeeid?.trim() || undefined,
+		department: row.department?.trim() || row.departmentid?.trim() || undefined,
 		specialization: row.specialization?.trim() || undefined,
 		qualification: row.qualification?.trim() || undefined,
 		experience_years: experienceYears,
@@ -202,6 +357,7 @@ export const facultyBulkImport: BulkImportAdapter<FacultyData> = {
 	parseMessageType: "parse-faculty-csv",
 	createMessageType: "create-faculty-batch",
 	jobIdPrefix: "faculty-batch-",
+	normalizeRow: normalizeCsvHeaders,
 	validateRow: validateFacultyRow,
 	mapRow: mapFacultyRow,
 	roleName: "college_educator",

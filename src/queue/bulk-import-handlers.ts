@@ -73,6 +73,12 @@ export interface BulkImportAdapter<TData> {
 	jobIdPrefix: string;
 	/** Rows per create-* message. */
 	batchSize?: number;
+	/**
+	 * Optional header normalization applied to every CSV row before
+	 * validation/mapping (e.g. trim + lowercase + strip non-alphanumeric so
+	 * `Email`, `Contact Number` and `contactNumber` map identically).
+	 */
+	normalizeRow?(row: CSVRow): CSVRow;
 	/** CSV row validation for the parse stage. */
 	validateRow(row: CSVRow, rowNumber: number): { valid: boolean; error?: string };
 	/** CSV row → entity data mapping for the parse stage. */
@@ -83,6 +89,12 @@ export interface BulkImportAdapter<TData> {
 	buildUser(item: BulkItem): UserToCreate;
 	/** user_metadata subset published in the user.created sync event. */
 	buildSyncUserMetadata(data: TData): Record<string, unknown>;
+	/**
+	 * Optional learner profile keyed by SkillPassport `learners` column names,
+	 * published inside the membership.created sync event so the shadow
+	 * `learners` row carries every displayed field (Settings reference).
+	 */
+	buildLearnerProfile?(data: TData): Record<string, unknown>;
 	/** Extra sync events beyond user.created + membership.created (e.g. faculty.created). */
 	buildExtraSyncEvents?(item: BulkItem, user: CreatedUser, organizationId: string): SyncEventLike[];
 	/** Invitation email template, or null to skip. */
@@ -129,17 +141,18 @@ export function createCsvParseHandler<TData>(adapter: BulkImportAdapter<TData>) 
 				| { rowNumber: number; error: string; email: string }
 				| { rowNumber: number; email: string; passwordHash: string; tempPassword: string; data: TData };
 
-			const hashPromises = rows.map(async (row, i) => {
-				const rowNumber = i + 1;
-				const validation = adapter.validateRow(row, rowNumber);
-				if (!validation.valid) {
-					return { rowNumber, error: validation.error || "Validation failed", email: row.email || "" };
-				}
-				const email = row.email.toLowerCase();
-				const tempPassword = generateTempPassword();
-				const passwordHash = await hashPassword(tempPassword);
-				return { rowNumber, email, passwordHash, tempPassword, data: adapter.mapRow(row) };
-			});
+		const hashPromises = rows.map(async (rawRow, i) => {
+			const rowNumber = i + 1;
+			const row = adapter.normalizeRow ? adapter.normalizeRow(rawRow) : rawRow;
+			const validation = adapter.validateRow(row, rowNumber);
+			if (!validation.valid) {
+				return { rowNumber, error: validation.error || "Validation failed", email: row.email || "" };
+			}
+			const email = row.email.toLowerCase().trim();
+			const tempPassword = generateTempPassword();
+			const passwordHash = await hashPassword(tempPassword);
+			return { rowNumber, email, passwordHash, tempPassword, data: adapter.mapRow(row) };
+		});
 
 			const results: HashResult[] = await Promise.all(hashPromises);
 
@@ -284,6 +297,7 @@ async function publishBatchSyncEvents<TData>(
 			},
 			timestamp,
 		});
+		const learnerProfile = adapter.buildLearnerProfile ? adapter.buildLearnerProfile(data) : undefined;
 		syncEvents.push({
 			type: "membership.created",
 			payload: {
@@ -291,6 +305,7 @@ async function publishBatchSyncEvents<TData>(
 				organization_id,
 				roles: [adapter.roleName],
 				status: "active",
+				...(learnerProfile && Object.keys(learnerProfile).length > 0 ? { learner_profile: learnerProfile } : {}),
 			},
 			timestamp,
 		});
