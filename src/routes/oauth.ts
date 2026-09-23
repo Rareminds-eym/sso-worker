@@ -30,6 +30,7 @@ export async function performOAuthLogin(
   body: OAuthLoginBody,
   ip: string | null,
   ua: string | null,
+  signupApp?: 'skillpassport',
 ) {
   if (body.provider !== "google") {
     return { error: "Unsupported OAuth provider", status: 400 };
@@ -119,6 +120,7 @@ export async function performOAuthLogin(
     const lastName = nameParts.slice(1).join(" ");
     const user_metadata: Record<string, unknown> = {
       role: "learner",
+      ...(signupApp ? { signup_app: signupApp } : {}),
       auth_provider: "google",
       ...(body.picture ? { avatar_url: body.picture } : {}),
       ...(firstName ? { firstName } : {}),

@@ -1,3 +1,5 @@
+import { performOAuthLogin } from './routes/oauth';
+import { ensureCampaignUser, flushCampaignOutbox, createCampaignHandoff, exchangeCampaignHandoff, recordSkillpassportAccess, type CampaignRegistration } from './lib/campaign-identity';
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { signLteAccessToken } from "./lib/app-token";
 import { resolveEffectiveRoles } from "./lib/roles";
@@ -65,7 +67,27 @@ import type {
 // ─── WorkerEntrypoint ─────────────────────────────────────────
 export class SsoWorker extends WorkerEntrypoint<Env> {
   // ── Scheduled (cron) ──────────────────────────────────────────
+  async ensureEducatorCampaignUser(input: CampaignRegistration) {
+    const result = await ensureCampaignUser(this.env, input);
+    this.ctx.waitUntil(flushCampaignOutbox(this.env).catch(() => console.error('[campaign] Outbox delivery pending')));
+    return result;
+  }
+
+  async createEducatorCampaignHandoff(input: { email: string; state: string }) {
+    return createCampaignHandoff(this.env, input);
+  }
+
+  async exchangeEducatorCampaignHandoff(input: { code: string; state: string; redirectUri: string }) {
+    return exchangeCampaignHandoff(this.env, input);
+  }
+
+  async recordSkillpassportAccess(input: { refreshToken: string; eventType: 'login' | 'session_access'; signup?: boolean }) {
+    await recordSkillpassportAccess(this.env, input.refreshToken, input.eventType, input.signup === true);
+  }
+
   async scheduled(_event: ScheduledEvent): Promise<void> {
+    await flushCampaignOutbox(this.env).catch(() => console.error('[campaign] Outbox retry failed'));
+    if (_event.cron === '*/5 * * * *') return;
     const database = db(this.env);
 
     // Clean up expired or revoked tokens (verifications, password resets, etc.)
@@ -87,7 +109,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
     try {
       const pendingEvents = await database.query<Record<string, unknown>>(
-        "events?status=eq.received&order=created_at.asc&limit=10"
+        "events?status=eq.received&event_type=neq.campaign.identity.sync&order=created_at.asc&limit=10"
       );
       if (pendingEvents && pendingEvents.length > 0) {
         for (const event of pendingEvents) {
@@ -1032,6 +1054,12 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
    * endpoint. Links or provisions the user, then issues a session exactly
    * like `login`.
    */
+  async oauthAuthenticateSkillpassport(input: OAuthAuthenticateRpcInput): Promise<OAuthAuthenticateRpcOutcome> {
+    return createSsoAuthority(this.env, this.ctx, {
+      performOAuthLogin: (env, ctx, body, ip, ua) => performOAuthLogin(env, ctx, body, ip, ua, 'skillpassport'),
+    }).oauthAuthenticate(input);
+  }
+
   async oauthAuthenticate(input: OAuthAuthenticateRpcInput): Promise<OAuthAuthenticateRpcOutcome> {
     return createSsoAuthority(this.env, this.ctx).oauthAuthenticate(input);
   }

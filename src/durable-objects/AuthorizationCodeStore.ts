@@ -7,7 +7,7 @@ export interface AuthorizationCodeRecord {
 	stateHash: string;
 	userId: string;
 	orgId: string;
-	targetApp: "lte";
+	targetApp: "lte" | "skillpassport";
 	redirectUri: string;
 	expiresAt: number;
 	createdAt: number;
