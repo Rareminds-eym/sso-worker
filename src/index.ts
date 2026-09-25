@@ -1,6 +1,5 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { signLteAccessToken } from "./lib/app-token";
-import { resolveEffectiveRoles } from "./lib/roles";
 import { audit } from "./lib/audit";
 import {
   assertAllowedRedirectUri,
@@ -18,14 +17,25 @@ import { generateRefreshToken, hashToken } from "./lib/hash";
 import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "./lib/jwt";
 import { requireLteEntitlement } from "./lib/lte-entitlement";
 import { endpointRateLimit } from "./lib/rate-limit";
+import { resolveEffectiveRoles } from "./lib/roles";
 import { mintAccessToken, rotateRefreshToken } from "./lib/session-rotation";
 import { getLteSubscriptionSnapshot } from "./lib/subscription-snapshot";
 import { publishSyncEvent } from "./lib/sync-queue";
 import { handleQueueBatch } from "./queue/queue-router";
 import { performQueueBulkFacultyUpload, performQueueBulkLearnerUpload } from "./routes/bulk-upload";
+import {
+  performCreateHybridOrganization,
+  performCreateHybridSubscription,
+  performListOrganizationsWithSubscriptions,
+} from "./routes/hybrid-subscription";
 import { performCreateLearnerUser } from "./routes/learner-admission";
 import { performAssignMembershipRole, performCreateMember, performCreateMembership, performUpdateMembershipStatus } from "./routes/membership";
 import { performCreateOrganization, performUpdateOrganization, performUpdateOrganizationDetails } from "./routes/organization";
+import {
+  performHardDeleteOrganization,
+  performInspectOrganizationForDeletion,
+  performSoftDeleteOrganization,
+} from "./routes/organization-deletion";
 import { performQueueUserSync } from "./routes/user-sync";
 import type {
   AccessTokenPayload,
@@ -309,6 +319,97 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     });
 
     return subscription as Record<string, unknown>;
+  }
+
+  /**
+   * Admin-provisioned Hybrid subscription activation.
+   *
+   * Hybrid is a "contact sales" catalog plan — self-serve checkout always
+   * rejects it. This method is the deliberate bypass for an internal admin
+   * who has already negotiated terms out-of-band. Callable only via the
+   * SSO_SERVICE binding; the caller (sp-dash's admin API route) must verify
+   * the requester holds an admin role before invoking this.
+   */
+  async createHybridSubscription(data: {
+    organization_id: string;
+    plan_amount: number;
+    seat_count: number;
+    billing_cycle?: string;
+    features?: unknown[];
+    notes?: string;
+    admin_user_id: string;
+  }): Promise<Record<string, unknown>> {
+    return performCreateHybridSubscription(this.env, this.ctx, data);
+  }
+
+  /**
+   * Admin-provisioned creation of a brand-new organization + owner user +
+   * Hybrid subscription, in one flow. See performCreateHybridOrganization
+   * for the full rollback/partial-failure story.
+   */
+  async createHybridOrganization(data: {
+    org_name: string;
+    org_type: "school" | "college" | "university";
+    owner_email: string;
+    owner_password: string;
+    owner_name?: string;
+    plan_amount: number;
+    seat_count: number;
+    billing_cycle?: string;
+    features?: unknown[];
+    notes?: string;
+    admin_user_id: string;
+  }): Promise<Record<string, unknown>> {
+    return performCreateHybridOrganization(this.env, this.ctx, data);
+  }
+
+  /**
+   * List organizations with their most recent subscription (any plan), for
+   * the sp-dash admin "Activate Hybrid Plan" org table.
+   */
+  async listOrganizationsWithSubscriptions(params: {
+    search?: string;
+    plan_code?: string;
+    status?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<Record<string, unknown>> {
+    return performListOrganizationsWithSubscriptions(this.env, params);
+  }
+
+  /**
+   * Preview what a delete would affect (member/subscription counts) before
+   * the admin picks soft or hard delete.
+   */
+  async inspectOrganizationForDeletion(organizationId: string): Promise<Record<string, unknown>> {
+    return performInspectOrganizationForDeletion(this.env, organizationId);
+  }
+
+  /**
+   * Admin soft-delete: marks deleted_at, deactivates memberships. Reversible,
+   * non-destructive. See performSoftDeleteOrganization for the active-
+   * subscription guard.
+   */
+  async softDeleteOrganization(params: {
+    organization_id: string;
+    admin_user_id: string;
+    force?: boolean;
+  }): Promise<Record<string, unknown>> {
+    return performSoftDeleteOrganization(this.env, this.ctx, params);
+  }
+
+  /**
+   * Admin hard-delete: irreversibly removes the organization, its
+   * subscriptions/transactions, memberships, and any user who is only a
+   * member of this org. See performHardDeleteOrganization for the full
+   * cascade order and the active-subscription guard.
+   */
+  async hardDeleteOrganization(params: {
+    organization_id: string;
+    admin_user_id: string;
+    force?: boolean;
+  }) {
+    return performHardDeleteOrganization(this.env, this.ctx, params);
   }
 
   async createFreemiumSubscription(data: {
