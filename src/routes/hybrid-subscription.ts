@@ -2,11 +2,25 @@ import { addMonths, parseDurationMonths } from "../lib/date";
 import { db, type DbClient } from "../lib/db";
 import { hashPassword } from "../lib/hash";
 import { publishSyncEvent } from "../lib/sync-queue";
+import { validatePassword } from "../lib/validate";
 import type { Env } from "../types";
 
 const HYBRID_PLAN_CODE = "hybrid";
 const VALID_HYBRID_ORG_TYPES = ["school", "college", "university"] as const;
 type HybridOrgType = (typeof VALID_HYBRID_ORG_TYPES)[number];
+
+// skillpassport's frontend routes users by role STRING, not organization_type
+// (see src/shared/model/authStore.ts's pickPrimaryRole, and
+// src/features/auth/ui/VerifyEmail.tsx's isInstitutionAdmin/isRecruitmentUser
+// checks). "owner" alone is bucketed as a recruiter there. Real institution
+// signup (UnifiedSignup.tsx) always passes the specific admin role below —
+// match that here so the owner lands on their institution dashboard instead
+// of /subscription/plans?type=recruiter.
+const ORG_TYPE_TO_ADMIN_ROLE: Record<HybridOrgType, string> = {
+	school: "school_admin",
+	college: "college_admin",
+	university: "university_admin",
+};
 
 interface HybridTerms {
 	plan_amount: number;
@@ -14,6 +28,18 @@ interface HybridTerms {
 	billing_cycle?: string;
 	features?: unknown[];
 	notes?: string;
+}
+
+/**
+ * Same password rule as regular signup (10-72 chars, 3-of-4 character
+ * classes) — see lib/validate.ts's validatePassword for the source of
+ * truth. Returns the error message string, or null if valid.
+ */
+async function passwordValidationMessage(password: string): Promise<string | null> {
+	const response = validatePassword(password);
+	if (!response) return null;
+	const body = (await response.json()) as { error: string };
+	return body.error;
 }
 
 function validateHybridTerms(data: HybridTerms): void {
@@ -36,6 +62,7 @@ async function activateHybridForOrganization(
 	database: DbClient,
 	organization: { id: string; name: string; metadata?: Record<string, unknown> },
 	terms: HybridTerms,
+	subscriptionUserId: string,
 	adminUserId: string,
 	contactEmail = "",
 ): Promise<Record<string, unknown>> {
@@ -60,7 +87,14 @@ async function activateHybridForOrganization(
 	const organizationType = (organization.metadata?.organization_type as string) || null;
 
 	const subscription = await database.mutate("subscriptions", {
-		user_id: adminUserId,
+		// user_id MUST be the org's owner, not the sp-dash admin who activated
+		// this — skillpassport's subscription_cache.user_id has a hard FK to
+		// users_shadow(id), which is only ever populated for real
+		// customer/learner/owner accounts, never for internal sp-dash admins.
+		// Using the admin's id here silently breaks the shadow-sync (FK
+		// violation), which is exactly what caused the "still on plans page
+		// after activation" bug — see the git history for details.
+		user_id: subscriptionUserId,
 		plan_id: hybridPlan.id,
 		plan_code: hybridPlan.plan_code,
 		plan_type: hybridPlan.name,
@@ -88,7 +122,7 @@ async function activateHybridForOrganization(
 
 	publishSyncEvent(env.SYNC_QUEUE, ctx, "subscription.created", {
 		id: (subscription as { id: string }).id,
-		user_id: adminUserId,
+		user_id: subscriptionUserId,
 		organization_id: organization.id,
 		organization_type: organizationType,
 		plan_id: hybridPlan.id,
@@ -149,22 +183,29 @@ export async function performCreateHybridSubscription(
 		throw new Error(`Organization ${data.organization_id} not found`);
 	}
 
-	// Best-effort: use the org's existing owner/creator email as the contact
-	// on the subscription row, so it shows up correctly in sales dashboards
-	// that read subscriptions.email. Not required — falls back to blank.
-	let contactEmail = "";
-	if (organization.created_by) {
-		try {
-			const creator = await database.queryOne<{ email: string }>(
-				`users?id=eq.${encodeURIComponent(organization.created_by)}`,
-			);
-			contactEmail = creator?.email || "";
-		} catch {
-			// non-fatal — leave blank
-		}
+	if (!organization.created_by) {
+		throw new Error(
+			`Organization ${data.organization_id} has no recorded owner (created_by is empty) — ` +
+			`cannot activate Hybrid without a real user to attach the subscription to.`,
+		);
 	}
 
-	return activateHybridForOrganization(env, ctx, database, organization, data, data.admin_user_id, contactEmail);
+	// The subscription's user_id must be the org's owner (subscription_cache
+	// requires a users_shadow row, which only exists for real customer
+	// accounts) — never the sp-dash admin activating this.
+	let contactEmail = "";
+	try {
+		const creator = await database.queryOne<{ email: string }>(
+			`users?id=eq.${encodeURIComponent(organization.created_by)}`,
+		);
+		contactEmail = creator?.email || "";
+	} catch {
+		// non-fatal — leave blank
+	}
+
+	return activateHybridForOrganization(
+		env, ctx, database, organization, data, organization.created_by, data.admin_user_id, contactEmail,
+	);
 }
 
 /**
@@ -194,6 +235,7 @@ export async function performCreateHybridOrganization(
 		owner_email: string;
 		owner_password: string;
 		owner_name?: string;
+		owner_phone?: string;
 		admin_user_id: string;
 	},
 ): Promise<Record<string, unknown>> {
@@ -206,8 +248,9 @@ export async function performCreateHybridOrganization(
 	if (!data.owner_email) {
 		throw new Error("owner_email is required");
 	}
-	if (!data.owner_password || data.owner_password.length < 8) {
-		throw new Error("owner_password must be at least 8 characters");
+	const passwordError = await passwordValidationMessage(data.owner_password);
+	if (passwordError) {
+		throw new Error(passwordError);
 	}
 	if (!data.admin_user_id) {
 		throw new Error("admin_user_id is required");
@@ -234,6 +277,11 @@ export async function performCreateHybridOrganization(
 	const ownerFirstName = ownerNameParts[0] || "";
 	const ownerLastName = ownerNameParts.slice(1).join(" ") || "";
 
+	// signup_user always assigns "owner" too (unconditionally, inside the SQL
+	// function) — passing the specific admin role here just adds the SECOND,
+	// more specific role on top, exactly like real institution signup does.
+	const adminRole = ORG_TYPE_TO_ADMIN_ROLE[data.org_type];
+
 	let signupResult: { user_id: string; org_id: string; slug: string };
 	try {
 		signupResult = await database.rpc<{ user_id: string; org_id: string; slug: string }>("signup_user", {
@@ -241,8 +289,8 @@ export async function performCreateHybridOrganization(
 			p_password_hash: password_hash,
 			p_org_name: orgName,
 			p_org_slug: slug,
-			p_role: "owner",
-			p_user_metadata: { firstName: ownerFirstName, lastName: ownerLastName },
+			p_role: adminRole,
+			p_user_metadata: { firstName: ownerFirstName, lastName: ownerLastName, phone: data.owner_phone || "" },
 		});
 	} catch (err: unknown) {
 		const message = err instanceof Error ? err.message : String(err);
@@ -270,7 +318,7 @@ export async function performCreateHybridOrganization(
 		publishSyncEvent(env.SYNC_QUEUE, ctx, "user.created", {
 			id: signupResult.user_id,
 			email,
-			user_metadata: { firstName: ownerFirstName, lastName: ownerLastName, role: "owner" },
+			user_metadata: { firstName: ownerFirstName, lastName: ownerLastName, phone: data.owner_phone || "", role: adminRole },
 		});
 		publishSyncEvent(env.SYNC_QUEUE, ctx, "organization.created", {
 			id: signupResult.org_id,
@@ -279,10 +327,14 @@ export async function performCreateHybridOrganization(
 			created_by: signupResult.user_id,
 			metadata: orgMetadata,
 		});
+		// Both roles, matching what signup_user actually assigned in the DB —
+		// pickPrimaryRole (skillpassport frontend) picks the admin role over
+		// "owner" by priority, so listing both here keeps this in sync with
+		// the DB's membership_roles rows.
 		publishSyncEvent(env.SYNC_QUEUE, ctx, "membership.created", {
 			user_id: signupResult.user_id,
 			organization_id: signupResult.org_id,
-			roles: ["owner"],
+			roles: ["owner", adminRole],
 			status: "active",
 		});
 	} else {
@@ -292,7 +344,9 @@ export async function performCreateHybridOrganization(
 	const organization = { id: signupResult.org_id, name: orgName, metadata: orgMetadata };
 
 	try {
-		const subscription = await activateHybridForOrganization(env, ctx, database, organization, data, data.admin_user_id, email);
+		const subscription = await activateHybridForOrganization(
+			env, ctx, database, organization, data, signupResult.user_id, data.admin_user_id, email,
+		);
 		return {
 			organization: { id: signupResult.org_id, name: orgName, slug: signupResult.slug, type: data.org_type },
 			owner: { id: signupResult.user_id, email },

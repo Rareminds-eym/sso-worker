@@ -353,6 +353,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     owner_email: string;
     owner_password: string;
     owner_name?: string;
+    owner_phone?: string;
     plan_amount: number;
     seat_count: number;
     billing_cycle?: string;
