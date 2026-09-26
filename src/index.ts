@@ -27,6 +27,7 @@ import {
   performCreateHybridOrganization,
   performCreateHybridSubscription,
   performListOrganizationsWithSubscriptions,
+  performUpdateHybridSubscription,
 } from "./routes/hybrid-subscription";
 import { performCreateLearnerUser } from "./routes/learner-admission";
 import { performAssignMembershipRole, performCreateMember, performCreateMembership, performUpdateMembershipStatus } from "./routes/membership";
@@ -340,6 +341,23 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     admin_user_id: string;
   }): Promise<Record<string, unknown>> {
     return performCreateHybridSubscription(this.env, this.ctx, data);
+  }
+
+  /**
+   * Admin-provisioned update of an existing active/pending Hybrid subscription's
+   * commercial terms (price, seats, billing cycle, features, notes). Used when
+   * the admin edits negotiated terms for an org already on the Hybrid plan.
+   */
+  async updateHybridSubscription(data: {
+    organization_id: string;
+    plan_amount: number;
+    seat_count: number;
+    billing_cycle?: string;
+    features?: unknown[];
+    notes?: string;
+    admin_user_id: string;
+  }): Promise<Record<string, unknown>> {
+    return performUpdateHybridSubscription(this.env, this.ctx, data);
   }
 
   /**
@@ -827,6 +845,33 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       "roles?select=id,name,description&order=name.asc",
     );
     return { roles: (roles || []) as { id: string; name: string; description: string | null }[] };
+  }
+
+  /**
+   * List the canonical admin-dashboard feature key catalog (single source
+   * of truth for what a Hybrid-plan admin can grant a org — see
+   * `sanitizeHybridFeatures` in `routes/hybrid-subscription.ts`).
+   *
+   * Mirrors {@link syncPlans}/{@link listRoles}: read-only pull of
+   * `public.feature_keys`, used by skillpassport to keep its own read-only
+   * `feature_keys_cache` shadow in sync (mirrors the existing
+   * `plans_cache`/`syncPlanCache` pattern in `functions/lib/sync-shadow.ts`).
+   * Returns the full catalog across all products/roles; the caller
+   * filters by product/role as needed, same as `syncPlans` does today.
+   *
+   * @returns `{ featureKeys }` — each row's key, role, nav metadata, and order.
+   */
+  async listFeatureKeys() {
+    const database = db(this.env);
+    // Include inactive keys so consumers distinguish retirement from a missing catalog.
+    const featureKeys = await database.query<{
+      id: string; product_id: string; key: string; role: string;
+      nav_group: string | null; nav_label: string; nav_path: string;
+      display_order: number; is_active: boolean; products: { code: string };
+    }>(
+      "feature_keys?select=id,product_id,key,role,nav_group,nav_label,nav_path,display_order,is_active,products!inner(code)&order=role.asc,display_order.asc",
+    );
+    return { featureKeys: featureKeys.map(({ products, ...row }) => ({ ...row, product_code: products.code })) };
   }
 
   async syncReconcile(userIds: string[]): Promise<{ subscriptions: Record<string, unknown>[] }> {
