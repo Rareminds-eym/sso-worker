@@ -8,6 +8,45 @@ import type { Env } from "../types";
 const HYBRID_PLAN_CODE = "hybrid";
 const VALID_HYBRID_ORG_TYPES = ["school", "college", "university"] as const;
 type HybridOrgType = (typeof VALID_HYBRID_ORG_TYPES)[number];
+/** products.code for the admin-dashboard nav features this grants access to. */
+const HYBRID_FEATURE_PRODUCT_CODE = "skillpassport";
+
+/**
+ * Grantable admin-dashboard feature keys live in `public.feature_keys`
+ * (see supabase/migrations/*_feature_keys.sql) — NOT hardcoded here. That
+ * table is the single canonical catalog across all products/roles; admins
+ * can only grant keys that actually exist there. skillpassport reads the
+ * same catalog via a synced `feature_keys_cache` (mirrors the plans_cache
+ * pattern) rather than duplicating this list in source.
+ *
+ * Sanitizes `terms.features` against the live DB catalog for the given
+ * product AND role — some keys (e.g. `courses`, `basic_analytics`) exist
+ * under multiple roles with different meanings/nav paths, so scoping by role
+ * too prevents e.g. granting a school_admin-only key to a college org.
+ * Drops anything that doesn't exist there (typos, stale keys, wrong
+ * product/role). Fails closed: a DB error means zero features get granted
+ * rather than trusting unsanitized input.
+ */
+async function sanitizeHybridFeatures(
+	database: DbClient,
+	productCode: string,
+	role: string,
+	features?: unknown[],
+): Promise<string[]> {
+	if (!Array.isArray(features) || features.length === 0) return [];
+	const candidates = Array.from(new Set(features.filter((f): f is string => typeof f === "string")));
+	if (candidates.length === 0) return [];
+
+	const product = await database.queryOne<{ id: string }>(`products?code=eq.${encodeURIComponent(productCode)}`);
+	if (!product) return [];
+
+	const inList = candidates.map((k) => `"${k}"`).join(",");
+	const validRows = await database.query<{ key: string }>(
+		`feature_keys?product_id=eq.${product.id}&role=eq.${encodeURIComponent(role)}&is_active=eq.true&key=in.(${inList})`,
+	);
+	const validKeys = new Set(validRows.map((r) => r.key));
+	return candidates.filter((k) => validKeys.has(k));
+}
 
 // skillpassport's frontend routes users by role STRING, not organization_type
 // (see src/shared/model/authStore.ts's pickPrimaryRole, and
@@ -26,6 +65,7 @@ interface HybridTerms {
 	plan_amount: number;
 	seat_count: number;
 	billing_cycle?: string;
+	/** Sanitized against HYBRID_FEATURE_KEYS before persisting — unknown keys are dropped, see sanitizeHybridFeatures. */
 	features?: unknown[];
 	notes?: string;
 }
@@ -85,6 +125,12 @@ async function activateHybridForOrganization(
 	const now = new Date();
 	const endDate = addMonths(now, parseDurationMonths(billingCycle));
 	const organizationType = (organization.metadata?.organization_type as string) || null;
+	const adminRoleForFeatures = organizationType && organizationType in ORG_TYPE_TO_ADMIN_ROLE
+		? ORG_TYPE_TO_ADMIN_ROLE[organizationType as HybridOrgType]
+		: null;
+	const features = adminRoleForFeatures
+		? await sanitizeHybridFeatures(database, HYBRID_FEATURE_PRODUCT_CODE, adminRoleForFeatures, terms.features)
+		: [];
 
 	const subscription = await database.mutate("subscriptions", {
 		// user_id MUST be the org's owner, not the sp-dash admin who activated
@@ -100,7 +146,7 @@ async function activateHybridForOrganization(
 		plan_type: hybridPlan.name,
 		plan_amount: terms.plan_amount,
 		billing_cycle: billingCycle,
-		features: terms.features || [],
+		features,
 		full_name: organization.name,
 		email: contactEmail,
 		status: "active",
@@ -130,7 +176,7 @@ async function activateHybridForOrganization(
 		plan_type: hybridPlan.name,
 		plan_amount: terms.plan_amount,
 		billing_cycle: billingCycle,
-		features: terms.features || [],
+		features,
 		status: "active",
 		subscription_start_date: now.toISOString(),
 		subscription_end_date: billingCycle === "lifetime" ? null : endDate.toISOString(),
@@ -206,6 +252,114 @@ export async function performCreateHybridSubscription(
 	return activateHybridForOrganization(
 		env, ctx, database, organization, data, organization.created_by, data.admin_user_id, contactEmail,
 	);
+}
+
+/**
+ * Admin-provisioned update of an EXISTING active/pending Hybrid subscription's
+ * commercial terms. Unlike `performCreateHybridSubscription` which creates a
+ * new row, this patches the existing one in place — used when the admin edits
+ * negotiated terms (price, seats, billing cycle, features, notes) for an org
+ * that is already on the Hybrid plan.
+ *
+ * Only the mutable commercial fields are updated; structural fields like
+ * user_id, organization_id, plan_id, and plan_code are never changed.
+ */
+export async function performUpdateHybridSubscription(
+	env: Env,
+	ctx: ExecutionContext,
+	data: HybridTerms & {
+		organization_id: string;
+		admin_user_id: string;
+	},
+): Promise<Record<string, unknown>> {
+	if (!data.organization_id) {
+		throw new Error("organization_id is required");
+	}
+	if (!data.admin_user_id) {
+		throw new Error("admin_user_id is required");
+	}
+	validateHybridTerms(data);
+
+	const database = db(env);
+
+	const organization = await database.queryOne<{
+		id: string;
+		name: string;
+		metadata?: Record<string, unknown>;
+	}>(`organizations?id=eq.${encodeURIComponent(data.organization_id)}`);
+	if (!organization) {
+		throw new Error(`Organization ${data.organization_id} not found`);
+	}
+
+	// Find the existing active/pending Hybrid subscription to update.
+	const existing = await database.queryOne<{
+		id: string;
+		user_id: string;
+		plan_id: string;
+		plan_code: string;
+		plan_type: string;
+		metadata?: Record<string, unknown>;
+	}>(
+		`subscriptions?organization_id=eq.${encodeURIComponent(organization.id)}&plan_code=eq.${HYBRID_PLAN_CODE}&status=in.(active,pending)`,
+	);
+	if (!existing) {
+		throw new Error(
+			"No active or pending Hybrid subscription found for this organization. Use createHybridSubscription instead.",
+		);
+	}
+
+	const billingCycle = data.billing_cycle || "annual";
+	const now = new Date();
+	const endDate = addMonths(now, parseDurationMonths(billingCycle));
+	const organizationType = (organization.metadata?.organization_type as string) || null;
+	const adminRoleForFeatures =
+		organizationType && organizationType in ORG_TYPE_TO_ADMIN_ROLE
+			? ORG_TYPE_TO_ADMIN_ROLE[organizationType as HybridOrgType]
+			: null;
+	const features = adminRoleForFeatures
+		? await sanitizeHybridFeatures(database, HYBRID_FEATURE_PRODUCT_CODE, adminRoleForFeatures, data.features)
+		: [];
+
+	const updatedFields: Record<string, unknown> = {
+		plan_amount: data.plan_amount,
+		seat_count: data.seat_count,
+		billing_cycle: billingCycle,
+		features,
+		auto_renew: billingCycle !== "lifetime",
+		subscription_end_date: billingCycle === "lifetime" ? null : endDate.toISOString(),
+		metadata: {
+			...(existing.metadata || {}),
+			activation_source: "admin_grant",
+			last_updated_by: data.admin_user_id,
+			last_updated_at: now.toISOString(),
+			notes: data.notes || (existing.metadata as Record<string, unknown>)?.notes || null,
+		},
+	};
+
+	await database.update(
+		"subscriptions",
+		{ id: `eq.${encodeURIComponent(existing.id)}` },
+		updatedFields,
+	);
+
+	publishSyncEvent(env.SYNC_QUEUE, ctx, "subscription.updated", {
+		id: existing.id,
+		user_id: existing.user_id,
+		organization_id: organization.id,
+		organization_type: organizationType,
+		plan_id: existing.plan_id,
+		plan_code: existing.plan_code,
+		plan_type: existing.plan_type,
+		plan_amount: data.plan_amount,
+		billing_cycle: billingCycle,
+		features,
+		status: "active",
+		is_organization_subscription: true,
+		seat_count: data.seat_count,
+		updated_at: now.toISOString(),
+	});
+
+	return { id: existing.id, ...updatedFields };
 }
 
 /**
