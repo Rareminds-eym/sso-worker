@@ -21,7 +21,7 @@ head_sampling_rate = 0.01
 crons = ["0 3 * * *"]
 
 [vars]
-ENVIRONMENT = "production"
+ENVIRONMENT = "development"
 JWKS_FRESHNESS_SECONDS = "300"
 SUPABASE_URL = "https://quvdgaydpctuspzeqknc.supabase.co"
 SKILLPASSPORT_URL = "https://skillpassport.rareminds.in"
@@ -82,3 +82,11 @@ dead_letter_queue = "learner-admission-dlq"
 [[queues.consumers]]
 queue = "learner-admission-dlq"
 
+
+[env.production.vars]
+ENVIRONMENT = "production"
+JWKS_FRESHNESS_SECONDS = "300"
+SUPABASE_URL = "https://quvdgaydpctuspzeqknc.supabase.co"
+SKILLPASSPORT_URL = "https://skillpassport.rareminds.in"
+ALLOWED_ORIGINS = "http://localhost:3000,https://*.rareminds.in,https://*.pages.dev"
+ALLOWED_APP_URLS = "https://skillpassport.rareminds.in,https://*.rareminds.in,https://*.pages.dev,http://localhost:3000,http://localhost:8788"

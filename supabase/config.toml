@@ -55,7 +55,7 @@ sql_paths = [
 ]
 
 [realtime]
-enabled = true
+enabled = false
 
 [studio]
 enabled = true
@@ -67,7 +67,7 @@ port = 54333
 api_url = "http://127.0.0.1"
 
 [inbucket]
-enabled = true
+enabled = false
 
 # Port to use for the email testing server web interface.
 # Using 54334 to avoid conflict with skillpassport (54324)
@@ -124,7 +124,7 @@ template = "Your code is {{ .Code }}"
 max_frequency = "5s"
 
 [edge_runtime]
-enabled = true
+enabled = false
 policy = "per_worker"
 inspector_port = 8084
 deno_version = 2

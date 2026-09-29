@@ -5,6 +5,7 @@ export type SyncEventType =
   | 'user.deleted'
   | 'organization.created'
   | 'organization.updated'
+  | 'organization.deleted'
   | 'membership.created'
   | 'membership.role_changed'
   | 'membership.status_changed'

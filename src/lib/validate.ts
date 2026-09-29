@@ -1,5 +1,5 @@
+import { PASSWORD_MAX, PASSWORD_MIN } from "./constants";
 import { error } from "./response";
-import { PASSWORD_MIN, PASSWORD_MAX } from "./constants";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -63,25 +63,31 @@ export function validateRedirectUrl(redirectUrl: string | undefined, env: { ALLO
 /**
  * Resolve the app base URL for email links.
  *
- * Pattern: per-request `redirect_url` validated against an allowlist
- * (same as Supabase's `redirectTo`, Auth0's `redirect_uri`).
- *
- * 1. If `redirectUrl` is provided, validate it against ALLOWED_APP_URLS.
- * 2. If not provided, return the first non-wildcard URL in the allowlist as default.
- * 3. Always strips trailing slashes.
- *
- * IMPORTANT: Call validateRedirectUrl() BEFORE this function to reject
- * invalid redirect_urls with a 400 response. This function only throws
- * on server misconfiguration (missing/empty ALLOWED_APP_URLS).
+ * 1. If `redirectUrl` is NOT provided: return `env.SKILLPASSPORT_URL` as the canonical
+ *    site URL. Throws if `SKILLPASSPORT_URL` is missing (server misconfiguration).
+ * 2. If `redirectUrl` IS provided: validate it against `ALLOWED_APP_URLS` and return it.
+ *    Throws if it is not in the allowlist or if `ALLOWED_APP_URLS` is missing.
  *
  * @param redirectUrl  Optional per-request redirect URL from the caller
- * @param env          Worker environment with ALLOWED_APP_URLS
+ * @param env          Worker environment with SKILLPASSPORT_URL and ALLOWED_APP_URLS
  * @returns Validated base URL (no trailing slash)
- * @throws Error if ALLOWED_APP_URLS is missing or empty (server misconfiguration)
+ * @throws Error on misconfiguration or disallowed redirect_url
  */
-export function resolveAppUrl(redirectUrl: string | undefined, env: { ALLOWED_APP_URLS?: string }): string {
+export function resolveAppUrl(
+  redirectUrl: string | undefined,
+  env: { ALLOWED_APP_URLS?: string; SKILLPASSPORT_URL?: string },
+): string {
+  // No redirect_url → use the canonical site URL (never the first allowlist entry)
+  if (!redirectUrl) {
+    if (!env.SKILLPASSPORT_URL) {
+      throw new Error("SKILLPASSPORT_URL is required for email delivery");
+    }
+    return env.SKILLPASSPORT_URL.replace(/\/+$/, "");
+  }
+
+  // redirect_url provided → validate against allowlist
   if (!env.ALLOWED_APP_URLS) {
-    throw new Error("ALLOWED_APP_URLS is required for email delivery");
+    throw new Error("ALLOWED_APP_URLS is required when redirect_url is provided");
   }
 
   const allowed = env.ALLOWED_APP_URLS.split(",")
@@ -92,25 +98,8 @@ export function resolveAppUrl(redirectUrl: string | undefined, env: { ALLOWED_AP
     throw new Error("ALLOWED_APP_URLS must contain at least one URL");
   }
 
-  // Validate each non-wildcard entry is a proper URL
-  for (const u of allowed) {
-    if (!u.includes("*.")) {
-      try { new URL(u); } catch { throw new Error(`ALLOWED_APP_URLS contains invalid URL: ${u}`); }
-    }
-  }
-
-  // No redirect_url requested — use the first non-wildcard URL as default
-  if (!redirectUrl) {
-    const firstConcrete = allowed.find((u) => !u.includes("*."));
-    if (!firstConcrete) {
-      throw new Error("ALLOWED_APP_URLS must contain at least one non-wildcard URL for default email links");
-    }
-    return firstConcrete;
-  }
-
   const normalized = redirectUrl.replace(/\/+$/, "");
 
-  // Must match an allowed pattern (supports wildcards)
   if (!allowed.some((pattern) => urlMatchesPattern(normalized, pattern))) {
     throw new Error(
       `redirect_url "${redirectUrl}" is not in the ALLOWED_APP_URLS allowlist. ` +
@@ -139,26 +128,26 @@ export function validatePassword(password: unknown): Response | null {
   if (typeof password !== "string") {
     return error("Password is required");
   }
-  
+
   if (password.length < PASSWORD_MIN) {
     return error(`Password must be at least ${PASSWORD_MIN} characters`);
   }
-  
+
   if (password.length > PASSWORD_MAX) {
     return error(`Password must be at most ${PASSWORD_MAX} characters`);
   }
-  
+
   // Check password complexity: must have 3 of 4 types
   let typesCount = 0;
   if (/[A-Z]/.test(password)) typesCount++; // Uppercase
   if (/[a-z]/.test(password)) typesCount++; // Lowercase
   if (/[0-9]/.test(password)) typesCount++; // Numbers
   if (/[^a-zA-Z0-9]/.test(password)) typesCount++; // Special characters
-  
+
   if (typesCount < 3) {
     return error("Password must contain at least 3 of: uppercase letters, lowercase letters, numbers, special characters");
   }
-  
+
   return null;
 }
 
