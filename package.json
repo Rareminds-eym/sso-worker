@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
-    "dev:stack": "wrangler dev -c wrangler.toml -c ../auth-sync-consumer/wrangler.toml",
+    "dev:stack": "wrangler dev -c wrangler.toml -c ../auth-sync-consumer/wrangler.toml -c ../email-worker/wrangler.toml -c ../payment-worker/wrangler.toml -c ../realtime-worker/wrangler.toml",
     "deploy": "wrangler deploy",
     "generate-keys": "node scripts/generate-keys.mjs",
     "test": "vitest",
@@ -17,7 +17,8 @@
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260811.1",
     "@types/bcryptjs": "2.4.6",
-    "supabase": "2.104.0",
+    "fast-check": "^4.9.0",
+    "supabase": "2.109.1",
     "typescript": "5.9.3",
     "vitest": "3.2.7",
     "wrangler": "4.120.1"

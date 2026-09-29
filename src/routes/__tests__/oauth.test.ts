@@ -20,6 +20,7 @@ vi.mock("../../lib/skillpassport-check", () => ({
 }));
 
 import { performOAuthLogin } from "../oauth";
+import { checkUserExistsInSkillpassport } from "../../lib/skillpassport-check";
 
 // ── KV mock ─────────────────────────────────────────────────────
 function createMockKV() {
@@ -247,10 +248,33 @@ const GOOGLE_PROFILE = {
 
 beforeEach(() => {
   resetDb();
+  vi.mocked(checkUserExistsInSkillpassport).mockResolvedValue(true);
   vi.stubGlobal("fetch", createMockSupabaseFetch());
 });
 
 describe("performOAuthLogin", () => {
+  it("re-syncs authoritative organization capacity without publishing local counters", async () => {
+    seedUser({ email: GOOGLE_PROFILE.email });
+    vi.mocked(checkUserExistsInSkillpassport).mockResolvedValue(false);
+    const normalFetch = createMockSupabaseFetch();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/rest/v1/subscriptions?")) {
+        return Response.json([{ id: "org-sub", organization_id: "org-id", seat_count: 5000,
+          assigned_seats: 0, is_organization_subscription: true, plan_code: "college_enterprise" }]);
+      }
+      return normalFetch(input, init);
+    }));
+    const env = createEnv();
+    const send = vi.spyOn(env.SYNC_QUEUE, "send");
+    const pending: Promise<unknown>[] = [];
+    const ctx = { waitUntil: (p: Promise<unknown>) => { pending.push(p); } } as unknown as ExecutionContext;
+    await performOAuthLogin(env, ctx, GOOGLE_PROFILE, "1.2.3.4", "ua");
+    for (let i = 0; i < pending.length; i++) await pending[i];
+    const event = send.mock.calls.map(([message]) => message).find(message => message.type === "subscription.created");
+    expect(event?.payload).toMatchObject({ seat_count: 5000, organization_id: "org-id", is_organization_subscription: true });
+    expect(event?.payload).not.toHaveProperty("assigned_seats");
+  });
+
   it("rejects unsupported providers", async () => {
     const result = await performOAuthLogin(
       createEnv(),

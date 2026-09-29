@@ -1,6 +1,5 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { signLteAccessToken } from "./lib/app-token";
-import { resolveEffectiveRoles } from "./lib/roles";
 import { audit } from "./lib/audit";
 import {
   assertAllowedRedirectUri,
@@ -18,14 +17,26 @@ import { generateRefreshToken, hashToken } from "./lib/hash";
 import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "./lib/jwt";
 import { requireLteEntitlement } from "./lib/lte-entitlement";
 import { endpointRateLimit } from "./lib/rate-limit";
+import { resolveEffectiveRoles } from "./lib/roles";
 import { mintAccessToken, rotateRefreshToken } from "./lib/session-rotation";
 import { getLteSubscriptionSnapshot } from "./lib/subscription-snapshot";
 import { publishSyncEvent } from "./lib/sync-queue";
 import { handleQueueBatch } from "./queue/queue-router";
 import { performQueueBulkFacultyUpload, performQueueBulkLearnerUpload } from "./routes/bulk-upload";
+import {
+  performCreateHybridOrganization,
+  performCreateHybridSubscription,
+  performListOrganizationsWithSubscriptions,
+  performUpdateHybridSubscription,
+} from "./routes/hybrid-subscription";
 import { performCreateLearnerUser } from "./routes/learner-admission";
 import { performAssignMembershipRole, performCreateMember, performCreateMembership, performUpdateMembershipStatus } from "./routes/membership";
 import { performCreateOrganization, performUpdateOrganization, performUpdateOrganizationDetails } from "./routes/organization";
+import {
+  performHardDeleteOrganization,
+  performInspectOrganizationForDeletion,
+  performSoftDeleteOrganization,
+} from "./routes/organization-deletion";
 import { performQueueUserSync } from "./routes/user-sync";
 import type {
   AccessTokenPayload,
@@ -204,6 +215,65 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const endDate = addMonths(now, parseDurationMonths(billingCycle));
 
     const database = db(this.env);
+    let organizationId = data.organization_id || null;
+    let organizationType = data.organization_type || null;
+    let isOrgSub = data.is_organization_subscription || false;
+
+    if (!organizationId && data.user_id) {
+      try {
+        const org = await database.queryOne<{ id: string; metadata?: Record<string, unknown> }>(
+          `organizations?created_by=eq.${encodeURIComponent(data.user_id)}`,
+        );
+        if (org?.id) {
+          organizationId = org.id;
+          organizationType = (org.metadata?.organization_type as string) || null;
+          isOrgSub = true;
+        } else {
+          const member = await database.queryOne<{ organization_id: string }>(
+            `organization_members?user_id=eq.${encodeURIComponent(data.user_id)}`,
+          );
+          if (member?.organization_id) {
+            organizationId = member.organization_id;
+            isOrgSub = true;
+          }
+        }
+      } catch (lookupErr) {
+        console.warn("[sso] Auto organization lookup warning:", lookupErr);
+      }
+    }
+
+    let seatCount = data.seat_count || 1;
+    if ((!data.seat_count || data.seat_count === 1) && data.plan_id) {
+      try {
+        const planRow = await database.queryOne<{
+          entity_config?: Record<string, { max_users?: number } | undefined> | string;
+        }>(
+          `plans?id=eq.${encodeURIComponent(data.plan_id)}`,
+        );
+        if (planRow?.entity_config) {
+          let entityConfig: Record<string, { max_users?: number } | undefined> = {};
+          if (typeof planRow.entity_config === 'string') {
+            try {
+              entityConfig = JSON.parse(planRow.entity_config);
+            } catch (parseErr) {
+              console.warn('[sso] Failed to parse entity_config JSON:', parseErr instanceof Error ? parseErr.message : String(parseErr));
+              entityConfig = {};
+            }
+          } else {
+            entityConfig = planRow.entity_config;
+          }
+          const firstEntityWithSeats = Object.values(entityConfig).find(
+            (config) => config?.max_users,
+          );
+          if (firstEntityWithSeats?.max_users) {
+            seatCount = Number(firstEntityWithSeats.max_users);
+          }
+        }
+      } catch (planErr) {
+        console.warn("[sso] Failed to resolve seat count from plan:", planErr instanceof Error ? planErr.message : String(planErr));
+      }
+    }
+
     const subscription = await database.mutate("subscriptions", {
       user_id: data.user_id,
       plan_id: data.plan_id,
@@ -220,10 +290,10 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       subscription_end_date: billingCycle === "lifetime" ? null : endDate.toISOString(),
       razorpay_order_id: data.razorpay_order_id || null,
       razorpay_payment_id: data.razorpay_payment_id || null,
-      organization_id: data.organization_id || null,
-      organization_type: data.organization_type || null,
-      seat_count: data.seat_count || 1,
-      is_organization_subscription: data.is_organization_subscription || false,
+      organization_id: organizationId,
+      organization_type: organizationType,
+      seat_count: seatCount,
+      is_organization_subscription: isOrgSub,
       is_bulk_purchase: data.is_bulk_purchase || false,
       purchased_by: data.purchased_by || null,
     });
@@ -231,7 +301,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'subscription.created', {
       id: (subscription as { id: string }).id,
       user_id: data.user_id,
-      organization_id: data.organization_id || null,
+      organization_id: organizationId,
+      organization_type: organizationType,
       plan_id: data.plan_id,
       plan_code: data.plan_code,
       plan_type: data.plan_type || data.plan_code,
@@ -241,12 +312,123 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       status: 'active',
       subscription_start_date: now.toISOString(),
       subscription_end_date: billingCycle === 'lifetime' ? null : endDate.toISOString(),
-      is_organization_subscription: data.is_organization_subscription || false,
+      is_organization_subscription: isOrgSub,
+      seat_count: seatCount,
+      assigned_seats: 0,
       product_id: null,
       updated_at: now.toISOString(),
     });
 
     return subscription as Record<string, unknown>;
+  }
+
+  /**
+   * Admin-provisioned Hybrid subscription activation.
+   *
+   * Hybrid is a "contact sales" catalog plan — self-serve checkout always
+   * rejects it. This method is the deliberate bypass for an internal admin
+   * who has already negotiated terms out-of-band. Callable only via the
+   * SSO_SERVICE binding; the caller (sp-dash's admin API route) must verify
+   * the requester holds an admin role before invoking this.
+   */
+  async createHybridSubscription(data: {
+    organization_id: string;
+    plan_amount: number;
+    seat_count: number;
+    billing_cycle?: string;
+    features?: unknown[];
+    notes?: string;
+    admin_user_id: string;
+  }): Promise<Record<string, unknown>> {
+    return performCreateHybridSubscription(this.env, this.ctx, data);
+  }
+
+  /**
+   * Admin-provisioned update of an existing active/pending Hybrid subscription's
+   * commercial terms (price, seats, billing cycle, features, notes). Used when
+   * the admin edits negotiated terms for an org already on the Hybrid plan.
+   */
+  async updateHybridSubscription(data: {
+    organization_id: string;
+    plan_amount: number;
+    seat_count: number;
+    billing_cycle?: string;
+    features?: unknown[];
+    notes?: string;
+    admin_user_id: string;
+  }): Promise<Record<string, unknown>> {
+    return performUpdateHybridSubscription(this.env, this.ctx, data);
+  }
+
+  /**
+   * Admin-provisioned creation of a brand-new organization + owner user +
+   * Hybrid subscription, in one flow. See performCreateHybridOrganization
+   * for the full rollback/partial-failure story.
+   */
+  async createHybridOrganization(data: {
+    org_name: string;
+    org_type: "school" | "college" | "university";
+    owner_email: string;
+    owner_password: string;
+    owner_name?: string;
+    owner_phone?: string;
+    plan_amount: number;
+    seat_count: number;
+    billing_cycle?: string;
+    features?: unknown[];
+    notes?: string;
+    admin_user_id: string;
+  }): Promise<Record<string, unknown>> {
+    return performCreateHybridOrganization(this.env, this.ctx, data);
+  }
+
+  /**
+   * List organizations with their most recent subscription (any plan), for
+   * the sp-dash admin "Activate Hybrid Plan" org table.
+   */
+  async listOrganizationsWithSubscriptions(params: {
+    search?: string;
+    plan_code?: string;
+    status?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<Record<string, unknown>> {
+    return performListOrganizationsWithSubscriptions(this.env, params);
+  }
+
+  /**
+   * Preview what a delete would affect (member/subscription counts) before
+   * the admin picks soft or hard delete.
+   */
+  async inspectOrganizationForDeletion(organizationId: string): Promise<Record<string, unknown>> {
+    return performInspectOrganizationForDeletion(this.env, organizationId);
+  }
+
+  /**
+   * Admin soft-delete: marks deleted_at, deactivates memberships. Reversible,
+   * non-destructive. See performSoftDeleteOrganization for the active-
+   * subscription guard.
+   */
+  async softDeleteOrganization(params: {
+    organization_id: string;
+    admin_user_id: string;
+    force?: boolean;
+  }): Promise<Record<string, unknown>> {
+    return performSoftDeleteOrganization(this.env, this.ctx, params);
+  }
+
+  /**
+   * Admin hard-delete: irreversibly removes the organization, its
+   * subscriptions/transactions, memberships, and any user who is only a
+   * member of this org. See performHardDeleteOrganization for the full
+   * cascade order and the active-subscription guard.
+   */
+  async hardDeleteOrganization(params: {
+    organization_id: string;
+    admin_user_id: string;
+    force?: boolean;
+  }) {
+    return performHardDeleteOrganization(this.env, this.ctx, params);
   }
 
   async createFreemiumSubscription(data: {
@@ -490,7 +672,10 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const database = db(this.env);
     await database.update("subscriptions", { id: `eq.${encodeURIComponent(subscriptionId)}` }, updateData);
 
-    const updated = await database.queryOne(`subscriptions?id=eq.${encodeURIComponent(subscriptionId)}`);
+    const updated = await database.queryOne<Record<string, unknown>>(`subscriptions?id=eq.${encodeURIComponent(subscriptionId)}`);
+    if (updated) {
+      publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'subscription.updated', updated);
+    }
     return updated as Record<string, unknown>;
   }
 
@@ -662,6 +847,33 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return { roles: (roles || []) as { id: string; name: string; description: string | null }[] };
   }
 
+  /**
+   * List the canonical admin-dashboard feature key catalog (single source
+   * of truth for what a Hybrid-plan admin can grant a org — see
+   * `sanitizeHybridFeatures` in `routes/hybrid-subscription.ts`).
+   *
+   * Mirrors {@link syncPlans}/{@link listRoles}: read-only pull of
+   * `public.feature_keys`, used by skillpassport to keep its own read-only
+   * `feature_keys_cache` shadow in sync (mirrors the existing
+   * `plans_cache`/`syncPlanCache` pattern in `functions/lib/sync-shadow.ts`).
+   * Returns the full catalog across all products/roles; the caller
+   * filters by product/role as needed, same as `syncPlans` does today.
+   *
+   * @returns `{ featureKeys }` — each row's key, role, nav metadata, and order.
+   */
+  async listFeatureKeys() {
+    const database = db(this.env);
+    // Include inactive keys so consumers distinguish retirement from a missing catalog.
+    const featureKeys = await database.query<{
+      id: string; product_id: string; key: string; role: string;
+      nav_group: string | null; nav_label: string; nav_path: string;
+      display_order: number; is_active: boolean; products: { code: string };
+    }>(
+      "feature_keys?select=id,product_id,key,role,nav_group,nav_label,nav_path,display_order,is_active,products!inner(code)&order=role.asc,display_order.asc",
+    );
+    return { featureKeys: featureKeys.map(({ products, ...row }) => ({ ...row, product_code: products.code })) };
+  }
+
   async syncReconcile(userIds: string[]): Promise<{ subscriptions: Record<string, unknown>[] }> {
     if (!userIds || !Array.isArray(userIds)) {
       throw new Error("user_ids array is required");
@@ -816,7 +1028,29 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       `users?email=eq.${encodeURIComponent(normalized)}&select=id,email,is_email_verified`,
     );
 
-    return users && users.length > 0 ? users[0] : null;
+    return users?.[0] ?? null;
+  }
+
+  /**
+   * Look up a user by ID with metadata.
+   * Returns full user row for app DB self-heal (role/org from user_metadata).
+   */
+  async getUserById(userId: string): Promise<{ id: string; email: string; is_email_verified: boolean; is_blocked: boolean; user_metadata: Record<string, unknown> | null; created_at: string; last_login_at: string | null } | null> {
+    if (!userId) throw new Error("userId is required");
+    const database = db(this.env);
+    const user = await database.queryOne<{ id: string; email: string; is_email_verified: boolean; is_blocked: boolean; user_metadata: Record<string, unknown> | null; created_at: string; last_login_at: string | null }>(
+      `users?id=eq.${encodeURIComponent(userId)}&select=id,email,is_email_verified,is_blocked,user_metadata,created_at,last_login_at`,
+    );
+    return (user as any) || null;
+  }
+
+  async getOrganizationById(orgId: string): Promise<{ id: string; name: string; slug: string | null; metadata: Record<string, unknown> | null; created_at: string } | null> {
+    if (!orgId) throw new Error("orgId is required");
+    const database = db(this.env);
+    const org = await database.queryOne<{ id: string; name: string; slug: string | null; metadata: Record<string, unknown> | null; created_at: string }>(
+      `organizations?id=eq.${encodeURIComponent(orgId)}&select=id,name,slug,metadata,created_at`,
+    );
+    return (org as any) || null;
   }
 
   // ── Membership RPC Methods ────────────────────────────────────

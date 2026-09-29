@@ -470,3 +470,109 @@ describe("SSO authority handlers", () => {
         });
     });
 });
+
+describe("issueSignup / issueSignupMember — redirectUrl threading", () => {
+    it("issueSignup with no redirectUrl forwards redirect_url: undefined to performSignup", async () => {
+        let capturedRedirectUrl: string | undefined = "NOT_CAPTURED";
+        const deps = {
+            ...dependencies(new MemoryAuthorityDb([])),
+            performSignup: async (_env: any, _ctx: any, body: any) => {
+                capturedRedirectUrl = body.redirect_url;
+                return {
+                    access_token: "tok",
+                    refresh_token: "ref",
+                    user: { id: "u1", email: "test@example.com" },
+                    org: { id: "o1", name: "Org", slug: "org" },
+                    email_sent: true,
+                };
+            },
+        };
+        const auth = createSsoAuthority(environment(), executionContext(), deps);
+        await auth.signup({
+            correlationId,
+            email: "test@example.com",
+            password: "password123",
+            organizationName: "Org",
+            role: "owner",
+            // no redirectUrl
+        });
+        expect(capturedRedirectUrl).toBeUndefined();
+    });
+
+    it("issueSignup with redirectUrl forwards it to performSignup", async () => {
+        let capturedRedirectUrl: string | undefined;
+        const deps = {
+            ...dependencies(new MemoryAuthorityDb([])),
+            performSignup: async (_env: any, _ctx: any, body: any) => {
+                capturedRedirectUrl = body.redirect_url;
+                return {
+                    access_token: "tok",
+                    refresh_token: "ref",
+                    user: { id: "u1", email: "test@example.com" },
+                    org: { id: "o1", name: "Org", slug: "org" },
+                    email_sent: true,
+                };
+            },
+        };
+        const auth = createSsoAuthority(environment(), executionContext(), deps);
+        await auth.signup({
+            correlationId,
+            email: "test@example.com",
+            password: "password123",
+            organizationName: "Org",
+            role: "owner",
+            redirectUrl: "https://my-branch.pages.dev",
+        });
+        expect(capturedRedirectUrl).toBe("https://my-branch.pages.dev");
+    });
+
+    it("issueSignupMember with no redirectUrl forwards redirect_url: undefined to performSignupMember", async () => {
+        let capturedRedirectUrl: string | undefined = "NOT_CAPTURED";
+        const deps = {
+            ...dependencies(new MemoryAuthorityDb([])),
+            performSignupMember: async (_env: any, _ctx: any, body: any) => {
+                capturedRedirectUrl = body.redirect_url;
+                return {
+                    access_token: "tok",
+                    refresh_token: "ref",
+                    user: { id: "u2", email: "member@example.com" },
+                    email_sent: true,
+                };
+            },
+        };
+        const auth = createSsoAuthority(environment(), executionContext(), deps);
+        await auth.signupMember({
+            correlationId,
+            email: "member@example.com",
+            password: "password123",
+            role: "member",
+            // no redirectUrl
+        });
+        expect(capturedRedirectUrl).toBeUndefined();
+    });
+
+    it("issueSignupMember with redirectUrl forwards it to performSignupMember", async () => {
+        let capturedRedirectUrl: string | undefined;
+        const deps = {
+            ...dependencies(new MemoryAuthorityDb([])),
+            performSignupMember: async (_env: any, _ctx: any, body: any) => {
+                capturedRedirectUrl = body.redirect_url;
+                return {
+                    access_token: "tok",
+                    refresh_token: "ref",
+                    user: { id: "u2", email: "member@example.com" },
+                    email_sent: true,
+                };
+            },
+        };
+        const auth = createSsoAuthority(environment(), executionContext(), deps);
+        await auth.signupMember({
+            correlationId,
+            email: "member@example.com",
+            password: "password123",
+            role: "member",
+            redirectUrl: "https://preview.pages.dev",
+        });
+        expect(capturedRedirectUrl).toBe("https://preview.pages.dev");
+    });
+});

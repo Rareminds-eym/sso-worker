@@ -1,14 +1,13 @@
-import { SESSION_TTL_MS, PLATFORM_ORG_ID } from "../lib/constants";
-import { resolveEffectiveRoles } from "../lib/roles";
+import { PLATFORM_ORG_ID, SESSION_TTL_MS } from "../lib/constants";
 import { db, type DbClient } from "../lib/db";
 import { generateRefreshToken, hashPassword, hashToken } from "../lib/hash";
 import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "../lib/jwt";
 import { endpointRateLimit } from "../lib/rate-limit";
+import { resolveEffectiveRoles } from "../lib/roles";
 import { rotateRefreshToken, type RotationOutcome } from "../lib/session-rotation";
 import { performLogin } from "../routes/login";
-import { performSignup } from "../routes/signup";
-import type { OAuthAuthenticateRpcInput } from "./contracts";
 import { performOAuthLogin } from "../routes/oauth";
+import { performSignup } from "../routes/signup";
 import { performSignupMember } from "../routes/signup-member";
 import type { Env, JwtClaims } from "../types";
 import type {
@@ -18,8 +17,7 @@ import type {
     CurrentLogoutRpcInput,
     CurrentLogoutRpcOutcome,
     JsonValue,
-    LoginRpcInput,
-    RpcIdentity,
+    LoginRpcInput, OAuthAuthenticateRpcInput, RpcIdentity,
     RpcSession,
     SessionIssueRpcOutcome,
     SessionRejectionCode,
@@ -28,7 +26,7 @@ import type {
     SignupRpcInput,
     SsoJwksKey,
     SsoJwksRpcOutcome,
-    SsoServiceBinding,
+    SsoServiceBinding
 } from "./contracts";
 import {
     createPreservedWorkflowAuthority,
@@ -213,6 +211,7 @@ async function issueSignup(
             password: input.password,
             org_name: input.organizationName,
             role: input.role,
+            redirect_url: input.redirectUrl,
             user_metadata: input.userMetadata as Record<string, unknown> | undefined,
         }) as LegacySessionResult;
         return adaptIssue(input, result, "signup", input.currentRefreshToken, env, database, dependencies, result.email_sent === true);
@@ -234,6 +233,7 @@ async function issueSignupMember(
             password: input.password,
             role: input.role,
             org_id: input.organizationId,
+            redirect_url: input.redirectUrl,
             user_metadata: input.userMetadata as Record<string, unknown> | undefined,
         }) as LegacySessionResult;
         return adaptIssue(input, result, "signup_member", input.currentRefreshToken, env, database, dependencies, result.email_sent === true);
