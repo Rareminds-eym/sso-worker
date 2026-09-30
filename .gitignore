@@ -4,3 +4,6 @@ dist/
 .dev.vars
 *.pem
 graphify-out/
+
+# Supabase CLI local project metadata
+supabase/.temp/

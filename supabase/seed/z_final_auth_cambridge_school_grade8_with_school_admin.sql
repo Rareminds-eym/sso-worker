@@ -180,12 +180,12 @@ ON CONFLICT DO NOTHING;
 -- ------------------------------------------------------------
 -- 5. SCHOOL ADMIN USER
 -- ------------------------------------------------------------
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA "extensions";
 
 INSERT INTO "public"."users"
   ("id", "email", "password_hash", "is_email_verified", "created_at", "updated_at", "last_login_at", "is_blocked")
 VALUES
-  ('8c8f6c10-8e7a-4f66-9a20-a75cd6fd80b1', 'admin@cambridgeschool.edu.in', crypt('CambridgeAdmin@123', gen_salt('bf', 12)), TRUE, NOW(), NOW(), NULL, FALSE)
+  ('8c8f6c10-8e7a-4f66-9a20-a75cd6fd80b1', 'admin@cambridgeschool.edu.in', extensions.crypt('CambridgeAdmin@123', extensions.gen_salt('bf', 12)), TRUE, NOW(), NOW(), NULL, FALSE)
 ON CONFLICT ("email") DO UPDATE
 SET
   "password_hash" = EXCLUDED."password_hash",
