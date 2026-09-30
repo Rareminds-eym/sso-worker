@@ -218,6 +218,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     let organizationId = data.organization_id || null;
     let organizationType = data.organization_type || null;
     let isOrgSub = data.is_organization_subscription || false;
+    let purchasedBy = data.purchased_by || null;
 
     if (!organizationId && data.user_id) {
       try {
@@ -228,6 +229,9 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           organizationId = org.id;
           organizationType = (org.metadata?.organization_type as string) || null;
           isOrgSub = true;
+          // The org's creator is the purchaser in this auto-derived case; never
+          // override an explicitly provided purchased_by.
+          purchasedBy = purchasedBy || data.user_id;
         } else {
           const member = await database.queryOne<{ organization_id: string }>(
             `organization_members?user_id=eq.${encodeURIComponent(data.user_id)}`,
@@ -243,14 +247,17 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     let seatCount = data.seat_count || 1;
-    if ((!data.seat_count || data.seat_count === 1) && data.plan_id) {
+    let productId: string | null = null;
+    if (data.plan_id) {
       try {
         const planRow = await database.queryOne<{
+          product_id?: string | null;
           entity_config?: Record<string, { max_users?: number } | undefined> | string;
         }>(
           `plans?id=eq.${encodeURIComponent(data.plan_id)}`,
         );
-        if (planRow?.entity_config) {
+        productId = planRow?.product_id ?? null;
+        if ((!data.seat_count || data.seat_count === 1) && planRow?.entity_config) {
           let entityConfig: Record<string, { max_users?: number } | undefined> = {};
           if (typeof planRow.entity_config === 'string') {
             try {
@@ -270,7 +277,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           }
         }
       } catch (planErr) {
-        console.warn("[sso] Failed to resolve seat count from plan:", planErr instanceof Error ? planErr.message : String(planErr));
+        console.warn("[sso] Failed to resolve plan details:", planErr instanceof Error ? planErr.message : String(planErr));
       }
     }
 
@@ -295,7 +302,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       seat_count: seatCount,
       is_organization_subscription: isOrgSub,
       is_bulk_purchase: data.is_bulk_purchase || false,
-      purchased_by: data.purchased_by || null,
+      purchased_by: purchasedBy,
+      product_id: productId,
     });
 
     publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'subscription.created', {
@@ -315,7 +323,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       is_organization_subscription: isOrgSub,
       seat_count: seatCount,
       assigned_seats: 0,
-      product_id: null,
+      product_id: productId,
       updated_at: now.toISOString(),
     });
 
@@ -710,16 +718,46 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const database = db(this.env);
 
     let productId = data.product_id;
-    if (!productId && data.subscription_id) {
-      const subRow = await database.queryOne<{ product_id: string | null; plan_id: string | null }>(
-        `subscriptions?id=eq.${encodeURIComponent(data.subscription_id)}&select=product_id,plan_id`,
-      );
-      productId = subRow?.product_id ?? undefined;
-      if (!productId && subRow?.plan_id) {
-        const plan = await database.queryOne<{ product_id: string | null }>(
-          `plans?id=eq.${encodeURIComponent(subRow.plan_id)}&select=product_id`,
+    let organizationId = data.organization_id;
+    let organizationType = data.organization_type;
+    let isBulkPurchase = data.is_bulk_purchase;
+    let seatCount = data.seat_count;
+
+    if (!productId || !organizationId) {
+      let subRow: {
+        product_id: string | null;
+        plan_id: string | null;
+        organization_id?: string | null;
+        organization_type?: string | null;
+        is_bulk_purchase?: boolean | null;
+        seat_count?: number | null;
+      } | null = null;
+
+      if (data.subscription_id) {
+        subRow = await database.queryOne(
+          `subscriptions?id=eq.${encodeURIComponent(data.subscription_id)}&select=product_id,plan_id,organization_id,organization_type,is_bulk_purchase,seat_count`,
         );
-        productId = plan?.product_id ?? undefined;
+      }
+
+      if (!productId) {
+        productId = subRow?.product_id ?? undefined;
+        if (!productId && subRow?.plan_id) {
+          const plan = await database.queryOne<{ product_id: string | null }>(
+            `plans?id=eq.${encodeURIComponent(subRow.plan_id)}&select=product_id`,
+          );
+          productId = plan?.product_id ?? undefined;
+        }
+      }
+
+      // Fallback: when the caller omits organization_id but the transaction is
+      // linked to a subscription, inherit organization attribution from that
+      // subscription rather than leaving it permanently null. Only activates
+      // when organization_id is absent — an explicit value always wins.
+      if (!organizationId && subRow?.organization_id) {
+        organizationId = subRow.organization_id;
+        organizationType = organizationType ?? subRow.organization_type ?? undefined;
+        isBulkPurchase = isBulkPurchase ?? subRow.is_bulk_purchase ?? undefined;
+        seatCount = seatCount ?? subRow.seat_count ?? undefined;
       }
     }
 
@@ -736,10 +774,10 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       payment_method: data.payment_method || null,
       failure_reason: data.failure_reason || null,
       product_id: productId || null,
-      organization_id: data.organization_id || null,
-      organization_type: data.organization_type || null,
-      seat_count: data.seat_count || 1,
-      is_bulk_purchase: data.is_bulk_purchase || false,
+      organization_id: organizationId || null,
+      organization_type: organizationType || null,
+      seat_count: seatCount || 1,
+      is_bulk_purchase: isBulkPurchase || false,
       receipt: data.receipt || null,
       receipt_url: data.receipt_url || null,
       notes: data.notes || {},
