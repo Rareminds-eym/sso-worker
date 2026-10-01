@@ -1,6 +1,6 @@
 import type { Env } from "../types";
 import { db } from "../lib/db";
-import { hashPassword, verifyPassword } from "../lib/hash";
+import { hashPassword, hashToken, verifyPassword } from "../lib/hash";
 import { validatePassword } from "../lib/validate";
 import { audit } from "../lib/audit";
 import { endpointRateLimit } from "../lib/rate-limit";
@@ -13,6 +13,7 @@ export async function performChangePassword(
   ctx: ExecutionContext,
   params: {
     user_id: string;
+    current_refresh_token?: string;
     current_password: string;
     new_password: string;
     org_id?: string;
@@ -57,6 +58,19 @@ export async function performChangePassword(
     return { error: "New password must be different from current password", status: 400 };
   }
 
+  // Resolve the cookie credential against the JWT owner. Never trust a client
+  // session ID. Preserve its rotation family so a concurrent refresh survives.
+  let currentSession: { id: string; family_id: string | null; expires_at: string } | null = null;
+  if (params.current_refresh_token) {
+    const tokenHash = await hashToken(params.current_refresh_token);
+    currentSession = await database.queryOne(
+      `sessions?refresh_token_hash=eq.${encodeURIComponent(tokenHash)}&user_id=eq.${encodeURIComponent(params.user_id)}&revoked=eq.false&select=id,family_id,expires_at`,
+    );
+    if (!currentSession || new Date(currentSession.expires_at).getTime() <= Date.now()) {
+      return { error: "Invalid or expired access token", status: 401 };
+    }
+  }
+
   // Hash and update new password
   const newHash = await hashPassword(params.new_password);
   await database.update(
@@ -65,10 +79,17 @@ export async function performChangePassword(
     { password_hash: newHash, updated_at: new Date().toISOString() },
   );
 
-  // Revoke all other sessions (force re-login everywhere)
+  // Revoke other devices; retain this browser and any concurrent rotation.
   await database.update(
     "sessions",
-    { user_id: `eq.${encodeURIComponent(params.user_id)}`, revoked: "eq.false" },
+    {
+      user_id: `eq.${params.user_id}`,
+      revoked: "eq.false",
+      ...(currentSession ? {
+        id: `neq.${currentSession.id}`,
+        or: `(family_id.is.null,family_id.neq.${currentSession.family_id ?? currentSession.id})`,
+      } : {}),
+    },
     { revoked: true },
   );
 
@@ -80,7 +101,7 @@ export async function performChangePassword(
     metadata: { self_change: true },
   });
 
-  return { success: true, message: "Password changed. Please log in again." };
+  return { success: true, message: currentSession ? "Password changed. Other sessions have been signed out." : "Password changed. Please log in again." };
 }
 
 /**

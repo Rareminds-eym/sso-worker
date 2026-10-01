@@ -80,7 +80,10 @@ type ForbiddenTransportKey =
     | "error";
 type ForbiddenFailureKey = "error" | "message" | "stack" | "cause" | "details" | "exception";
 type CallerSuppliedIdentityKey = "subject" | "identity" | "userId" | "email" | "organizationId";
-type TransportLeak = Extract<KeysOfUnion<AllRpcInput>, ForbiddenTransportKey>;
+// Signup and recovery email links accept an allowlisted destination.
+type TransportLeak = {
+    [K in RpcMethod]: Extract<Exclude<KeysOfUnion<RpcInput<K>>, K extends "forgotPassword" | "signup" | "signupMember" ? "redirectUrl" : never>, ForbiddenTransportKey>
+}[RpcMethod];
 type UntypedFailureLeak = Extract<KeysOfUnion<AllRpcOutcome>, ForbiddenFailureKey>;
 type AllLogoutIdentityLeak = Extract<keyof AllLogoutRpcInput, CallerSuppliedIdentityKey>;
 type CurrentLogoutCrossScopeLeak = Extract<
