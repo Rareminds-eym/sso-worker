@@ -1328,6 +1328,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
    */
   async changePassword(params: {
     access_token: string;
+    current_refresh_token?: string;
     current_password: string;
     new_password: string;
     org_id?: string;
@@ -1353,6 +1354,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       this.ctx,
       {
         user_id: payload.sub,
+        current_refresh_token: params.current_refresh_token,
         current_password: params.current_password,
         new_password: params.new_password,
         org_id: params.org_id,

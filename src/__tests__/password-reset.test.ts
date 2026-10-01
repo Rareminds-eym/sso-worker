@@ -14,6 +14,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../types";
+import type { CorrelationId } from "../rpc/contracts";
 
 // ── KV mock ─────────────────────────────────────────────────────
 function createMockKV(): {
@@ -91,6 +92,22 @@ function createMockSupabaseFetch(): ReturnType<typeof vi.fn> {
     const restPath = url.match(/\/rest\/v1\/([^?]+)/)?.[1] ?? "";
     const queryStr = url.includes("?") ? url.split("?")[1] : "";
     const params = new URLSearchParams(queryStr);
+
+    if (restPath === "rpc/complete_password_reset" && method === "POST") {
+      const record = dbState.password_resets.get(parsedBody.p_token_hash);
+      const status = !record ? "not_found" : record.used ? "used"
+        : new Date(record.expires_at).getTime() <= Date.now() ? "expired" : "reset";
+      if (status === "reset" && record) {
+        const user = [...dbState.users.values()].find(user => user.id === record.user_id)!;
+        user.password_hash = parsedBody.p_password_hash;
+        dbState.userPatches.push({ filter: { id: `eq.${record.user_id}` }, body: { password_hash: parsedBody.p_password_hash } });
+        for (const session of dbState.sessions.values()) {
+          if (session.user_id === record.user_id) session.revoked = true;
+        }
+        record.used = true;
+      }
+      return Response.json({ status });
+    }
 
     if (restPath.startsWith("password_resets") && method === "GET") {
       const tokenHashParam = params.get("token_hash")?.replace(/^eq\./, "");
@@ -1038,25 +1055,15 @@ describe("resetPassword", () => {
     });
 
 
-    // First reset should succeed
-    const req1 = new Request("https://sso-api/auth/reset-password", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: rawToken, password: "NewStr0ng!Pass" }),
-    });
-    const res1 = await invokeResetPassword(req1, env, ctx);
-    expect(res1.status).toBe(200);
+    const requests = ["NewStr0ng!Pass", "AnotherStr0ng!Pass"].map(password =>
+      new Request("https://sso-api/auth/reset-password", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: rawToken, password }),
+      }));
+    const responses = await Promise.all(requests.map(request => invokeResetPassword(request, env, ctx)));
+    expect(responses.map(response => response.status).sort()).toEqual([200, 410]);
+    expect(dbState.userPatches).toHaveLength(1);
 
-    // Second reset with same token should fail (410 - already used)
-    const req2 = new Request("https://sso-api/auth/reset-password", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: rawToken, password: "AnotherStr0ng!Pass" }),
-    });
-    const res2 = await invokeResetPassword(req2, env, ctx);
-    expect(res2.status).toBe(410);
-    const data2 = await res2.json();
-    expect(data2).toEqual({ error: "Token already used" });
   });
 });
 
@@ -1077,6 +1084,20 @@ describe("forgotPassword + resetPassword integration", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("preserves and validates the recovery origin through RPC", async () => {
+    setupUser("rpc@example.com");
+    const { createPreservedWorkflowAuthority } = await import("../rpc/preserved-workflows");
+    const { db } = await import("../lib/db");
+    const authority = createPreservedWorkflowAuthority(env, ctx, db(env));
+    const result = await authority.forgotPassword({ correlationId: "test-origin" as CorrelationId, email: "rpc@example.com", redirectUrl: "http://localhost:3000" });
+    expect(result.kind).toBe("succeeded");
+    await flushWaitUntil();
+    expect(mailSent[0].body.html).toContain("http://localhost:3000/reset-password?token=");
+    const rejected = await authority.forgotPassword({ correlationId: "test-invalid-origin" as CorrelationId, email: "rpc@example.com", redirectUrl: "https://untrusted.example" });
+    expect(rejected.kind).toBe("rejected");
+    expect(mailSent).toHaveLength(1);
   });
 
   it("should complete the full forgot → reset flow with real token", async () => {

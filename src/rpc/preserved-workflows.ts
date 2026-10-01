@@ -481,7 +481,7 @@ async function forgotPassword(
     env: Env, ctx: ExecutionContext, input: ForgotPasswordRpcInput,
 ): Promise<ForgotPasswordRpcOutcome> {
     try {
-        const result = await performForgotPassword(env, ctx, { email: input.email },
+        const result = await performForgotPassword(env, ctx, { email: input.email, redirect_url: input.redirectUrl },
             `rpc:${input.correlationId}`, null);
         if (result.error) return mapWorkflowStatus(input, result.status);
         return { kind: "succeeded", correlationId: input.correlationId, data: { accepted: true } };

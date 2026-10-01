@@ -256,6 +256,8 @@ export interface VerifyEmailRpcInput extends Correlated {
 
 export interface ForgotPasswordRpcInput extends Correlated {
     readonly email: string;
+    /** Validated against ALLOWED_APP_URLS before generating recovery links. */
+    readonly redirectUrl?: string;
 }
 
 export interface ResetPasswordRpcInput extends Correlated {
