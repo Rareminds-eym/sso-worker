@@ -83,6 +83,63 @@ dead_letter_queue = "learner-admission-dlq"
 queue = "learner-admission-dlq"
 
 
+[env.dev]
+name = "sso-api-dev"
+
+[env.dev.vars]
+ENVIRONMENT = "development"
+JWKS_FRESHNESS_SECONDS = "300"
+SUPABASE_URL = "https://iwnmssuhlifpufttyjbj.supabase.co"
+SKILLPASSPORT_URL = "https://skillpassport-dev-bcp.pages.dev"
+ALLOWED_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://localhost:8788,http://localhost:8789,https://*.rareminds.in,https://*.pages.dev,http://127.0.0.1:8788,http://127.0.0.1:8789"
+ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:3000/,http://localhost:3000/auth/callback,http://127.0.0.1:3000,http://127.0.0.1:3000/auth/callback,http://localhost:5173,http://localhost:8788,http://localhost:8789,http://localhost:8789/auth/callback,http://127.0.0.1:8788,http://127.0.0.1:8789,http://127.0.0.1:8789/auth/callback,https://skillpassport.rareminds.in,https://*.rareminds.in,https://*.pages.dev"
+
+[[env.dev.kv_namespaces]]
+binding = "RATE_LIMIT_KV"
+id = "00dd9c44924f413ca859ba9ad80b8aa7"
+preview_id = "00dd9c44924f413ca859ba9ad80b8aa7"
+
+[[env.dev.durable_objects.bindings]]
+name = "AUTH_CODE_STORE"
+class_name = "AuthorizationCodeStore"
+
+[[env.dev.services]]
+binding = "EMAIL_SERVICE"
+service = "shared-email-api-dev"
+entrypoint = "EmailService"
+
+[[env.dev.queues.producers]]
+binding = "SYNC_QUEUE"
+queue = "auth-db-sync-queue-dev"
+
+[[env.dev.queues.producers]]
+binding = "LEARNER_ADMISSION_QUEUE"
+queue = "learner-admission-queue-dev"
+
+[[env.dev.queues.producers]]
+binding = "EMAIL_QUEUE"
+queue = "email-queue-dev"
+
+[[env.dev.queues.consumers]]
+queue = "payment-webhooks-queue-dev"
+max_batch_size = 10
+max_batch_timeout = 5
+
+[[env.dev.queues.consumers]]
+queue = "sso-reverse-sync-queue-dev"
+max_batch_size = 10
+max_batch_timeout = 5
+
+[[env.dev.queues.consumers]]
+queue = "learner-admission-queue-dev"
+max_retries = 3
+max_concurrency = 1
+dead_letter_queue = "learner-admission-dlq-dev"
+
+[[env.dev.queues.consumers]]
+queue = "learner-admission-dlq-dev"
+
+
 [env.production.vars]
 ENVIRONMENT = "production"
 JWKS_FRESHNESS_SECONDS = "300"
