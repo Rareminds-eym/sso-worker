@@ -49,10 +49,8 @@ enabled = true
 schema_paths = []
 
 [db.seed]
-enabled = true
-sql_paths = [
-  "./seed/*.sql"
-]
+# Choose environment seeds explicitly with db:reset:dev or db:reset:prod.
+enabled = false
 
 [realtime]
 enabled = false
