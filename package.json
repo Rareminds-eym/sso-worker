@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "db:reset:dev": "supabase db reset --sql-paths \"./seed/dev/*.sql\"",
+    "db:reset:prod": "supabase db reset --sql-paths \"./seed/production/*.sql\"",
     "dev": "wrangler dev",
     "dev:stack": "wrangler dev -c wrangler.toml -c ../auth-sync-consumer/wrangler.toml -c ../email-worker/wrangler.toml -c ../payments-worker/wrangler.toml -c ../realtime-worker/wrangler.toml",
     "deploy": "wrangler deploy",
