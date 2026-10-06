@@ -1025,7 +1025,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   // ── Membership Sync ─────────────────────────────────────────
 
   async getUserMemberships(userId: string): Promise<{
-    memberships: { id: string; org_id: string; role: string; status: string }[];
+    memberships: { id: string; org_id: string; role: string; roles: string[]; status: string }[];
   }> {
     if (!userId) throw new Error("userId is required");
     const database = db(this.env);
@@ -1045,6 +1045,9 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           org_id: r.org_id,
           status: r.status,
           role: mrole?.name || "member",
+          roles: [...new Set((r.membership_roles ?? []).flatMap(
+            (entry) => entry.roles?.name ? [entry.roles.name] : [],
+          ))],
         };
       }),
     };
