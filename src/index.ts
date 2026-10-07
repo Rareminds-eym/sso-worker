@@ -1274,6 +1274,10 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return createSsoAuthority(this.env, this.ctx).resendInvite(input);
   }
 
+  async listInvites(input: Parameters<SsoServiceBinding["listInvites"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["listInvites"]>>> {
+    return createSsoAuthority(this.env, this.ctx).listInvites(input);
+  }
+
   async requestVerification(input: Parameters<SsoServiceBinding["requestVerification"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["requestVerification"]>>> {
     return createSsoAuthority(this.env, this.ctx).requestVerification(input);
   }

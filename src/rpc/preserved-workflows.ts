@@ -1,14 +1,14 @@
 import { audit } from "../lib/audit";
 import { INVITE_TTL_MS, PLATFORM_ORG_ID, SESSION_TTL_MS } from "../lib/constants";
 import type { DbClient } from "../lib/db";
-import { inviteEmail, sendEmail } from "../lib/email";
+import { inviteEmail, logEmailFailure, sendEmailWithStatus, type EmailStatus } from "../lib/email";
 import { checkEmailThrottle } from "../lib/email-throttle";
 import { generateRefreshToken, hashPassword, hashToken } from "../lib/hash";
 import { signAccessToken, verifyAccessToken } from "../lib/jwt";
+import { resolveEffectiveRoles } from "../lib/roles";
 import { publishSyncEvent } from "../lib/sync-queue";
 import { resolveAppUrl, validateEmail, validatePassword } from "../lib/validate";
 import { performForgotPassword, performResetPassword } from "../routes/password-reset";
-import { resolveEffectiveRoles } from "../lib/roles";
 import { performRequestVerification, performVerifyEmail } from "../routes/verify-email";
 import type { AccessTokenPayload, Env, Invite, JwtClaims, Membership, Organization } from "../types";
 import type {
@@ -17,7 +17,8 @@ import type {
     ChangeOrganizationRpcInput,
     ChangeOrganizationRpcOutcome, Correlated, CreateInviteRpcInput, CreateInviteRpcOutcome,
     ForgotPasswordRpcInput, ForgotPasswordRpcOutcome,
-    GetIdentityRpcInput, IdentityRpcOutcome, ListOrganizationsRpcInput, OrganizationListRpcOutcome,
+    GetIdentityRpcInput, IdentityRpcOutcome, ListInvitesRpcInput, ListInvitesRpcOutcome,
+    ListOrganizationsRpcInput, OrganizationListRpcOutcome, PendingInviteData,
     RequestVerificationRpcInput, RequestVerificationRpcOutcome, ResendInviteRpcInput,
     ResendInviteRpcOutcome, ResetPasswordRpcInput, ResetPasswordRpcOutcome, RpcIdentity, RpcSession,
     VerifyEmailRpcInput, VerifyEmailRpcOutcome, WorkflowRejectionCode,
@@ -38,7 +39,7 @@ export const defaultPreservedWorkflowDependencies: PreservedWorkflowDependencies
 
 type PreservedMethods = Pick<import("./contracts").SsoServiceBinding,
     "changeOrganization" | "listOrganizations" | "createInvite" | "acceptInvite" |
-    "cancelInvite" | "resendInvite" | "requestVerification" | "verifyEmail" |
+    "cancelInvite" | "resendInvite" | "listInvites" | "requestVerification" | "verifyEmail" |
     "forgotPassword" | "resetPassword" | "getIdentity">;
 
 export function createPreservedWorkflowAuthority(
@@ -54,6 +55,7 @@ export function createPreservedWorkflowAuthority(
         acceptInvite: (input) => acceptInvite(env, ctx, input, database, dependencies),
         cancelInvite: (input) => cancelInvite(env, ctx, input, database, dependencies),
         resendInvite: (input) => resendInvite(env, ctx, input, database, dependencies),
+        listInvites: (input) => listInvites(env, input, database, dependencies),
         requestVerification: (input) => requestVerification(env, ctx, input, database, dependencies),
         verifyEmail: (input) => verifyEmail(env, ctx, input, database, dependencies),
         forgotPassword: (input) => forgotPassword(env, ctx, input),
@@ -243,6 +245,14 @@ async function getIdentity(
     } catch (error) { return workflowFailure(input, error); }
 }
 
+/** Invites carrying these roles may only be created by an organization administrator. */
+const GATED_INVITE_ROLES: ReadonlySet<string> = new Set(["college_educator", "school_educator"]);
+const INVITER_ROLES: ReadonlySet<string> = new Set(["owner", "admin", "super_admin", "college_admin", "school_admin"]);
+
+function isAdminTierRole(name: string): boolean {
+    return name === "owner" || name === "admin" || name === "super_admin" || name.endsWith("_admin");
+}
+
 async function createInvite(
     env: Env, ctx: ExecutionContext, input: CreateInviteRpcInput, database: DbClient,
     dependencies: PreservedWorkflowDependencies,
@@ -252,6 +262,9 @@ async function createInvite(
         const emailError = validateEmail(input.email);
         if (emailError || !input.organizationId || input.roles.length === 0) throw new WorkflowError("invalid_request");
         if (caller.org_id !== input.organizationId) throw new WorkflowError("authorization_denied");
+        if (input.roles.some((role) => GATED_INVITE_ROLES.has(role))) {
+            await requireInviterRole(database, caller, input.organizationId);
+        }
         const email = input.email.toLowerCase().trim();
         const existing = await database.queryOne<{ id: string }>(
             `invites?email=eq.${encodeURIComponent(email)}&org_id=eq.${encodeURIComponent(input.organizationId)}&accepted=eq.false&select=id`,
@@ -267,28 +280,59 @@ async function createInvite(
             token_hash: await dependencies.hash(token), invited_by: caller.sub,
             expires_at: expiresAt, accepted: false,
         });
-        await queueInviteEmail(env, ctx, database, caller, email, input.organizationId, token);
+        const emailStatus = await deliverInviteEmail(
+            env, ctx, database, caller, invite.id, email, input.organizationId, token,
+        );
         audit(ctx, env, "invite_created", {
             user_id: caller.sub, org_id: input.organizationId,
-            metadata: { invite_id: invite.id }
+            metadata: { invite_id: invite.id, email_status: emailStatus }
         });
         return {
             kind: "succeeded", correlationId: input.correlationId,
-            data: { inviteId: invite.id, email, expiresAt }
+            data: {
+                inviteId: invite.id, email, expiresAt,
+                ...(input.includeEmailStatus === true ? { emailStatus } : {}),
+            }
         };
     } catch (error) { return workflowFailure(input, error); }
 }
 
-async function queueInviteEmail(
-    env: Env, ctx: ExecutionContext, database: DbClient, caller: AccessTokenPayload,
-    email: string, organizationId: string, token: string,
+/**
+ * Roles come from the database, never from the token (token roles can originate from client metadata).
+ * A get_jwt_claims transport error propagates (fail closed).
+ */
+async function requireInviterRole(
+    database: DbClient, caller: AccessTokenPayload, organizationId: string,
 ): Promise<void> {
-    const organization = await database.queryOne<{ name: string }>(
-        `organizations?id=eq.${encodeURIComponent(organizationId)}&select=name`,
-    );
-    const acceptUrl = `${resolveAppUrl(undefined, env)}/invite/accept?token=${token}`;
-    const message = inviteEmail(caller.email, organization?.name ?? "an organization", acceptUrl);
-    ctx.waitUntil(sendEmail(env, { to: email, ...message }, ctx));
+    const claims = await database.rpc<JwtClaims | null>("get_jwt_claims", {
+        p_user_id: caller.sub, p_org_id: organizationId,
+    });
+    if (claims?.membership_status !== "active" || !claims.roles?.some((role) => INVITER_ROLES.has(role))) {
+        throw new WorkflowError("authorization_denied");
+    }
+}
+
+/**
+ * Send the invite email and report the result. Never throws: an organization lookup failure is
+ * reported as "failed" (the invite row is already stored). The token only ever goes into the
+ * email body; it is never logged or returned.
+ */
+async function deliverInviteEmail(
+    env: Env, ctx: ExecutionContext, database: DbClient, caller: AccessTokenPayload,
+    inviteId: string, email: string, organizationId: string, token: string,
+): Promise<EmailStatus> {
+    let message: ReturnType<typeof inviteEmail>;
+    try {
+        const organization = await database.queryOne<{ name: string }>(
+            `organizations?id=eq.${encodeURIComponent(organizationId)}&select=name`,
+        );
+        const acceptUrl = `${resolveAppUrl(undefined, env)}/invite/accept?token=${token}`;
+        message = inviteEmail(caller.email, organization?.name ?? "an organization", acceptUrl);
+    } catch (error) {
+        logEmailFailure(inviteId, "lookup_failed", { errorName: (error as { name?: unknown } | null)?.name });
+        return "failed";
+    }
+    return sendEmailWithStatus(env, { to: email, ...message }, ctx, { inviteId });
 }
 
 async function acceptInvite(
@@ -306,7 +350,15 @@ async function acceptInvite(
             return sessionRejected(input, "invitation_expired");
         }
         const prior = await activeSession(database, input.currentRefreshToken, dependencies);
-        const user = await resolveInviteUser(invite, input.password, database, dependencies);
+        const { user, created } = await resolveInviteUser(invite, input.password, database, dependencies);
+        if (created) {
+            // user.created must precede membership.created so the SkillPassport users row exists first.
+            const role = invite.role[0];
+            publishSyncEvent(env.SYNC_QUEUE, ctx, "user.created", {
+                id: user.id, email: user.email, is_email_verified: user.is_email_verified,
+                user_metadata: role ? { role } : {},
+            });
+        }
         const membershipId = await ensureMembership(database, user.id, invite.org_id);
         await assignInviteRoles(database, membershipId, invite.role);
         await database.update("invites", { id: `eq.${encodeURIComponent(invite.id)}` },
@@ -316,6 +368,7 @@ async function acceptInvite(
         if (prior) await revokeSession(database, prior.id);
         publishSyncEvent(env.SYNC_QUEUE, ctx, "membership.created", {
             user_id: user.id, organization_id: invite.org_id, roles: invite.role, status: "active",
+            source: "invite",
         });
         return {
             kind: "issued", correlationId: input.correlationId,
@@ -334,15 +387,19 @@ function sessionRejected(input: Correlated, code: "invalid_invitation" | "invita
 async function resolveInviteUser(
     invite: Invite, password: string | undefined, database: DbClient,
     dependencies: PreservedWorkflowDependencies,
-): Promise<UserRow> {
+): Promise<{ user: UserRow; created: boolean }> {
     const existing = await database.queryOne<UserRow>(
         `users?email=eq.${encodeURIComponent(invite.email)}&select=id,email,is_email_verified,user_metadata,is_blocked`,
     );
-    if (existing) return existing;
+    // Existing users are never modified (including is_email_verified).
+    if (existing) return { user: existing, created: false };
     if (!password || validatePassword(password)) throw new WorkflowError("invalid_request");
-    return database.mutate<UserRow>("users", {
-        email: invite.email, password_hash: await dependencies.hashPassword(password), is_email_verified: false,
+    // The token was delivered only to this address; verify new users unless the invite grants an admin-tier role.
+    const user = await database.mutate<UserRow>("users", {
+        email: invite.email, password_hash: await dependencies.hashPassword(password),
+        is_email_verified: !invite.role.some(isAdminTierRole),
     });
+    return { user, created: true };
 }
 
 async function ensureMembership(database: DbClient, userId: string, organizationId: string): Promise<string> {
@@ -398,30 +455,90 @@ async function cancelInvite(
     } catch (error) { return workflowFailure(input, error); }
 }
 
+const INVITE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const LIST_INVITES_CAP = 100;
+const MAX_ORGANIZATION_ID_LENGTH = 64;
+
 async function resendInvite(
     env: Env, ctx: ExecutionContext, input: ResendInviteRpcInput, database: DbClient,
     dependencies: PreservedWorkflowDependencies,
 ): Promise<ResendInviteRpcOutcome> {
     try {
         const caller = await authenticated(env, input.accessToken, dependencies);
-        const invite = await database.queryOne<Invite>(`invites?id=eq.${encodeURIComponent(input.inviteId)}&select=*`);
-        if (!invite) throw new WorkflowError("not_found");
-        if (invite.accepted) throw new WorkflowError("already_used");
-        if (invite.org_id !== caller.org_id ||
-            (!caller.roles.includes("owner") && !caller.roles.includes("admin"))) {
-            throw new WorkflowError("authorization_denied");
+        // Pure format check before any DB call: invites.id is a uuid, so a malformed id would
+        // otherwise surface as a PostgREST 400 and be reported as an outage.
+        if (typeof input.inviteId !== "string" || !INVITE_ID_PATTERN.test(input.inviteId)) {
+            throw new WorkflowError("invalid_request");
         }
+        await requireInviterRole(database, caller, caller.org_id);
+        const invite = await database.queryOne<Pick<Invite, "id" | "email" | "org_id" | "accepted">>(
+            `invites?id=eq.${encodeURIComponent(input.inviteId)}&select=id,email,org_id,accepted`,
+        );
+        // Another org's invite is indistinguishable from a missing one.
+        if (!invite || invite.org_id !== caller.org_id) throw new WorkflowError("not_found");
+        if (invite.accepted === true) throw new WorkflowError("already_used");
         if (await checkEmailThrottle(env, "invite", caller.org_id)) {
             return { kind: "rate_limited", correlationId: input.correlationId };
         }
         const token = crypto.randomUUID();
         const expiresAt = new Date(dependencies.now() + INVITE_TTL_MS).toISOString();
-        await database.update("invites", { id: `eq.${encodeURIComponent(invite.id)}` },
-            { token_hash: await dependencies.hash(token), expires_at: expiresAt });
-        await queueInviteEmail(env, ctx, database, caller, invite.email, caller.org_id, token);
+        await database.update("invites", {
+            id: `eq.${encodeURIComponent(invite.id)}`,
+            accepted: "not.is.true",
+            org_id: `eq.${encodeURIComponent(caller.org_id)}`,
+        }, { token_hash: await dependencies.hash(token), expires_at: expiresAt });
+        const emailStatus = await deliverInviteEmail(
+            env, ctx, database, caller, invite.id, invite.email, caller.org_id, token,
+        );
+        audit(ctx, env, "invite_resent", {
+            user_id: caller.sub, org_id: caller.org_id,
+            metadata: { invite_id: invite.id, email_status: emailStatus }
+        });
         return {
             kind: "succeeded", correlationId: input.correlationId,
-            data: { inviteId: invite.id, email: invite.email, expiresAt }
+            data: {
+                inviteId: invite.id, email: invite.email, expiresAt,
+                ...(input.includeEmailStatus === true ? { emailStatus } : {}),
+            }
+        };
+    } catch (error) { return workflowFailure(input, error); }
+}
+
+interface PendingInviteRow {
+    id: string; email: string; role: unknown; created_at: string | null; expires_at: string | null;
+}
+
+async function listInvites(
+    env: Env, input: ListInvitesRpcInput, database: DbClient,
+    dependencies: PreservedWorkflowDependencies,
+): Promise<ListInvitesRpcOutcome> {
+    try {
+        const caller = await authenticated(env, input.accessToken, dependencies);
+        if (typeof input.organizationId !== "string" || input.organizationId.length === 0 ||
+            input.organizationId.length > MAX_ORGANIZATION_ID_LENGTH) {
+            throw new WorkflowError("invalid_request");
+        }
+        // Always the caller's active organization; no code path queries another one.
+        if (input.organizationId !== caller.org_id) throw new WorkflowError("authorization_denied");
+        await requireInviterRole(database, caller, caller.org_id);
+        // Explicit column list: token_hash is never read.
+        const rows = await database.query<PendingInviteRow>(
+            `invites?org_id=eq.${encodeURIComponent(caller.org_id)}&accepted=not.is.true` +
+            `&select=id,email,role,created_at,expires_at&order=created_at.desc.nullslast,id.desc` +
+            `&limit=${LIST_INVITES_CAP + 1}`,
+        );
+        const now = dependencies.now();
+        const invites: PendingInviteData[] = rows.slice(0, LIST_INVITES_CAP).map((row) => ({
+            inviteId: row.id,
+            email: row.email,
+            roles: Array.isArray(row.role) ? row.role.filter((role): role is string => typeof role === "string") : [],
+            createdAt: row.created_at ?? null,
+            expiresAt: row.expires_at ?? null,
+            status: row.expires_at && Date.parse(row.expires_at) <= now ? "expired" : "pending",
+        }));
+        return {
+            kind: "succeeded", correlationId: input.correlationId,
+            data: { invites, truncated: rows.length > LIST_INVITES_CAP },
         };
     } catch (error) { return workflowFailure(input, error); }
 }
