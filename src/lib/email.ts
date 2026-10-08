@@ -8,7 +8,84 @@ export interface EmailPayload {
   text: string;
 }
 
-const EMAIL_SEND_TIMEOUT_MS = 5_000;
+export const EMAIL_SEND_TIMEOUT_MS = 5_000;
+
+export type EmailStatus = "sent" | "failed";
+export type EmailFailureReason = "timeout" | "provider_rejected" | "exception" | "lookup_failed";
+
+const ERROR_CODE_PATTERN = /^[A-Z0-9_]{1,40}$/;
+const ERROR_NAME_PATTERN = /^[A-Za-z0-9_]{1,60}$/;
+
+/**
+ * Log a delivery failure with a closed field set only. Free-text error messages are never
+ * logged: cross-worker RPC errors can echo the recipient and the accept URL (raw token).
+ */
+export function logEmailFailure(
+  inviteId: string,
+  reason: EmailFailureReason,
+  detail: { errorCode?: unknown; errorName?: unknown } = {},
+): void {
+  const entry: Record<string, string> = { msg: "[SSO] Invite email not delivered", inviteId, reason };
+  if (typeof detail.errorCode === "string" && ERROR_CODE_PATTERN.test(detail.errorCode)) {
+    entry.errorCode = detail.errorCode;
+  }
+  if (typeof detail.errorName === "string" && ERROR_NAME_PATTERN.test(detail.errorName)) {
+    entry.errorName = detail.errorName;
+  }
+  console.error(JSON.stringify(entry));
+}
+
+/**
+ * Send an email and report the result. Bounded by EMAIL_SEND_TIMEOUT_MS; never throws.
+ * Returns "sent" only when the provider resolves with `success === true`. The underlying
+ * RPC is kept alive via ctx.waitUntil so it can finish after a timeout.
+ */
+export async function sendEmailWithStatus(
+  env: Env,
+  payload: EmailPayload,
+  ctx: ExecutionContext,
+  log: { inviteId: string },
+): Promise<EmailStatus> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const emailPromise = Promise.resolve(env.EMAIL_SERVICE.sendEmail({
+      to: payload.to,
+      subject: payload.subject,
+      html: payload.html,
+      text: payload.text,
+    }));
+    // Attach the handler immediately so a late rejection is never unhandled.
+    const settled = emailPromise.then(
+      (result) => ({ ok: true as const, result }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+    ctx.waitUntil(settled);
+
+    const timeout = new Promise<{ timedOut: true }>((resolve) => {
+      timer = setTimeout(() => resolve({ timedOut: true }), EMAIL_SEND_TIMEOUT_MS);
+    });
+    const outcome = await Promise.race([settled, timeout]);
+
+    if ("timedOut" in outcome) {
+      logEmailFailure(log.inviteId, "timeout");
+      return "failed";
+    }
+    if (!outcome.ok) {
+      const error = outcome.error as { name?: unknown } | null | undefined;
+      logEmailFailure(log.inviteId, "exception", { errorName: error?.name });
+      return "failed";
+    }
+    const result = outcome.result as { success?: unknown; errorCode?: unknown } | null | undefined;
+    if (result?.success === true) return "sent";
+    logEmailFailure(log.inviteId, "provider_rejected", { errorCode: result?.errorCode });
+    return "failed";
+  } catch (error) {
+    logEmailFailure(log.inviteId, "exception", { errorName: (error as { name?: unknown } | null)?.name });
+    return "failed";
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 /**
  * Send an email via the email-worker service binding.

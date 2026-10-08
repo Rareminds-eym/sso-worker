@@ -1,0 +1,27 @@
+{
+  "_comment": "Real membership.created payload shapes published by the non-invite SSO producers. None carries `source`. Copied by hand into skillpassport/functions/lib/__tests__/sync-service.educator.test.ts. The bulk-import entry is transcribed from sso-worker/src/queue/bulk-import-handlers.ts:302 (not driven by a test).",
+  "login": {
+    "user_id": "user-login-1",
+    "organization_id": "org-college-1",
+    "roles": ["college_educator"],
+    "status": "active"
+  },
+  "userSync": {
+    "user_id": "user-sync-1",
+    "organization_id": "org-college-1",
+    "roles": ["college_educator"],
+    "status": "active"
+  },
+  "signupMember": {
+    "user_id": "user-signup-1",
+    "organization_id": "org-college-1",
+    "roles": ["college_educator"],
+    "status": "active"
+  },
+  "bulkImport": {
+    "user_id": "user-bulk-1",
+    "organization_id": "org-college-1",
+    "roles": ["college_educator"],
+    "status": "active"
+  }
+}
