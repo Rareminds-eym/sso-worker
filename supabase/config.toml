@@ -75,7 +75,7 @@ port = 54334
 enabled = false
 
 [auth]
-enabled = true
+enabled = false
 
 # The SSO worker handles its own auth — Supabase auth is disabled
 # (the sso-worker uses the DB directly via service_role)
