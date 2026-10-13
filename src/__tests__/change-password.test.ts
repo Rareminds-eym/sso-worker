@@ -15,6 +15,13 @@ beforeEach(() => {
   mocks.verify.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
 });
 describe('preserve the current session on password change', () => {
+  it('clears the temporary-password flag only with the successful password write and preserves other metadata', async () => {
+    mocks.query.mockResolvedValue([{ password_hash: 'old-hash', user_metadata: { must_change_password: true, portal_mode: 'assigned_trainer' } }]);
+    await change();
+    expect(mocks.update).toHaveBeenCalledWith('users', { id: 'eq.user-1' }, expect.objectContaining({
+      password_hash: 'new-hash', user_metadata: { must_change_password: false, portal_mode: 'assigned_trainer' },
+    }));
+  });
   it('scopes the cookie lookup to the authenticated user and revokes only other families', async () => {
     expect((await change()).success).toBe(true);
     expect(mocks.queryOne).toHaveBeenCalledWith(expect.stringContaining('refresh_token_hash=eq.hashed-cookie-token&user_id=eq.user-1&revoked=eq.false'));

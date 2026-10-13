@@ -38,8 +38,8 @@ export async function performChangePassword(
   const database = db(env);
 
   // Get current user's password hash
-  const users = await database.query<{ password_hash: string }>(
-    `users?id=eq.${encodeURIComponent(params.user_id)}&select=password_hash`,
+  const users = await database.query<{ password_hash: string; user_metadata?: Record<string, unknown> }>(
+    `users?id=eq.${encodeURIComponent(params.user_id)}&select=password_hash,user_metadata`,
   );
 
   if (!users.length) {
@@ -76,7 +76,11 @@ export async function performChangePassword(
   await database.update(
     "users",
     { id: `eq.${encodeURIComponent(params.user_id)}` },
-    { password_hash: newHash, updated_at: new Date().toISOString() },
+    { password_hash: newHash, updated_at: new Date().toISOString(),
+      ...(users[0].user_metadata?.must_change_password === true ? {
+        user_metadata: { ...users[0].user_metadata, must_change_password: false },
+      } : {}),
+    },
   );
 
   // Revoke other devices; retain this browser and any concurrent rotation.

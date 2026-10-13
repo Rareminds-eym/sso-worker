@@ -519,6 +519,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     password: string;
     role: string;
     org_id: string;
+    user_metadata?: Record<string, unknown>;
   }): Promise<{ user_id: string; org_id: string; membership_id: string }> {
     return performCreateMember(this.env, data);
   }
