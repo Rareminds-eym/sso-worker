@@ -75,10 +75,10 @@ port = 54334
 enabled = false
 
 [auth]
+# GoTrue / Supabase Auth is disabled locally: the SSO worker owns authentication and talks to the
+# DB directly via service_role, so `supabase start` / `db reset` start no auth container.
 enabled = false
 
-# The SSO worker handles its own auth — Supabase auth is disabled
-# (the sso-worker uses the DB directly via service_role)
 site_url = "http://127.0.0.1:8787"
 
 additional_redirect_urls = ["http://127.0.0.1:8787/**", "http://localhost:8787/**"]
