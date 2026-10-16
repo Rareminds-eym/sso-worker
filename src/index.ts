@@ -838,9 +838,21 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     if (!userId) throw new Error("user_id is required");
 
     const database = db(this.env);
-    const subscription = await database.queryOne<{ plan_id: string }>(
+    let subscription = await database.queryOne<{ plan_id: string }>(
       `subscriptions?user_id=eq.${encodeURIComponent(userId)}&status=in.(active,pending)&order=created_at.desc`,
     );
+
+    // If no direct user subscription, check active organization subscriptions
+    if (!subscription) {
+      const membership = await database.queryOne<{ org_id: string }>(
+        `memberships?user_id=eq.${encodeURIComponent(userId)}&status=eq.active&order=created_at.desc`,
+      );
+      if (membership?.org_id) {
+        subscription = await database.queryOne<{ plan_id: string }>(
+          `subscriptions?organization_id=eq.${encodeURIComponent(membership.org_id)}&status=in.(active,pending)&order=created_at.desc`,
+        );
+      }
+    }
 
     if (!subscription) {
       return { subscription: null, plan: null };
@@ -2001,7 +2013,9 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const result = await performGetAddonByFeatureKey(this.env, featureKey);
 
     if (result.error) {
-      throw new Error(result.error);
+      const err = new Error(result.error);
+      (err as any).status = result.status || (result.error.toLowerCase().includes("not found") ? 404 : 500);
+      throw err;
     }
 
     return result;
