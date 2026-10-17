@@ -1,6 +1,12 @@
 -- DEV & PROD SEED: Canonical Recruiter Plans v2 (B2B - for recruiters and hiring companies)
 -- 6 tiers: Free -> Lite -> Starter -> Growth -> Pro -> Enterprise
 -- Source of truth for SkillPassport plans_cache sync
+-- v1.1 (2026-10-17, spec #5 "Full Plan Entitlement Matrix"):
+--   - Starter corrected to 75 contact unlocks / 300 candidate invites (was 60/250).
+--   - Added distinct metered credit pools (feature_type 'metered', category 'credits'):
+--     job_boost_credits: Starter 5, Growth 20, Pro 75, Enterprise custom (Free/Lite 0, omitted).
+--     ai_credits: Growth 10, Pro 100, Enterprise custom (Free/Lite/Starter 0, omitted;
+--     Starter gets AI only via the ai_shortlist_role add-on pack).
 -- product_id '912d5049-e195-46e9-a319-49e3502bf7e7' = SkillPassport
 -- Date: 2026-10-16
 
@@ -115,11 +121,12 @@ INSERT INTO public.plans (
   '{"recruitment": {"yearly": 7500, "currency": "INR"}}'::jsonb,
   '[
     "active_job_posts_7",
-    "contact_unlocks_60",
+    "contact_unlocks_75",
     "candidate_search_plus",
     "readiness_score_view",
-    "candidate_invites_250",
-    "shortlist_folder_with_tags"
+    "candidate_invites_300",
+    "shortlist_folder_with_tags",
+    "job_boost_credits_5"
   ]'::jsonb,
   '{
     "recruitment": {
@@ -127,7 +134,7 @@ INSERT INTO public.plans (
       "duration": "yearly",
       "ideal_for": "Small companies hiring a few roles annually",
       "max_users": 1,
-      "description": "7 job posts and 60 candidate unlocks for growing small businesses.",
+      "description": "7 job posts, 75 candidate unlocks, and 5 job boost credits for growing small businesses.",
       "display_name": "Starter",
       "purchase_mode": "self_serve",
       "is_recommended": false,
@@ -136,8 +143,8 @@ INSERT INTO public.plans (
       "capacity": {
         "recruiters": 1,
         "job_postings": 7,
-        "candidate_invites": 250,
-        "contact_unlocks": 60
+        "candidate_invites": 300,
+        "contact_unlocks": 75
       }
     }
   }'::jsonb,
@@ -163,7 +170,9 @@ INSERT INTO public.plans (
     "advanced_skill_filters",
     "ai_candidate_recommendations",
     "role_wise_hiring_reports",
-    "candidate_invites_1000"
+    "candidate_invites_1000",
+    "job_boost_credits_20",
+    "ai_credits_10"
   ]'::jsonb,
   '{
     "recruitment": {
@@ -207,7 +216,9 @@ INSERT INTO public.plans (
     "full_assessment_insights",
     "bulk_shortlist_and_invite",
     "advanced_hiring_analytics",
-    "candidate_invites_2500"
+    "candidate_invites_3000",
+    "job_boost_credits_75",
+    "ai_credits_100"
   ]'::jsonb,
   '{
     "recruitment": {
@@ -223,7 +234,7 @@ INSERT INTO public.plans (
       "capacity": {
         "recruiters": 5,
         "job_postings": 40,
-        "candidate_invites": 2500,
+        "candidate_invites": 3000,
         "contact_unlocks": 500
       }
     }
@@ -249,7 +260,9 @@ INSERT INTO public.plans (
     "campus_talent_access",
     "ats_api_integration",
     "dedicated_campaigns",
-    "dedicated_account_manager"
+    "dedicated_account_manager",
+    "custom_job_boost_credits",
+    "custom_ai_credits"
   ]'::jsonb,
   '{
     "recruitment": {
