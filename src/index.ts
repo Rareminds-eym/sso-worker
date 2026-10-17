@@ -215,12 +215,26 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const endDate = addMonths(now, parseDurationMonths(billingCycle));
 
     const database = db(this.env);
+    const selectedPlan = await database.queryOne<{
+      product_id: string | null; business_type: string; is_active: boolean;
+      entity_config?: Record<string, { max_users?: number } | undefined> | string;
+    }>(`plans?id=eq.${encodeURIComponent(data.plan_id)}`);
+    if (!selectedPlan?.is_active || !['b2b', 'b2c'].includes(selectedPlan.business_type)) {
+      throw new Error('Selected plan is unavailable or its audience is not configured');
+    }
+    if (data.is_bulk_purchase && !data.organization_id) throw new Error('Bulk purchases require an organization');
     let organizationId = data.organization_id || null;
     let organizationType = data.organization_type || null;
     let isOrgSub = data.is_organization_subscription || false;
     let purchasedBy = data.purchased_by || null;
 
-    if (!organizationId && data.user_id) {
+    if (selectedPlan.business_type === 'b2c' && !data.is_bulk_purchase) {
+      organizationId = null;
+      organizationType = null;
+      isOrgSub = false;
+      purchasedBy = null;
+    }
+    if (selectedPlan.business_type === 'b2b' && !organizationId && data.user_id) {
       try {
         const org = await database.queryOne<{ id: string; metadata?: Record<string, unknown> }>(
           `organizations?created_by=eq.${encodeURIComponent(data.user_id)}`,
@@ -233,31 +247,28 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           // override an explicitly provided purchased_by.
           purchasedBy = purchasedBy || data.user_id;
         } else {
-          const member = await database.queryOne<{ organization_id: string }>(
-            `organization_members?user_id=eq.${encodeURIComponent(data.user_id)}`,
+          const member = await database.queryOne<{ org_id: string }>(
+            `memberships?user_id=eq.${encodeURIComponent(data.user_id)}&status=eq.active`,
           );
-          if (member?.organization_id) {
-            organizationId = member.organization_id;
+          if (member?.org_id) {
+            organizationId = member.org_id;
             isOrgSub = true;
           }
         }
       } catch (lookupErr) {
-        console.warn("[sso] Auto organization lookup warning:", lookupErr);
+        throw new Error("Unable to resolve the organization for this subscription", { cause: lookupErr });
       }
     }
 
+    if (selectedPlan.business_type === 'b2b' && !organizationId) throw new Error('Organization plan requires an organization');
+    if (selectedPlan.business_type === 'b2b' || data.is_bulk_purchase) isOrgSub = true;
     let seatCount = data.seat_count || 1;
     let productId: string | null = null;
     if (data.plan_id) {
       try {
-        const planRow = await database.queryOne<{
-          product_id?: string | null;
-          entity_config?: Record<string, { max_users?: number } | undefined> | string;
-        }>(
-          `plans?id=eq.${encodeURIComponent(data.plan_id)}`,
-        );
+        const planRow = selectedPlan;
         productId = planRow?.product_id ?? null;
-        if ((!data.seat_count || data.seat_count === 1) && planRow?.entity_config) {
+        if (!data.is_bulk_purchase && (!data.seat_count || data.seat_count === 1) && planRow?.entity_config) {
           let entityConfig: Record<string, { max_users?: number } | undefined> = {};
           if (typeof planRow.entity_config === 'string') {
             try {
@@ -664,12 +675,15 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     data: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
     if (!subscriptionId) throw new Error("Subscription ID required");
+    if (data.status !== undefined && !['active', 'pending', 'paused', 'cancelled', 'expired', 'grace_period'].includes(String(data.status))) {
+      throw new Error('Invalid subscription status');
+    }
 
     const allowed = new Set([
       "plan_id", "plan_code", "plan_type", "plan_amount", "billing_cycle",
       "features", "razorpay_order_id", "razorpay_payment_id",
       "subscription_start_date", "subscription_end_date", "auto_renew",
-      "receipt_url", "seat_count", "metadata",
+      "receipt_url", "seat_count", "metadata", "status",
     ]);
 
     const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() };
