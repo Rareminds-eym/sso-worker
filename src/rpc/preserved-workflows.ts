@@ -6,6 +6,7 @@ import { checkEmailThrottle } from "../lib/email-throttle";
 import { generateRefreshToken, hashPassword, hashToken } from "../lib/hash";
 import { signAccessToken, verifyAccessToken } from "../lib/jwt";
 import { resolveEffectiveRoles } from "../lib/roles";
+import { normalizeMetadata } from './public-identity-metadata';
 import { publishSyncEvent } from "../lib/sync-queue";
 import { resolveAppUrl, validateEmail, validatePassword } from "../lib/validate";
 import { performForgotPassword, performResetPassword } from "../routes/password-reset";
@@ -128,7 +129,9 @@ async function issueSession(
         user_agent: null, ip_address: null, revoked: false, expires_at: expiresAt,
         family_id: sessionId, family_created_at: new Date(dependencies.now()).toISOString(),
     });
-    return { accessToken, refreshToken, remainingLifetimeSeconds: SESSION_TTL_MS / 1000, identity };
+    // Sign with raw authoritative metadata above, sanitize only the browser DTO.
+    return { accessToken, refreshToken, remainingLifetimeSeconds: SESSION_TTL_MS / 1000,
+        identity: { ...identity, userMetadata: normalizeMetadata(user.user_metadata ?? undefined) } };
 }
 
 interface UserRow {
@@ -240,7 +243,8 @@ async function getIdentity(
             `users?id=eq.${encodeURIComponent(caller.sub)}&select=id,email,is_email_verified,user_metadata,is_blocked`,
         );
         if (!user) throw new WorkflowError("not_found");
-        const data = await loadIdentity(database, user, caller.org_id);
+        const identity = await loadIdentity(database, user, caller.org_id);
+        const data = { ...identity, userMetadata: normalizeMetadata(user.user_metadata ?? undefined) };
         return { kind: "succeeded", correlationId: input.correlationId, data };
     } catch (error) { return workflowFailure(input, error); }
 }

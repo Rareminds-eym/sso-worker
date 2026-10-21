@@ -5,6 +5,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CorrelationId } from "../rpc/contracts";
 import { createPreservedWorkflowAuthority } from "../rpc/preserved-workflows";
+import type { AccessTokenPayload } from '../types';
 import {
     FakeInviteDb, makeCtx, makeDependencies, makeEnv, NOW, ORG_ID, seedInvite,
 } from "./mocks/invite-fake-db";
@@ -42,6 +43,20 @@ function harness(): Harness {
 
 let h: Harness;
 beforeEach(() => { h = harness(); });
+
+it('sanitizes issued browser identity while retaining the authoritative password flag in signed claims',async()=>{
+    const db=new FakeInviteDb();
+    seedInvite(db);
+    db.users.push({id:'existing-trainer',email:'test.educator@example.com',is_email_verified:true,user_metadata:{must_change_password:true,portal_mode:'assigned_trainer'}});
+    const sign=vi.fn(async(_payload:AccessTokenPayload)=> 'access-token');
+    const {env}=makeEnv();const {ctx}=makeCtx();
+    const authority=createPreservedWorkflowAuthority(env,ctx,db,makeDependencies({signAccessToken:sign}));
+    const result=await authority.acceptInvite({correlationId,invitationToken:'invite-token'});
+    expect(result.kind).toBe('issued');
+    expect(sign.mock.calls[0]?.[0].user_metadata?.must_change_password).toBe(true);
+    if(result.kind==='issued')expect(result.session.identity.userMetadata).toEqual({first_login_setup_required:true,portal_mode:'assigned_trainer'});
+    expect(db.users[0].user_metadata?.must_change_password).toBe(true);
+});
 
 describe("acceptInvite: new user (AC1)", () => {
     it("creates a verified user, publishes user.created then membership.created with source", async () => {
