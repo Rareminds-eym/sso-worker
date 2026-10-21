@@ -246,7 +246,7 @@ export async function handleQueueBatch(
 	batch: MessageBatch,
 ): Promise<void> {
 	// Handle DLQ messages — mark affected batches as failed so the frontend sees the error
-	if (batch.queue === "learner-admission-dlq" || batch.queue === "learner-admission-dlq-dev") {
+	if (batch.queue === "learner-admission-dlq" || batch.queue === "learner-admission-dlq-dev" || batch.queue === "learner-admission-dlq-qa") {
 		for (const message of batch.messages) {
 			try {
 				const body = message.body as Record<string, unknown>;
