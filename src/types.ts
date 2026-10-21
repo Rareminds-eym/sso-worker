@@ -330,3 +330,60 @@ export interface SalesSubscription {
   created_at?: string;
   updated_at?: string;
 }
+
+// ─── Career AI credit wallet (decimal amounts cross as strings) ───
+export interface CareerCreditBalance {
+  ok: boolean;
+  error?: string;
+  account_id?: string;
+  product_id?: string;
+  granted_credits?: string;
+  spent_credits?: string;
+  remaining_credits?: string;
+  revision?: number;
+  active_operation_id?: string | null;
+  has_pending_cost?: boolean;
+}
+
+export interface BeginCareerOperationResult {
+  ok: boolean;
+  error?: string;
+  duplicate?: boolean;
+  account_id?: string;
+  operation_record_id?: string;
+  policy_id?: string;
+  execution_id?: string;
+  revision?: number;
+  active_operation_id?: string;
+  spent_credits?: string;
+  granted_credits?: string;
+}
+
+export interface RegisterCareerInvocationResult {
+  ok: boolean;
+  error?: string;
+  usage_id?: string;
+  revision?: number;
+  duplicate?: boolean;
+  state?: string;
+}
+
+export interface SettleCareerInvocationResult {
+  ok: boolean;
+  error?: string;
+  duplicate?: boolean;
+  credits_used?: string;
+  spent_credits?: string;
+  remaining_credits?: string;
+  revision?: number;
+  cost_state?: string;
+  clash_usage_id?: string;
+}
+
+export interface FinishCareerOperationResult {
+  ok: boolean;
+  error?: string;
+  duplicate?: boolean;
+  state?: string;
+  open_invocations?: number;
+}

@@ -40,12 +40,17 @@ import {
 import { performQueueUserSync } from "./routes/user-sync";
 import type {
   AccessTokenPayload,
+  BeginCareerOperationResult,
+  CareerCreditBalance,
   Env,
+  FinishCareerOperationResult,
   JwtClaims,
   Membership,
   MessageBatch,
   Organization,
+  RegisterCareerInvocationResult,
   Session,
+  SettleCareerInvocationResult,
 } from "./types";
 import type {
   ExchangeAuthorizationCodeRequest,
@@ -150,6 +155,78 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     } catch (err: unknown) {
       const errMessage = err instanceof Error ? err.message : String(err);
       console.error(`[SSO] Failed to process webhook events: ${errMessage}`);
+    }
+
+    // Drain Career AI credit balance-sync outbox (durable delivery intent
+    // written transactionally by grant/settle). Direct HTTPS POST mirrors the
+    // payment dispatch above; credit snapshots never travel SYNC_QUEUE (the
+    // consumer router is exhaustive and out of scope for this phase).
+    // Note: this cron runs daily — on-demand canonical refresh via
+    // getCareerCredits (Phase 4 GET /api/career/credits) covers UI freshness.
+    try {
+      const pendingSync = await database.query<Record<string, unknown>>(
+        "ai_credit_sync_outbox?status=in.(pending,failed)&attempts=lt.10&order=created_at.asc&limit=10",
+      );
+      if (pendingSync && pendingSync.length > 0) {
+        if (!this.env.SKILLPASSPORT_URL || !this.env.INTERNAL_WEBHOOK_SECRET) {
+          throw new Error("SKILLPASSPORT URL or INTERNAL_WEBHOOK_SECRET not configured. Cannot dispatch credit sync.");
+        }
+        for (const row of pendingSync) {
+          const outboxId = row.id as string;
+          const attempts = (row.attempts as number | null) ?? 0;
+          if (attempts >= 10) {
+            console.error(`[SSO] Credit sync ${outboxId} exceeded retries, leaving for ops`);
+            continue;
+          }
+          try {
+            const snapshot = await database.queryOne<Record<string, unknown>>(
+              `user_ai_credit_accounts?id=eq.${encodeURIComponent(row.account_id as string)}&select=id,user_id,product_id,scope,granted_credits,spent_credits,revision,updated_at`,
+            );
+            if (!snapshot) throw new Error("Credit account missing for outbox row");
+            // PostgREST table numerics become JS numbers. Obtain monetary
+            // values as decimal TEXT through the canonical balance RPC.
+            const balance = await database.rpc<CareerCreditBalance>("career_credit_balance_json", { p_account_id: row.account_id });
+            if (!balance.ok || typeof balance.granted_credits !== "string" || typeof balance.spent_credits !== "string") {
+              throw new Error("Credit balance projection is unavailable");
+            }
+            snapshot.granted_credits = balance.granted_credits;
+            snapshot.spent_credits = balance.spent_credits;
+            snapshot.revision = balance.revision;
+            const dispatchResponse = await fetchWithTimeout(
+              `${this.env.SKILLPASSPORT_URL}/sync/credit-balance`,
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${this.env.INTERNAL_WEBHOOK_SECRET}`,
+                },
+                body: JSON.stringify({ action: 'balance', data: { account: snapshot } }),
+              },
+              10000,
+            );
+            if (!dispatchResponse.ok) {
+              throw new Error(`Credit sync failed with status ${dispatchResponse.status}: ${await dispatchResponse.text()}`);
+            }
+            const acknowledgement = await dispatchResponse.json() as { success?: boolean };
+            if (acknowledgement.success !== true) throw new Error("Credit sync was not acknowledged");
+            await database.update("ai_credit_sync_outbox", { id: `eq.${encodeURIComponent(outboxId)}` }, {
+              status: "sent",
+              attempts: attempts + 1,
+              revision: snapshot.revision,
+              sent_at: new Date().toISOString(),
+            });
+          } catch (syncErr: unknown) {
+            await database.update("ai_credit_sync_outbox", { id: `eq.${encodeURIComponent(outboxId)}` }, {
+              status: "failed",
+              attempts: attempts + 1,
+            });
+            console.error(`[SSO] Credit sync ${outboxId} failed:`, syncErr instanceof Error ? syncErr.message : String(syncErr));
+          }
+        }
+      }
+    } catch (err: unknown) {
+      const errMessage = err instanceof Error ? err.message : String(err);
+      console.error(`[SSO] Failed to drain credit sync outbox: ${errMessage}`);
     }
   }
 
@@ -939,6 +1016,110 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     );
 
     return { subscriptions: (subscriptions || []) as Record<string, unknown>[] };
+  }
+
+  // ── Career AI credits (30-credit allowance) ─────────────────────────────
+  //
+  // Canonical wallet for the Career AI credit system. Called by ai-worker
+  // over the SSO_SERVICE binding *after* it verifies the Pages execution
+  // assertion — user identity arrives via verified claims, never from the
+  // browser. Amounts cross the boundary as decimal strings (numeric(24,12)
+  // never crosses JSON numbers). Denials are data ({ok:false,error}), not
+  // throws, so the worker can map them to protocol codes; transport failures
+  // throw. Full atomicity lives in the SQL functions (see
+  // supabase/migrations/20261008000001_ai_credit_functions.sql).
+
+  async getCareerCredits(userId: string): Promise<CareerCreditBalance> {
+    if (!userId) throw new Error("userId is required");
+    return db(this.env).rpc<CareerCreditBalance>("get_career_credits", { p_user_id: userId });
+  }
+
+  async beginCareerOperation(input: {
+    userId: string; operationId: string; executionId: string;
+    sessionId: string; action: string; payloadHash: string;
+  }): Promise<BeginCareerOperationResult> {
+    if (!input?.userId || !input.operationId || !input.executionId || !input.sessionId || !input.action || !input.payloadHash) {
+      throw new Error("userId, operationId, executionId, sessionId, action and payloadHash are required");
+    }
+    return db(this.env).rpc<BeginCareerOperationResult>("begin_career_operation", {
+      p_user_id: input.userId,
+      p_operation_id: input.operationId,
+      p_execution_id: input.executionId,
+      p_session_id: input.sessionId,
+      p_action: input.action,
+      p_payload_hash: input.payloadHash,
+    });
+  }
+
+  async registerCareerInvocation(input: {
+    operationRecordId: string; invocationId: string; model: string;
+  }): Promise<RegisterCareerInvocationResult> {
+    if (!input?.operationRecordId || !input.invocationId || !input.model) {
+      throw new Error("operationRecordId, invocationId and model are required");
+    }
+    return db(this.env).rpc<RegisterCareerInvocationResult>("register_career_invocation", {
+      p_operation_record_id: input.operationRecordId,
+      p_invocation_id: input.invocationId,
+      p_model: input.model,
+    });
+  }
+
+  async settleCareerInvocation(input: {
+    invocationId: string; logId: string | null; costUsd: string | null;
+    inputTokens: number | null; outputTokens: number | null;
+    invocationStatus: string; durationMs: number | null; costState?: string;
+  }): Promise<SettleCareerInvocationResult> {
+    if (!input?.invocationId || !input.invocationStatus) {
+      throw new Error("invocationId and invocationStatus are required");
+    }
+    return db(this.env).rpc<SettleCareerInvocationResult>("settle_career_invocation", {
+      p_invocation_id: input.invocationId,
+      p_log_id: input.logId,
+      p_cost_usd: input.costUsd,
+      p_input_tokens: input.inputTokens,
+      p_output_tokens: input.outputTokens,
+      p_invocation_status: input.invocationStatus,
+      p_duration_ms: input.durationMs,
+      p_cost_state: input.costState ?? "resolved",
+    });
+  }
+
+  async finishCareerOperation(input: {
+    operationRecordId: string; state: string;
+  }): Promise<FinishCareerOperationResult> {
+    if (!input?.operationRecordId || !input.state) {
+      throw new Error("operationRecordId and state are required");
+    }
+    return db(this.env).rpc<FinishCareerOperationResult>("finish_career_operation", {
+      p_operation_record_id: input.operationRecordId,
+      p_state: input.state,
+    });
+  }
+
+  async cancelCareerExecution(input: {userId: string; executionId: string}): Promise<FinishCareerOperationResult> {
+    if (!input.userId || !input.executionId) throw new Error("userId and executionId are required");
+    return db(this.env).rpc<FinishCareerOperationResult>("cancel_career_execution", {
+      p_user_id: input.userId, p_execution_id: input.executionId,
+    });
+  }
+
+  /**
+   * Explicit operator waiver for unrecoverable Gateway cost. Ops-only:
+   * reachable solely via the SSO_SERVICE binding (no HTTP route, no browser
+   * surface). Requires operator identity + reason; audited in user_ai_usage
+   * (resolved_by/resolution_reason) and the ledger.
+   */
+  async waiveCareerInvocation(input: {
+    invocationId: string; operator: string; reason: string;
+  }): Promise<{ ok: boolean; cost_state?: string; error?: string }> {
+    if (!input?.invocationId || !input.operator || !input.reason) {
+      throw new Error("invocationId, operator and reason are required");
+    }
+    return db(this.env).rpc("waive_career_invocation", {
+      p_invocation_id: input.invocationId,
+      p_operator: input.operator,
+      p_reason: input.reason,
+    });
   }
 
   // ── Addon / Bundle Purchase Recording ─────────────────────────
