@@ -853,9 +853,21 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     if (!userId) throw new Error("user_id is required");
 
     const database = db(this.env);
-    const subscription = await database.queryOne<{ plan_id: string }>(
+    let subscription = await database.queryOne<{ plan_id: string }>(
       `subscriptions?user_id=eq.${encodeURIComponent(userId)}&status=in.(active,pending)&order=created_at.desc`,
     );
+
+    // If no direct user subscription, check active organization subscriptions
+    if (!subscription) {
+      const membership = await database.queryOne<{ org_id: string }>(
+        `memberships?user_id=eq.${encodeURIComponent(userId)}&status=eq.active&order=created_at.desc`,
+      );
+      if (membership?.org_id) {
+        subscription = await database.queryOne<{ plan_id: string }>(
+          `subscriptions?organization_id=eq.${encodeURIComponent(membership.org_id)}&status=in.(active,pending)&order=created_at.desc`,
+        );
+      }
+    }
 
     if (!subscription) {
       return { subscription: null, plan: null };
@@ -941,6 +953,21 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return { subscriptions: (subscriptions || []) as Record<string, unknown>[] };
   }
 
+  /**
+   * Replay guard helper: return the subscription (if any) already recorded for
+   * a Razorpay payment id. Used by org subscription verification so a replayed
+   * verify call converges on the existing fulfilment instead of creating a
+   * second org subscription + second plan allocation.
+   */
+  async getSubscriptionByPayment(paymentId: string): Promise<Record<string, unknown> | null> {
+    if (!paymentId) throw new Error("paymentId is required");
+    const database = db(this.env);
+    const rows = await database.query<Record<string, unknown>>(
+      `subscriptions?razorpay_payment_id=eq.${encodeURIComponent(paymentId)}&select=*&order=created_at.desc&limit=1`,
+    );
+    return (rows && rows[0]) || null;
+  }
+
   // ── Addon / Bundle Purchase Recording ─────────────────────────
 
   async recordAddonPurchase(data: {
@@ -959,6 +986,18 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
 
     const database = db(this.env);
+
+    // Idempotency: the same Razorpay payment must never produce a second
+    // addon_purchases row (DB-level guard: partial unique index
+    // idx_unique_addon_payment). If the purchase was already recorded,
+    // return the existing row so verify/webhook retries converge on it.
+    if (data.razorpay_payment_id) {
+      const existing = await database.queryOne<Record<string, unknown>>(
+        `addon_purchases?razorpay_payment_id=eq.${encodeURIComponent(data.razorpay_payment_id)}&select=*`,
+      );
+      if (existing) return existing;
+    }
+
     const addon = await database.queryOne<{ product_id?: string | null }>(
       `addon_catalog?feature_key=eq.${encodeURIComponent(data.feature_key)}`,
     );
@@ -972,19 +1011,34 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       ? addMonths(now, 12)
       : addMonths(now, 1);
 
-    const purchase = await database.mutate("addon_purchases", {
-      user_id: data.user_id,
-      product_id: addon?.product_id || null,
-      feature_key: data.feature_key,
-      billing_period: data.billing_period,
-      price_at_purchase: data.price_at_purchase,
-      razorpay_order_id: data.razorpay_order_id || null,
-      razorpay_payment_id: data.razorpay_payment_id || null,
-      razorpay_signature: data.razorpay_signature || null,
-      status: "active",
-      start_date: data.start_date || now.toISOString(),
-      end_date: data.end_date || endDate.toISOString(),
-    });
+    let purchase: unknown;
+    try {
+      purchase = await database.mutate("addon_purchases", {
+        user_id: data.user_id,
+        product_id: addon?.product_id || null,
+        feature_key: data.feature_key,
+        billing_period: data.billing_period,
+        price_at_purchase: data.price_at_purchase,
+        razorpay_order_id: data.razorpay_order_id || null,
+        razorpay_payment_id: data.razorpay_payment_id || null,
+        razorpay_signature: data.razorpay_signature || null,
+        status: "active",
+        start_date: data.start_date || now.toISOString(),
+        end_date: data.end_date || endDate.toISOString(),
+      });
+    } catch (err) {
+      // Lost a concurrent race against idx_unique_addon_payment (23505):
+      // re-read the winning row and return it instead of surfacing the
+      // constraint error to callers.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (data.razorpay_payment_id && /23505|duplicate key/i.test(msg)) {
+        const existing = await database.queryOne<Record<string, unknown>>(
+          `addon_purchases?razorpay_payment_id=eq.${encodeURIComponent(data.razorpay_payment_id)}&select=*`,
+        );
+        if (existing) return existing;
+      }
+      throw err;
+    }
 
     return purchase as Record<string, unknown>;
   }
@@ -2016,7 +2070,9 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const result = await performGetAddonByFeatureKey(this.env, featureKey);
 
     if (result.error) {
-      throw new Error(result.error);
+      const err = new Error(result.error);
+      (err as any).status = result.status || (result.error.toLowerCase().includes("not found") ? 404 : 500);
+      throw err;
     }
 
     return result;

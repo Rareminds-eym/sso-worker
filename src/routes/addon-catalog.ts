@@ -52,6 +52,14 @@ export async function performListAddonCatalog(
 /**
  * Pure business logic for getting addon by feature key (extracted for RPC)
  */
+const FEATURE_TOPUP_MAP: Record<string, string> = {
+  contact_unlocks: 'contact_unlocks_25',
+  job_boosts: 'job_boost_1',
+  job_boost: 'job_boost_1',
+  ai_candidate_recommendations: 'ai_shortlist_role',
+  recruiter_ai: 'ai_shortlist_role',
+};
+
 export async function performGetAddonByFeatureKey(
   env: Env,
   featureKey: string
@@ -61,9 +69,16 @@ export async function performGetAddonByFeatureKey(
   }
 
   const database = db(env);
-  const addon = await database.queryOne(
+  let addon = await database.queryOne(
     `addon_catalog?feature_key=eq.${encodeURIComponent(featureKey)}&is_active=eq.true`,
   );
+
+  if (!addon && FEATURE_TOPUP_MAP[featureKey]) {
+    const mappedKey = FEATURE_TOPUP_MAP[featureKey];
+    addon = await database.queryOne(
+      `addon_catalog?feature_key=eq.${encodeURIComponent(mappedKey)}&is_active=eq.true`,
+    );
+  }
 
   if (!addon) {
     return { error: "Addon not found", status: 404 };
