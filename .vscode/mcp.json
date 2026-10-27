@@ -1,0 +1,12 @@
+{
+  "servers": {
+    "sso-dev-local-supabase": {
+      "type": "http",
+      "url": "http://127.0.0.1:54331/mcp"
+    },
+    "sso-dev-remote-supabase": {
+      "type": "http",
+      "url": "https://mcp.supabase.com/mcp?project_ref=iwnmssuhlifpufttyjbj&features=docs%2Caccount%2Cdatabase%2Cdebugging%2Cdevelopment%2Cfunctions%2Cbranching"
+    }
+  }
+}
