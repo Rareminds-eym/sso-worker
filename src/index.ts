@@ -972,75 +972,148 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
   async recordAddonPurchase(data: {
     user_id: string;
-    feature_key: string;
+    feature_key?: string;
+    price_at_purchase?: number;
+    addon_id?: string;
     billing_period: string;
-    price_at_purchase: number;
-    razorpay_order_id?: string;
-    razorpay_payment_id?: string;
+    amount_minor?: number;
+    currency?: string;
+    razorpay_order_id: string;
+    razorpay_payment_id: string;
     razorpay_signature?: string;
-    start_date?: string;
-    end_date?: string;
+    payment_method?: string;
+    organization_id?: string | null;
+    opportunity_id?: number | null;
+    prepared_purchase_id?: string;
   }): Promise<Record<string, unknown>> {
-    if (!data.user_id || !data.feature_key || !data.billing_period || data.price_at_purchase === undefined) {
-      throw new Error("user_id, feature_key, billing_period, and price_at_purchase are required");
-    }
-
-    const database = db(this.env);
-
-    // Idempotency: the same Razorpay payment must never produce a second
-    // addon_purchases row (DB-level guard: partial unique index
-    // idx_unique_addon_payment). If the purchase was already recorded,
-    // return the existing row so verify/webhook retries converge on it.
-    if (data.razorpay_payment_id) {
-      const existing = await database.queryOne<Record<string, unknown>>(
-        `addon_purchases?razorpay_payment_id=eq.${encodeURIComponent(data.razorpay_payment_id)}&select=*`,
+    let addonId = data.addon_id,
+      amount = data.amount_minor,
+      currency = data.currency;
+    // Preserve the existing internal RPC contract during a staged rollout.
+    // Legacy callers supply the provider-verified major amount; catalog units
+    // determine conversion. New callers send the captured minor amount directly.
+    if (!addonId && data.feature_key) {
+      const addon = await this.getAddonByFeatureKey(data.feature_key);
+      const option = addon.billing_options?.find(
+        (entry: { billing_period: string }) =>
+          entry.billing_period === data.billing_period,
       );
-      if (existing) return existing;
+      if (!option || data.price_at_purchase === undefined)
+        throw new Error('Captured purchase terms are required');
+      addonId = addon.id;
+      amount = Math.round(data.price_at_purchase * 10 ** option.minor_unit);
+      currency = option.currency;
     }
+    if (!addonId || !Number.isSafeInteger(amount) || !currency)
+      throw new Error('Captured purchase terms are required');
+    return db(this.env).rpc('record_addon_capture', {
+      p_user_id: data.user_id,
+      p_addon_id: addonId,
+      p_billing_period: data.billing_period,
+      p_order_id: data.razorpay_order_id,
+      p_payment_id: data.razorpay_payment_id,
+      p_amount_minor: amount,
+      p_currency: currency,
+      p_signature: data.razorpay_signature || null,
+      p_method: data.payment_method || null,
+      p_organization_id: data.organization_id || null,
+      p_opportunity_id: data.opportunity_id ?? null,
+      p_prepared_purchase_id: data.prepared_purchase_id || null,
+    });
+  }
 
-    const addon = await database.queryOne<{ product_id?: string | null }>(
-      `addon_catalog?feature_key=eq.${encodeURIComponent(data.feature_key)}`,
+  async activateAddonPurchase(id: string): Promise<void> {
+    const database = db(this.env);
+    const purchase = await database.queryOne<{
+      status: string;
+      razorpay_payment_id: string;
+    }>(`addon_purchases?id=eq.${encodeURIComponent(id)}`);
+    if (!purchase?.razorpay_payment_id)
+      throw new Error('Captured purchase not found');
+    if (purchase.status === 'pending')
+      await database.update(
+        'addon_purchases',
+        { id: `eq.${id}`, status: 'eq.pending' },
+        { status: 'active', updated_at: new Date().toISOString() },
+      );
+  }
+
+  async getAddonCheckout(id: string): Promise<Record<string, unknown> | null> {
+    return db(this.env).rpc('recorded_addon_contract', { p_purchase_id: id });
+  }
+
+  async prepareAddonCheckout(data: {
+    user_id: string;
+    addon_id: string;
+    billing_period: string;
+    organization_id: string | null;
+    opportunity_id: number | null;
+  }): Promise<Record<string, unknown>> {
+    return db(this.env).rpc('prepare_addon_checkout', {
+      p_user_id: data.user_id,
+      p_addon_id: data.addon_id,
+      p_billing_period: data.billing_period,
+      p_organization_id: data.organization_id,
+      p_opportunity_id: data.opportunity_id,
+    });
+  }
+
+  async bindAddonOrder(id: string, orderId: string): Promise<void> {
+    const database = db(this.env);
+    const existing = await database.queryOne<{
+      razorpay_order_id: string | null;
+      status: string;
+    }>(`addon_purchases?id=eq.${encodeURIComponent(id)}`);
+    if (
+      !existing ||
+      (existing.razorpay_order_id && existing.razorpay_order_id !== orderId)
+    )
+      throw new Error('Checkout order conflict');
+    if (!existing.razorpay_order_id)
+      await database.update(
+        'addon_purchases',
+        { id: `eq.${id}`, razorpay_order_id: 'is.null' },
+        { razorpay_order_id: orderId, updated_at: new Date().toISOString() },
+      );
+  }
+
+  async discardUnopenedAddonCheckout(id: string): Promise<void> {
+    await db(this.env).update(
+      'addon_purchases',
+      {
+        id: `eq.${id}`,
+        razorpay_order_id: 'is.null',
+        razorpay_payment_id: 'is.null',
+        status: 'eq.pending',
+      },
+      { status: 'failed', updated_at: new Date().toISOString() },
     );
+  }
 
-    if (!addon) {
-      throw new Error(`Addon not found for feature_key: ${data.feature_key}`);
-    }
+  async getRecordedAddonPurchase(
+    paymentId: string,
+  ): Promise<Record<string, unknown> | null> {
+    return db(this.env).rpc('recorded_addon_contract', {
+      p_payment_id: paymentId,
+    });
+  }
 
-    const now = new Date();
-    const endDate = data.billing_period === "annual"
-      ? addMonths(now, 12)
-      : addMonths(now, 1);
+  async getActiveAddonPurchase(
+    userId: string,
+    featureKey: string,
+  ): Promise<Record<string, unknown> | null> {
+    return db(this.env).queryOne(
+      `addon_purchases?user_id=eq.${encodeURIComponent(userId)}&feature_key=eq.${encodeURIComponent(featureKey)}&status=in.(active,grace_period,cancelled)&end_date=gt.${encodeURIComponent(new Date().toISOString())}&limit=1`,
+    );
+  }
 
-    let purchase: unknown;
-    try {
-      purchase = await database.mutate("addon_purchases", {
-        user_id: data.user_id,
-        product_id: addon?.product_id || null,
-        feature_key: data.feature_key,
-        billing_period: data.billing_period,
-        price_at_purchase: data.price_at_purchase,
-        razorpay_order_id: data.razorpay_order_id || null,
-        razorpay_payment_id: data.razorpay_payment_id || null,
-        razorpay_signature: data.razorpay_signature || null,
-        status: "active",
-        start_date: data.start_date || now.toISOString(),
-        end_date: data.end_date || endDate.toISOString(),
-      });
-    } catch (err) {
-      // Lost a concurrent race against idx_unique_addon_payment (23505):
-      // re-read the winning row and return it instead of surfacing the
-      // constraint error to callers.
-      const msg = err instanceof Error ? err.message : String(err);
-      if (data.razorpay_payment_id && /23505|duplicate key/i.test(msg)) {
-        const existing = await database.queryOne<Record<string, unknown>>(
-          `addon_purchases?razorpay_payment_id=eq.${encodeURIComponent(data.razorpay_payment_id)}&select=*`,
-        );
-        if (existing) return existing;
-      }
-      throw err;
-    }
-
-    return purchase as Record<string, unknown>;
+  async getPendingAddonPurchase(
+    userId: string,
+    featureKey: string,
+  ): Promise<Record<string, unknown> | null> {
+    return db(this.env).queryOne(
+      `addon_purchases?user_id=eq.${encodeURIComponent(userId)}&feature_key=eq.${encodeURIComponent(featureKey)}&status=eq.pending&order=created_at.asc&limit=1`,
+    );
   }
 
   async recordBundlePurchase(data: {

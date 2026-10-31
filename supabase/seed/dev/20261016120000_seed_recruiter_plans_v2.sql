@@ -12,6 +12,18 @@
 
 BEGIN;
 
+-- Keep legacy IDs available to existing references without colliding with
+-- the v2 plan codes. The subscription migration owns subscription remapping.
+UPDATE public.plans
+SET plan_code = 'legacy_' || plan_code,
+    is_active = false,
+    updated_at = NOW()
+WHERE (id, plan_code) IN (
+  ('b0000000-0000-4000-8000-000000000001'::uuid, 'recruiter_starter'),
+  ('b0000000-0000-4000-8000-000000000002'::uuid, 'recruiter_pro'),
+  ('b0000000-0000-4000-8000-000000000004'::uuid, 'recruiter_enterprise')
+);
+
 INSERT INTO public.plans (
   id,
   plan_code,

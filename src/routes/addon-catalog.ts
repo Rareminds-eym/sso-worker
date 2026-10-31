@@ -8,9 +8,8 @@
  * Service-auth endpoints: recordAddonPurchase, recordBundlePurchase
  */
 
-import type { Env } from "../types";
-import { db } from "../lib/db";
-
+import type { Env } from '../types';
+import { db } from '../lib/db';
 
 // ─── Pure Business Logic (for RPC) ────────────────────────────────
 
@@ -23,49 +22,27 @@ export async function performListAddonCatalog(
     category?: string;
     role?: string;
     product?: string;
-  }
+  },
 ): Promise<{ addons: any[] }> {
   const database = db(env);
 
-  // Build query — Supabase PostgREST filter syntax
-  let query = "addon_catalog?is_active=eq.true&order=display_order.asc";
-
-  if (params?.category) {
-    query += `&category=eq.${encodeURIComponent(params.category)}`;
-  }
-
-  if (params?.role) {
-    // PostgREST array contains operator
-    query += `&target_roles=cs.{${encodeURIComponent(params.role)}}`;
-  }
-
-  if (params?.product) {
-    // Join through product_id — need to resolve product code to id first
-    // For simplicity, use a select with inner join via PostgREST
-    query += `&product_id=eq.${encodeURIComponent(params.product)}`;
-  }
-
-  const addons = await database.query(query);
+  const addons = await database.rpc<any[]>('addon_catalog_payload', {
+    p_category: params?.category || null,
+    p_role: params?.role || null,
+    p_product_id: params?.product || null,
+  });
   return { addons: addons || [] };
 }
 
 /**
  * Pure business logic for getting addon by feature key (extracted for RPC)
  */
-const FEATURE_TOPUP_MAP: Record<string, string> = {
-  contact_unlocks: 'contact_unlocks_25',
-  job_boosts: 'job_boost_1',
-  job_boost: 'job_boost_1',
-  ai_candidate_recommendations: 'ai_shortlist_role',
-  recruiter_ai: 'ai_shortlist_role',
-};
-
 export async function performGetAddonByFeatureKey(
   env: Env,
-  featureKey: string
+  featureKey: string,
 ): Promise<any> {
   if (!featureKey) {
-    return { error: "Feature key required", status: 400 };
+    return { error: 'Feature key required', status: 400 };
   }
 
   const database = db(env);
@@ -73,18 +50,22 @@ export async function performGetAddonByFeatureKey(
     `addon_catalog?feature_key=eq.${encodeURIComponent(featureKey)}&is_active=eq.true`,
   );
 
-  if (!addon && FEATURE_TOPUP_MAP[featureKey]) {
-    const mappedKey = FEATURE_TOPUP_MAP[featureKey];
+  if (!addon)
     addon = await database.queryOne(
-      `addon_catalog?feature_key=eq.${encodeURIComponent(mappedKey)}&is_active=eq.true`,
+      `addon_catalog?target_feature_key=eq.${encodeURIComponent(featureKey)}&is_active=eq.true&order=fulfilment_quantity.asc,display_order.asc&limit=1`,
     );
-  }
 
   if (!addon) {
-    return { error: "Addon not found", status: 404 };
+    return { error: 'Addon not found', status: 404 };
   }
-  
-  return addon;
+
+  const billingOptions = await database.rpc('addon_checkout_options', {
+    p_addon_id: (addon as { id: string }).id,
+  });
+  return {
+    ...(addon as Record<string, unknown>),
+    billing_options: billingOptions || [],
+  };
 }
 
 /**
@@ -94,11 +75,11 @@ export async function performListBundles(
   env: Env,
   params?: {
     role?: string;
-  }
+  },
 ): Promise<{ bundles: any[] }> {
   const database = db(env);
 
-  let query = "bundles?is_active=eq.true&order=display_order.asc";
+  let query = 'bundles?is_active=eq.true&order=display_order.asc';
   if (params?.role) {
     query += `&target_roles=cs.{${encodeURIComponent(params.role)}}`;
   }
@@ -113,9 +94,7 @@ export async function performListBundles(
       );
       return {
         ...bundle,
-        feature_keys: (features || []).map(
-          (f) => f.feature_key,
-        ),
+        feature_keys: (features || []).map((f) => f.feature_key),
       };
     }),
   );
@@ -129,4 +108,3 @@ export async function performListBundles(
 // - listBundles() → env.SSO_SERVICE.listBundles()
 // - recordAddonPurchase() → env.SSO_SERVICE.recordAddonPurchase()
 // - recordBundlePurchase() → env.SSO_SERVICE.recordBundlePurchase()
-
