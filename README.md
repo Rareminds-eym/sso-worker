@@ -337,6 +337,13 @@ wrangler secret put SUPABASE_SERVICE_ROLE_KEY
 npm run deploy                                 # 5. Deploy
 ```
 
+Before deploying the password-reset changes, apply
+`supabase/migrations/20260930000000_complete_password_reset.sql` to the SSO database.
+The worker requires this RPC; it deliberately has no non-atomic fallback.
+The migration is additive and can be applied while the previous worker is running.
+Run `python3 scripts/test-password-reset-db.py` to verify locking, rollback, and
+permissions in a disposable PostgreSQL Docker container (no application database access).
+
 Configure `wrangler.toml`:
 ```toml
 [vars]

@@ -13,6 +13,7 @@ export async function performCreateMember(
 		password: string;
 		role: string;
 		org_id: string;
+		user_metadata?: Record<string, unknown>;
 	},
 ): Promise<{ user_id: string; org_id: string; membership_id: string }> {
 	if (!data.email || !data.password || !data.role || !data.org_id) {
@@ -34,6 +35,7 @@ export async function performCreateMember(
 			p_password_hash: password_hash,
 			p_role: data.role,
 			p_org_id: data.org_id,
+			p_user_metadata: { ...data.user_metadata, role: data.role },
 		});
 	} catch (err: unknown) {
 		const errorMessage = err instanceof Error ? err.message : String(err);
@@ -61,6 +63,7 @@ export async function performCreateMember(
 				id: result.user_id,
 				email,
 				user_metadata: {
+					...data.user_metadata,
 					role: data.role,
 				},
 			},

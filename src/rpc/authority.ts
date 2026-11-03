@@ -4,6 +4,7 @@ import { generateRefreshToken, hashPassword, hashToken } from "../lib/hash";
 import { exportPemAsJwk, getPublicJWK, signAccessToken, verifyAccessToken } from "../lib/jwt";
 import { endpointRateLimit } from "../lib/rate-limit";
 import { resolveEffectiveRoles } from "../lib/roles";
+import { normalizeMetadata } from './public-identity-metadata';
 import { rotateRefreshToken, type RotationOutcome } from "../lib/session-rotation";
 import { performLogin } from "../routes/login";
 import { performOAuthLogin } from "../routes/oauth";
@@ -16,7 +17,6 @@ import type {
     Correlated,
     CurrentLogoutRpcInput,
     CurrentLogoutRpcOutcome,
-    JsonValue,
     LoginRpcInput, OAuthAuthenticateRpcInput, RpcIdentity,
     RpcSession,
     SessionIssueRpcOutcome,
@@ -544,13 +544,6 @@ function isTimeout(error: unknown): boolean {
     return error instanceof DOMException
         ? error.name === "AbortError" || error.name === "TimeoutError"
         : error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
-}
-
-function normalizeMetadata(value: Record<string, unknown> | undefined): Readonly<Record<string, JsonValue>> | undefined {
-    if (!value) return undefined;
-    const normalized = JSON.parse(JSON.stringify(value)) as unknown;
-    if (!isRecord(normalized)) throw new Error("Invalid identity metadata");
-    return normalized as Record<string, JsonValue>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

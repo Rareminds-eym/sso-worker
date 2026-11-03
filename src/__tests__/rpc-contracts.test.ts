@@ -29,6 +29,8 @@ import {
     type RefreshCurrentRpcOutcome,
     type RequestVerificationRpcInput,
     type RequestVerificationRpcOutcome,
+    type ListInvitesRpcInput,
+    type ListInvitesRpcOutcome,
     type ResendInviteRpcInput,
     type ResendInviteRpcOutcome,
     type ResetPasswordRpcInput,
@@ -80,7 +82,10 @@ type ForbiddenTransportKey =
     | "error";
 type ForbiddenFailureKey = "error" | "message" | "stack" | "cause" | "details" | "exception";
 type CallerSuppliedIdentityKey = "subject" | "identity" | "userId" | "email" | "organizationId";
-type TransportLeak = Extract<KeysOfUnion<AllRpcInput>, ForbiddenTransportKey>;
+// Signup and recovery email links accept an allowlisted destination.
+type TransportLeak = {
+    [K in RpcMethod]: Extract<Exclude<KeysOfUnion<RpcInput<K>>, K extends "forgotPassword" | "signup" | "signupMember" ? "redirectUrl" : never>, ForbiddenTransportKey>
+}[RpcMethod];
 type UntypedFailureLeak = Extract<KeysOfUnion<AllRpcOutcome>, ForbiddenFailureKey>;
 type AllLogoutIdentityLeak = Extract<keyof AllLogoutRpcInput, CallerSuppliedIdentityKey>;
 type CurrentLogoutCrossScopeLeak = Extract<
@@ -168,6 +173,7 @@ describe("private SSO RPC contract", () => {
             "acceptInvite",
             "cancelInvite",
             "resendInvite",
+            "listInvites",
             "requestVerification",
             "verifyEmail",
             "forgotPassword",
@@ -216,6 +222,8 @@ describe("private SSO RPC contract", () => {
         expectTypeOf<SsoRpcOutcome<"cancelInvite">>().toEqualTypeOf<CancelInviteRpcOutcome>();
         expectTypeOf<SsoRpcInput<"resendInvite">>().toEqualTypeOf<ResendInviteRpcInput>();
         expectTypeOf<SsoRpcOutcome<"resendInvite">>().toEqualTypeOf<ResendInviteRpcOutcome>();
+        expectTypeOf<SsoRpcInput<"listInvites">>().toEqualTypeOf<ListInvitesRpcInput>();
+        expectTypeOf<SsoRpcOutcome<"listInvites">>().toEqualTypeOf<ListInvitesRpcOutcome>();
         expectTypeOf<SsoRpcInput<"requestVerification">>().toEqualTypeOf<RequestVerificationRpcInput>();
         expectTypeOf<SsoRpcOutcome<"requestVerification">>().toEqualTypeOf<RequestVerificationRpcOutcome>();
         expectTypeOf<SsoRpcInput<"verifyEmail">>().toEqualTypeOf<VerifyEmailRpcInput>();

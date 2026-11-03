@@ -17,6 +17,7 @@ interface MemorySession {
 }
 
 class MemoryAuthorityDb implements DbClient {
+    userMetadata: Record<string, unknown> = {};
     constructor(readonly sessions: MemorySession[]) { }
 
     async query<T>(path: string, options: RequestInit = {}): Promise<T[]> {
@@ -31,7 +32,7 @@ class MemoryAuthorityDb implements DbClient {
     async queryOne<T>(path: string): Promise<T | null> {
         if (path.startsWith("sessions?")) return (this.matchSessions(path)[0] as T | undefined) ?? null;
         if (path.startsWith("users?")) {
-            return { id: "user-1", email: "member@example.test", is_email_verified: true, user_metadata: {} } as T;
+            return { id: "user-1", email: "member@example.test", is_email_verified: true, user_metadata: this.userMetadata } as T;
         }
         return null;
     }
@@ -262,6 +263,30 @@ describe("SSO authority handlers", () => {
         }
     });
 
+    it.each([true, false])("exports a safe first-login policy for setup=%s without leaking credential metadata", async (required) => {
+        const database = new MemoryAuthorityDb([session("issued-session", "issued-refresh")]);
+        database.userMetadata = {
+            must_change_password: required, first_login_setup_required: !required,
+            portal_mode: "assigned_trainer", source: "sp_dashboard_onboarding",
+            password: "credential-canary", nested: { refresh_token: "refresh-canary", department: "Business" },
+        };
+        const authority = createSsoAuthority(environment(), executionContext(), {
+            ...dependencies(database),
+            performLogin: async () => ({ access_token: "issued-access", refresh_token: "issued-refresh",
+                user: { id: "user-1", email: "member@example.test" }, active_org_id: "org-1", organizations: [{ org_id: "org-1" }] }),
+        });
+        const outcome = await authority.login({ correlationId, email: "member@example.test", password: "not-a-real-password" });
+        expect(outcome.kind).toBe("issued");
+        if (outcome.kind === "issued") {
+            expect(outcome.session.identity.userMetadata).toEqual({
+                first_login_setup_required: required, portal_mode: "assigned_trainer",
+                source: "sp_dashboard_onboarding", nested: { department: "Business" },
+            });
+            expect(JSON.stringify(outcome.session.identity)).not.toMatch(/credential-canary|refresh-canary|must_change_password/);
+        }
+        expect(database.userMetadata.must_change_password).toBe(required);
+    });
+
     it("should replace a presented prior session before returning login credentials", async () => {
         const database = new MemoryAuthorityDb([
             session("prior-session", "prior-refresh"),
@@ -324,6 +349,35 @@ describe("SSO authority handlers", () => {
             expect(overlapOutcome.session.identity.subject).toBe("user-1");
         }
         expect(replayOutcome).toEqual({ kind: "rejected", code: "replay_detected", correlationId });
+    });
+
+    it.each([true,false])('returns safe educator metadata on refresh when password setup required=%s',async required=>{
+        const database=new MemoryAuthorityDb([session('session-1','replacement')]);
+        database.userMetadata={role:'educator',portal_mode:'assigned_trainer',must_change_password:required};
+        const authority=createSsoAuthority(environment(),executionContext(),{
+            ...dependencies(database),
+            rotate:async()=>({kind:'rotated',accessToken:'access-token',refreshToken:'replacement',userId:'user-1',orgId:'org-1',familyId:'family-1'}),
+        });
+        const result=await authority.refreshCurrentSession({correlationId,refreshToken:'presented',operation:'refresh_current_session'});
+        expect(result.kind).toBe('rotated');
+        if(result.kind==='rotated'){
+            expect(result.session.identity.userMetadata).toMatchObject({first_login_setup_required:required,portal_mode:'assigned_trainer'});
+            expect(result.session.identity.userMetadata).not.toHaveProperty('must_change_password');
+        }
+        expect(database.userMetadata.must_change_password).toBe(required);
+    });
+
+    it.each([true,false])('returns matching public educator metadata from me when password setup required=%s',async required=>{
+        const database=new MemoryAuthorityDb([]);
+        database.userMetadata={role:'educator',portal_mode:'assigned_trainer',must_change_password:required,nested:{password:'private-value',department:'MBA'}};
+        const authority=createSsoAuthority(environment(),executionContext(),{
+            ...dependencies(database),
+            verifyAccessToken:async()=>({sub:'user-1',org_id:'org-1',email:'member@example.test',roles:['educator']}) as never,
+        });
+        const result=await authority.getIdentity({correlationId,accessToken:'access-token'});
+        expect(result.kind).toBe('succeeded');
+        if(result.kind==='succeeded')expect(result.data.userMetadata).toEqual({role:'educator',portal_mode:'assigned_trainer',first_login_setup_required:required,nested:{department:'MBA'}});
+        expect(database.userMetadata.must_change_password).toBe(required);
     });
 
     it("should exhaustively map authoritative rotation failures", async () => {

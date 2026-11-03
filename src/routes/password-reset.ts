@@ -140,26 +140,15 @@ export async function performResetPassword(
 
   const password_hash = await hashPassword(body.password);
 
-  // Mark token as used
-  await database.update(
-    "password_resets",
-    { id: `eq.${encodeURIComponent(record.id)}` },
-    { used: true },
-  );
-
-  // Update password
-  await database.update(
-    "users",
-    { id: `eq.${encodeURIComponent(record.user_id)}` },
-    { password_hash },
-  );
-
-  // Revoke all sessions (force re-login everywhere)
-  await database.update(
-    "sessions",
-    { user_id: `eq.${encodeURIComponent(record.user_id)}` },
-    { revoked: true },
-  );
+  // The database locks and rechecks the token, then commits all changes together.
+  const result = await database.rpc<{ status: string }>("complete_password_reset", {
+    p_token_hash: tokenHash,
+    p_password_hash: password_hash,
+  });
+  if (result.status === "not_found") return { error: "Invalid reset token", status: 404 };
+  if (result.status === "used") return { error: "Token already used", status: 410 };
+  if (result.status === "expired") return { error: "Token expired", status: 410 };
+  if (result.status !== "reset") throw new Error("Unexpected password reset result");
 
   audit(ctx, env, "password_reset_completed", {
     user_id: record.user_id,

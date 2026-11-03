@@ -215,11 +215,26 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const endDate = addMonths(now, parseDurationMonths(billingCycle));
 
     const database = db(this.env);
+    const selectedPlan = await database.queryOne<{
+      product_id: string | null; business_type: string; is_active: boolean;
+      entity_config?: Record<string, { max_users?: number } | undefined> | string;
+    }>(`plans?id=eq.${encodeURIComponent(data.plan_id)}`);
+    if (!selectedPlan?.is_active || !['b2b', 'b2c'].includes(selectedPlan.business_type)) {
+      throw new Error('Selected plan is unavailable or its audience is not configured');
+    }
+    if (data.is_bulk_purchase && !data.organization_id) throw new Error('Bulk purchases require an organization');
     let organizationId = data.organization_id || null;
     let organizationType = data.organization_type || null;
     let isOrgSub = data.is_organization_subscription || false;
+    let purchasedBy = data.purchased_by || null;
 
-    if (!organizationId && data.user_id) {
+    if (selectedPlan.business_type === 'b2c' && !data.is_bulk_purchase) {
+      organizationId = null;
+      organizationType = null;
+      isOrgSub = false;
+      purchasedBy = null;
+    }
+    if (selectedPlan.business_type === 'b2b' && !organizationId && data.user_id) {
       try {
         const org = await database.queryOne<{ id: string; metadata?: Record<string, unknown> }>(
           `organizations?created_by=eq.${encodeURIComponent(data.user_id)}`,
@@ -228,29 +243,32 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           organizationId = org.id;
           organizationType = (org.metadata?.organization_type as string) || null;
           isOrgSub = true;
+          // The org's creator is the purchaser in this auto-derived case; never
+          // override an explicitly provided purchased_by.
+          purchasedBy = purchasedBy || data.user_id;
         } else {
-          const member = await database.queryOne<{ organization_id: string }>(
-            `organization_members?user_id=eq.${encodeURIComponent(data.user_id)}`,
+          const member = await database.queryOne<{ org_id: string }>(
+            `memberships?user_id=eq.${encodeURIComponent(data.user_id)}&status=eq.active`,
           );
-          if (member?.organization_id) {
-            organizationId = member.organization_id;
+          if (member?.org_id) {
+            organizationId = member.org_id;
             isOrgSub = true;
           }
         }
       } catch (lookupErr) {
-        console.warn("[sso] Auto organization lookup warning:", lookupErr);
+        throw new Error("Unable to resolve the organization for this subscription", { cause: lookupErr });
       }
     }
 
+    if (selectedPlan.business_type === 'b2b' && !organizationId) throw new Error('Organization plan requires an organization');
+    if (selectedPlan.business_type === 'b2b' || data.is_bulk_purchase) isOrgSub = true;
     let seatCount = data.seat_count || 1;
-    if ((!data.seat_count || data.seat_count === 1) && data.plan_id) {
+    let productId: string | null = null;
+    if (data.plan_id) {
       try {
-        const planRow = await database.queryOne<{
-          entity_config?: Record<string, { max_users?: number } | undefined> | string;
-        }>(
-          `plans?id=eq.${encodeURIComponent(data.plan_id)}`,
-        );
-        if (planRow?.entity_config) {
+        const planRow = selectedPlan;
+        productId = planRow?.product_id ?? null;
+        if (!data.is_bulk_purchase && (!data.seat_count || data.seat_count === 1) && planRow?.entity_config) {
           let entityConfig: Record<string, { max_users?: number } | undefined> = {};
           if (typeof planRow.entity_config === 'string') {
             try {
@@ -270,7 +288,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           }
         }
       } catch (planErr) {
-        console.warn("[sso] Failed to resolve seat count from plan:", planErr instanceof Error ? planErr.message : String(planErr));
+        console.warn("[sso] Failed to resolve plan details:", planErr instanceof Error ? planErr.message : String(planErr));
       }
     }
 
@@ -295,7 +313,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       seat_count: seatCount,
       is_organization_subscription: isOrgSub,
       is_bulk_purchase: data.is_bulk_purchase || false,
-      purchased_by: data.purchased_by || null,
+      purchased_by: purchasedBy,
+      product_id: productId,
     });
 
     publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'subscription.created', {
@@ -315,7 +334,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       is_organization_subscription: isOrgSub,
       seat_count: seatCount,
       assigned_seats: 0,
-      product_id: null,
+      product_id: productId,
       updated_at: now.toISOString(),
     });
 
@@ -511,6 +530,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     password: string;
     role: string;
     org_id: string;
+    user_metadata?: Record<string, unknown>;
   }): Promise<{ user_id: string; org_id: string; membership_id: string }> {
     return performCreateMember(this.env, data);
   }
@@ -656,12 +676,15 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     data: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
     if (!subscriptionId) throw new Error("Subscription ID required");
+    if (data.status !== undefined && !['active', 'pending', 'paused', 'cancelled', 'expired', 'grace_period'].includes(String(data.status))) {
+      throw new Error('Invalid subscription status');
+    }
 
     const allowed = new Set([
       "plan_id", "plan_code", "plan_type", "plan_amount", "billing_cycle",
       "features", "razorpay_order_id", "razorpay_payment_id",
       "subscription_start_date", "subscription_end_date", "auto_renew",
-      "receipt_url", "seat_count", "metadata",
+      "receipt_url", "seat_count", "metadata", "status",
     ]);
 
     const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -710,16 +733,46 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const database = db(this.env);
 
     let productId = data.product_id;
-    if (!productId && data.subscription_id) {
-      const subRow = await database.queryOne<{ product_id: string | null; plan_id: string | null }>(
-        `subscriptions?id=eq.${encodeURIComponent(data.subscription_id)}&select=product_id,plan_id`,
-      );
-      productId = subRow?.product_id ?? undefined;
-      if (!productId && subRow?.plan_id) {
-        const plan = await database.queryOne<{ product_id: string | null }>(
-          `plans?id=eq.${encodeURIComponent(subRow.plan_id)}&select=product_id`,
+    let organizationId = data.organization_id;
+    let organizationType = data.organization_type;
+    let isBulkPurchase = data.is_bulk_purchase;
+    let seatCount = data.seat_count;
+
+    if (!productId || !organizationId) {
+      let subRow: {
+        product_id: string | null;
+        plan_id: string | null;
+        organization_id?: string | null;
+        organization_type?: string | null;
+        is_bulk_purchase?: boolean | null;
+        seat_count?: number | null;
+      } | null = null;
+
+      if (data.subscription_id) {
+        subRow = await database.queryOne(
+          `subscriptions?id=eq.${encodeURIComponent(data.subscription_id)}&select=product_id,plan_id,organization_id,organization_type,is_bulk_purchase,seat_count`,
         );
-        productId = plan?.product_id ?? undefined;
+      }
+
+      if (!productId) {
+        productId = subRow?.product_id ?? undefined;
+        if (!productId && subRow?.plan_id) {
+          const plan = await database.queryOne<{ product_id: string | null }>(
+            `plans?id=eq.${encodeURIComponent(subRow.plan_id)}&select=product_id`,
+          );
+          productId = plan?.product_id ?? undefined;
+        }
+      }
+
+      // Fallback: when the caller omits organization_id but the transaction is
+      // linked to a subscription, inherit organization attribution from that
+      // subscription rather than leaving it permanently null. Only activates
+      // when organization_id is absent — an explicit value always wins.
+      if (!organizationId && subRow?.organization_id) {
+        organizationId = subRow.organization_id;
+        organizationType = organizationType ?? subRow.organization_type ?? undefined;
+        isBulkPurchase = isBulkPurchase ?? subRow.is_bulk_purchase ?? undefined;
+        seatCount = seatCount ?? subRow.seat_count ?? undefined;
       }
     }
 
@@ -736,10 +789,10 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       payment_method: data.payment_method || null,
       failure_reason: data.failure_reason || null,
       product_id: productId || null,
-      organization_id: data.organization_id || null,
-      organization_type: data.organization_type || null,
-      seat_count: data.seat_count || 1,
-      is_bulk_purchase: data.is_bulk_purchase || false,
+      organization_id: organizationId || null,
+      organization_type: organizationType || null,
+      seat_count: seatCount || 1,
+      is_bulk_purchase: isBulkPurchase || false,
       receipt: data.receipt || null,
       receipt_url: data.receipt_url || null,
       notes: data.notes || {},
@@ -800,9 +853,21 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     if (!userId) throw new Error("user_id is required");
 
     const database = db(this.env);
-    const subscription = await database.queryOne<{ plan_id: string }>(
+    let subscription = await database.queryOne<{ plan_id: string }>(
       `subscriptions?user_id=eq.${encodeURIComponent(userId)}&status=in.(active,pending)&order=created_at.desc`,
     );
+
+    // If no direct user subscription, check active organization subscriptions
+    if (!subscription) {
+      const membership = await database.queryOne<{ org_id: string }>(
+        `memberships?user_id=eq.${encodeURIComponent(userId)}&status=eq.active&order=created_at.desc`,
+      );
+      if (membership?.org_id) {
+        subscription = await database.queryOne<{ plan_id: string }>(
+          `subscriptions?organization_id=eq.${encodeURIComponent(membership.org_id)}&status=in.(active,pending)&order=created_at.desc`,
+        );
+      }
+    }
 
     if (!subscription) {
       return { subscription: null, plan: null };
@@ -888,52 +953,167 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return { subscriptions: (subscriptions || []) as Record<string, unknown>[] };
   }
 
+  /**
+   * Replay guard helper: return the subscription (if any) already recorded for
+   * a Razorpay payment id. Used by org subscription verification so a replayed
+   * verify call converges on the existing fulfilment instead of creating a
+   * second org subscription + second plan allocation.
+   */
+  async getSubscriptionByPayment(paymentId: string): Promise<Record<string, unknown> | null> {
+    if (!paymentId) throw new Error("paymentId is required");
+    const database = db(this.env);
+    const rows = await database.query<Record<string, unknown>>(
+      `subscriptions?razorpay_payment_id=eq.${encodeURIComponent(paymentId)}&select=*&order=created_at.desc&limit=1`,
+    );
+    return (rows && rows[0]) || null;
+  }
+
   // ── Addon / Bundle Purchase Recording ─────────────────────────
 
   async recordAddonPurchase(data: {
     user_id: string;
-    feature_key: string;
+    feature_key?: string;
+    price_at_purchase?: number;
+    addon_id?: string;
     billing_period: string;
-    price_at_purchase: number;
-    razorpay_order_id?: string;
-    razorpay_payment_id?: string;
+    amount_minor?: number;
+    currency?: string;
+    razorpay_order_id: string;
+    razorpay_payment_id: string;
     razorpay_signature?: string;
-    start_date?: string;
-    end_date?: string;
+    payment_method?: string;
+    organization_id?: string | null;
+    opportunity_id?: number | null;
+    prepared_purchase_id?: string;
   }): Promise<Record<string, unknown>> {
-    if (!data.user_id || !data.feature_key || !data.billing_period || data.price_at_purchase === undefined) {
-      throw new Error("user_id, feature_key, billing_period, and price_at_purchase are required");
+    let addonId = data.addon_id,
+      amount = data.amount_minor,
+      currency = data.currency;
+    // Preserve the existing internal RPC contract during a staged rollout.
+    // Legacy callers supply the provider-verified major amount; catalog units
+    // determine conversion. New callers send the captured minor amount directly.
+    if (!addonId && data.feature_key) {
+      const addon = await this.getAddonByFeatureKey(data.feature_key);
+      const option = addon.billing_options?.find(
+        (entry: { billing_period: string }) =>
+          entry.billing_period === data.billing_period,
+      );
+      if (!option || data.price_at_purchase === undefined)
+        throw new Error('Captured purchase terms are required');
+      addonId = addon.id;
+      amount = Math.round(data.price_at_purchase * 10 ** option.minor_unit);
+      currency = option.currency;
     }
-
-    const database = db(this.env);
-    const addon = await database.queryOne<{ product_id?: string | null }>(
-      `addon_catalog?feature_key=eq.${encodeURIComponent(data.feature_key)}`,
-    );
-
-    if (!addon) {
-      throw new Error(`Addon not found for feature_key: ${data.feature_key}`);
-    }
-
-    const now = new Date();
-    const endDate = data.billing_period === "annual"
-      ? addMonths(now, 12)
-      : addMonths(now, 1);
-
-    const purchase = await database.mutate("addon_purchases", {
-      user_id: data.user_id,
-      product_id: addon?.product_id || null,
-      feature_key: data.feature_key,
-      billing_period: data.billing_period,
-      price_at_purchase: data.price_at_purchase,
-      razorpay_order_id: data.razorpay_order_id || null,
-      razorpay_payment_id: data.razorpay_payment_id || null,
-      razorpay_signature: data.razorpay_signature || null,
-      status: "active",
-      start_date: data.start_date || now.toISOString(),
-      end_date: data.end_date || endDate.toISOString(),
+    if (!addonId || !Number.isSafeInteger(amount) || !currency)
+      throw new Error('Captured purchase terms are required');
+    return db(this.env).rpc('record_addon_capture', {
+      p_user_id: data.user_id,
+      p_addon_id: addonId,
+      p_billing_period: data.billing_period,
+      p_order_id: data.razorpay_order_id,
+      p_payment_id: data.razorpay_payment_id,
+      p_amount_minor: amount,
+      p_currency: currency,
+      p_signature: data.razorpay_signature || null,
+      p_method: data.payment_method || null,
+      p_organization_id: data.organization_id || null,
+      p_opportunity_id: data.opportunity_id ?? null,
+      p_prepared_purchase_id: data.prepared_purchase_id || null,
     });
+  }
 
-    return purchase as Record<string, unknown>;
+  async activateAddonPurchase(id: string): Promise<void> {
+    const database = db(this.env);
+    const purchase = await database.queryOne<{
+      status: string;
+      razorpay_payment_id: string;
+    }>(`addon_purchases?id=eq.${encodeURIComponent(id)}`);
+    if (!purchase?.razorpay_payment_id)
+      throw new Error('Captured purchase not found');
+    if (purchase.status === 'pending')
+      await database.update(
+        'addon_purchases',
+        { id: `eq.${id}`, status: 'eq.pending' },
+        { status: 'active', updated_at: new Date().toISOString() },
+      );
+  }
+
+  async getAddonCheckout(id: string): Promise<Record<string, unknown> | null> {
+    return db(this.env).rpc('recorded_addon_contract', { p_purchase_id: id });
+  }
+
+  async prepareAddonCheckout(data: {
+    user_id: string;
+    addon_id: string;
+    billing_period: string;
+    organization_id: string | null;
+    opportunity_id: number | null;
+  }): Promise<Record<string, unknown>> {
+    return db(this.env).rpc('prepare_addon_checkout', {
+      p_user_id: data.user_id,
+      p_addon_id: data.addon_id,
+      p_billing_period: data.billing_period,
+      p_organization_id: data.organization_id,
+      p_opportunity_id: data.opportunity_id,
+    });
+  }
+
+  async bindAddonOrder(id: string, orderId: string): Promise<void> {
+    const database = db(this.env);
+    const existing = await database.queryOne<{
+      razorpay_order_id: string | null;
+      status: string;
+    }>(`addon_purchases?id=eq.${encodeURIComponent(id)}`);
+    if (
+      !existing ||
+      (existing.razorpay_order_id && existing.razorpay_order_id !== orderId)
+    )
+      throw new Error('Checkout order conflict');
+    if (!existing.razorpay_order_id)
+      await database.update(
+        'addon_purchases',
+        { id: `eq.${id}`, razorpay_order_id: 'is.null' },
+        { razorpay_order_id: orderId, updated_at: new Date().toISOString() },
+      );
+  }
+
+  async discardUnopenedAddonCheckout(id: string): Promise<void> {
+    await db(this.env).update(
+      'addon_purchases',
+      {
+        id: `eq.${id}`,
+        razorpay_order_id: 'is.null',
+        razorpay_payment_id: 'is.null',
+        status: 'eq.pending',
+      },
+      { status: 'failed', updated_at: new Date().toISOString() },
+    );
+  }
+
+  async getRecordedAddonPurchase(
+    paymentId: string,
+  ): Promise<Record<string, unknown> | null> {
+    return db(this.env).rpc('recorded_addon_contract', {
+      p_payment_id: paymentId,
+    });
+  }
+
+  async getActiveAddonPurchase(
+    userId: string,
+    featureKey: string,
+  ): Promise<Record<string, unknown> | null> {
+    return db(this.env).queryOne(
+      `addon_purchases?user_id=eq.${encodeURIComponent(userId)}&feature_key=eq.${encodeURIComponent(featureKey)}&status=in.(active,grace_period,cancelled)&end_date=gt.${encodeURIComponent(new Date().toISOString())}&limit=1`,
+    );
+  }
+
+  async getPendingAddonPurchase(
+    userId: string,
+    featureKey: string,
+  ): Promise<Record<string, unknown> | null> {
+    return db(this.env).queryOne(
+      `addon_purchases?user_id=eq.${encodeURIComponent(userId)}&feature_key=eq.${encodeURIComponent(featureKey)}&status=eq.pending&order=created_at.asc&limit=1`,
+    );
   }
 
   async recordBundlePurchase(data: {
@@ -987,7 +1167,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   // ── Membership Sync ─────────────────────────────────────────
 
   async getUserMemberships(userId: string): Promise<{
-    memberships: { id: string; org_id: string; role: string; status: string }[];
+    memberships: { id: string; org_id: string; role: string; roles: string[]; status: string }[];
   }> {
     if (!userId) throw new Error("userId is required");
     const database = db(this.env);
@@ -1007,6 +1187,9 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
           org_id: r.org_id,
           status: r.status,
           role: mrole?.name || "member",
+          roles: [...new Set((r.membership_roles ?? []).flatMap(
+            (entry) => entry.roles?.name ? [entry.roles.name] : [],
+          ))],
         };
       }),
     };
@@ -1233,6 +1416,10 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return createSsoAuthority(this.env, this.ctx).resendInvite(input);
   }
 
+  async listInvites(input: Parameters<SsoServiceBinding["listInvites"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["listInvites"]>>> {
+    return createSsoAuthority(this.env, this.ctx).listInvites(input);
+  }
+
   async requestVerification(input: Parameters<SsoServiceBinding["requestVerification"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["requestVerification"]>>> {
     return createSsoAuthority(this.env, this.ctx).requestVerification(input);
   }
@@ -1290,6 +1477,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
    */
   async changePassword(params: {
     access_token: string;
+    current_refresh_token?: string;
     current_password: string;
     new_password: string;
     org_id?: string;
@@ -1315,6 +1503,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
       this.ctx,
       {
         user_id: payload.sub,
+        current_refresh_token: params.current_refresh_token,
         current_password: params.current_password,
         new_password: params.new_password,
         org_id: params.org_id,
@@ -1954,7 +2143,9 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     const result = await performGetAddonByFeatureKey(this.env, featureKey);
 
     if (result.error) {
-      throw new Error(result.error);
+      const err = new Error(result.error);
+      (err as any).status = result.status || (result.error.toLowerCase().includes("not found") ? 404 : 500);
+      throw err;
     }
 
     return result;

@@ -1,0 +1,29 @@
+# SSO Worker database review rules
+
+rules:
+  - category: database
+    title: "Preserve migration history and enforce SQL filenames"
+    severity: critical
+    description: |
+      Run npm run lint:database locally and in the Validate Database Rules step in ci.yml.
+      PR checks use the merge base with the target branch; push checks use the previous commit.
+      Local checks default to origin/dev. Never edit, delete or rename baseline migrations.
+      Migrations introduced within the same PR may still be edited.
+      New migrations use YYYYMMDDHHMMSS_description.sql and sort after baseline migrations.
+      New dev/production seeds use YYYYMMDDHHMMSS_seed_description.sql.
+      Require real dates, lowercase snake_case names and unique timestamps per sequence.
+      Dev and production seed directories may share timestamps. Grandfather existing legacy
+      filenames without changing migration history. Archived seeds are excluded.
+
+  - category: database
+    title: "Keep new migrations schema-only and data changes in seeds"
+    severity: critical
+    description: |
+      Place INSERT, UPDATE, DELETE, MERGE, TRUNCATE, COPY FROM and other direct data changes
+      in dev/production seeds, not new migrations. Reject data changes in executed DO blocks
+      and dynamic EXECUTE/PERFORM calls in those blocks. Runtime function, procedure, trigger
+      and rule definitions may contain data manipulation because they define application behavior.
+      Existing baseline migrations remain unchanged. Review indirect function side effects manually.
+      The validator does not execute SQL, start Docker or require database credentials.
+      Encoding, empty-file, conflict-marker and configured-path safety checks are out of scope.
+
