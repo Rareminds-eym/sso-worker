@@ -54,7 +54,6 @@ INSERT INTO "public"."users" ("id", "email", "password_hash", "is_email_verified
 ('4ac64293-46c6-4dcc-86b3-19371388abc6', 'varshajaishankar06@gmail.com', '$2a$12$5KnQCfP6VqMlQ6aF9RaKS.0SfJqEPyfHAcKISSRYCX7bLgWC/qDC.', 'true', '2026-08-29 07:55:59.826969+00', '2026-08-29 08:09:37.137481+00', null, 'false', '{"role": "learner", "lastName": "", "firstName": "Varsha.J", "contact_number": "9187322030"}'),
 ('4ce5ccd1-3e80-42f7-ad72-b9691f1bc84b', 'tejuteja082@gmail.com', '$2a$12$5KnQCfP6VqMlQ6aF9RaKS.0SfJqEPyfHAcKISSRYCX7bLgWC/qDC.', 'true', '2026-08-29 07:55:59.826969+00', '2026-08-29 08:09:37.137481+00', null, 'false', '{"role": "learner", "lastName": "Babu K P", "firstName": "Teja", "contact_number": "6282652872"}'),
 ('d6dd270c-9d52-4fb1-a74b-7a78474daf50', 'nageshwari1922@gmail.com', '$2a$12$5KnQCfP6VqMlQ6aF9RaKS.0SfJqEPyfHAcKISSRYCX7bLgWC/qDC.', 'true', '2026-08-29 07:55:59.826969+00', '2026-08-29 08:09:37.137481+00', null, 'false', '{"role": "learner", "lastName": "k", "firstName": "Nageshwari", "contact_number": "9380465144"}'),
-('69b35ea7-3c06-488f-b360-32bc2c60e729', 'abhisheknd267@gmail.com', '$2a$12$5KnQCfP6VqMlQ6aF9RaKS.0SfJqEPyfHAcKISSRYCX7bLgWC/qDC.', 'true', '2026-08-29 07:55:59.826969+00', '2026-08-29 08:09:37.137481+00', null, 'false', '{"role": "learner", "lastName": "nd", "firstName": "Abhishek", "contact_number": "7892915864"}'),
 ('11a57fb7-5da6-48af-a271-b42b95650590', 'abhikdabhi@gmail.com', '$2a$12$5KnQCfP6VqMlQ6aF9RaKS.0SfJqEPyfHAcKISSRYCX7bLgWC/qDC.', 'true', '2026-08-29 07:55:59.826969+00', '2026-08-29 08:09:37.137481+00', null, 'false', '{"role": "learner", "lastName": "K D", "firstName": "Abhishek", "contact_number": "9880216675"}'),
 ('2e58e766-7c65-44c4-acd7-759830a1e004', 'priyankaammu663@gmail.com', '$2a$12$5KnQCfP6VqMlQ6aF9RaKS.0SfJqEPyfHAcKISSRYCX7bLgWC/qDC.', 'true', '2026-08-29 07:55:59.826969+00', '2026-08-29 08:09:37.137481+00', null, 'false', '{"role": "learner", "lastName": "SY", "firstName": "Priyanka", "contact_number": "6363900653"}'),
 ('7f9a198d-84b8-48d7-9625-0d6cc5da3cc4', 'hcmanoj47@gmail.com', '$2a$12$5KnQCfP6VqMlQ6aF9RaKS.0SfJqEPyfHAcKISSRYCX7bLgWC/qDC.', 'true', '2026-08-29 07:55:59.826969+00', '2026-08-29 08:09:37.137481+00', null, 'false', '{"role": "learner", "lastName": "HC", "firstName": "Manoj", "contact_number": "8073992906"}'),
@@ -145,7 +144,6 @@ INSERT INTO "public"."memberships" ("id", "user_id", "org_id", "created_at", "st
 ('9de3afa5-795b-45d6-993b-c7091639dc2c', '4ac64293-46c6-4dcc-86b3-19371388abc6', '284c9ed9-cd13-584d-b5bc-e198866b917b', '2026-08-29 07:55:59.826969+00', 'active'),
 ('29e46dc3-46ce-4b56-8cf5-da07460bf1db', '4ce5ccd1-3e80-42f7-ad72-b9691f1bc84b', '284c9ed9-cd13-584d-b5bc-e198866b917b', '2026-08-29 07:55:59.826969+00', 'active'),
 ('331247bc-d75c-4c52-8554-3d61adfcb8c2', 'd6dd270c-9d52-4fb1-a74b-7a78474daf50', '284c9ed9-cd13-584d-b5bc-e198866b917b', '2026-08-29 07:55:59.826969+00', 'active'),
-('3feb19a0-eeae-4273-8341-7dd2d5133974', '69b35ea7-3c06-488f-b360-32bc2c60e729', '284c9ed9-cd13-584d-b5bc-e198866b917b', '2026-08-29 07:55:59.826969+00', 'active'),
 ('47017ecc-b731-42e4-acb4-7674dacff681', '11a57fb7-5da6-48af-a271-b42b95650590', '284c9ed9-cd13-584d-b5bc-e198866b917b', '2026-08-29 07:55:59.826969+00', 'active'),
 ('0a017079-e26c-412c-a3bf-44414ff09197', 'f37a38ff-ee5f-4836-93e6-6fdc10116ad8', '284c9ed9-cd13-584d-b5bc-e198866b917b', '2026-08-29 07:55:59.826969+00', 'active'),
 ('37bbb092-c4c7-4a0c-87d2-9826605c2af7', '69cbb8d6-49f3-4609-8e93-73e3b012635d', '284c9ed9-cd13-584d-b5bc-e198866b917b', '2026-08-29 07:55:59.826969+00', 'active'),
@@ -193,8 +191,8 @@ INSERT INTO "public"."memberships" ("id", "user_id", "org_id", "created_at", "st
 ('56ccd89a-f00d-551a-b738-98e07f9123f0', 'ce171a34-29de-5215-945e-95a5071f647b', '284c9ed9-cd13-584d-b5bc-e198866b917b', '2026-08-29 07:55:59.826969+00', 'active'),
 ('88c9a5ac-ace2-5a7f-9e91-f1b32f513c9c', '6a7e0f67-6d05-55c1-ab6f-6e64815dc22d', '284c9ed9-cd13-584d-b5bc-e198866b917b', '2026-08-29 07:55:59.826969+00', 'active'),
 ('c25af27c-dd80-5aa9-9453-6fb5b9d733dd', '7eeb6170-c7b9-55d8-8d77-7a38e514efb2', '284c9ed9-cd13-584d-b5bc-e198866b917b', '2026-08-29 07:55:59.826969+00', 'active')
-ON CONFLICT ("id") DO UPDATE SET
-  "status" = EXCLUDED."status";
+ON CONFLICT ("user_id", "org_id") DO UPDATE SET
+  "status" = 'active';
 
 -- 6. Seed membership_roles (assigning learner and college_admin roles)
 INSERT INTO "public"."membership_roles" ("id", "membership_id", "role_id", "created_at") VALUES 
@@ -222,7 +220,6 @@ INSERT INTO "public"."membership_roles" ("id", "membership_id", "role_id", "crea
 ('255d03a7-81bd-4364-af57-655abe9a4ce5', '9de3afa5-795b-45d6-993b-c7091639dc2c', '8d018d55-46f4-4e67-b6a5-8c216737a374', '2026-08-29 07:55:59.826969+00'),
 ('dee4e284-e69f-4785-a9a2-9e7947f2b097', '29e46dc3-46ce-4b56-8cf5-da07460bf1db', '8d018d55-46f4-4e67-b6a5-8c216737a374', '2026-08-29 07:55:59.826969+00'),
 ('03bcc543-8c0f-43c9-8027-bbf7cd4705f8', '331247bc-d75c-4c52-8554-3d61adfcb8c2', '8d018d55-46f4-4e67-b6a5-8c216737a374', '2026-08-29 07:55:59.826969+00'),
-('65f0c18e-4e97-4741-ad83-56c8c5409354', '3feb19a0-eeae-4273-8341-7dd2d5133974', '8d018d55-46f4-4e67-b6a5-8c216737a374', '2026-08-29 07:55:59.826969+00'),
 ('70d40e1f-43c4-4cbf-acb6-a5f0f14de79f', '47017ecc-b731-42e4-acb4-7674dacff681', '8d018d55-46f4-4e67-b6a5-8c216737a374', '2026-08-29 07:55:59.826969+00'),
 ('467cc108-77a3-49c1-ae55-fff010aeaccc', '0a017079-e26c-412c-a3bf-44414ff09197', '8d018d55-46f4-4e67-b6a5-8c216737a374', '2026-08-29 07:55:59.826969+00'),
 ('bdc06591-aab0-43a7-a7e3-65a462cde125', '37bbb092-c4c7-4a0c-87d2-9826605c2af7', '8d018d55-46f4-4e67-b6a5-8c216737a374', '2026-08-29 07:55:59.826969+00'),

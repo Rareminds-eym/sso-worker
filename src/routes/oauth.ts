@@ -120,6 +120,7 @@ export async function performOAuthLogin(
     const user_metadata: Record<string, unknown> = {
       role: "learner",
       auth_provider: "google",
+      subscription_selection_required: true,
       ...(body.picture ? { avatar_url: body.picture } : {}),
       ...(firstName ? { firstName } : {}),
       ...(lastName ? { lastName } : {}),

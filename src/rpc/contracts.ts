@@ -231,6 +231,8 @@ export interface CreateInviteRpcInput extends AuthorizedRpcInput {
     readonly email: string;
     readonly organizationId: string;
     readonly roles: readonly string[];
+    /** When exactly `true`, the result carries `emailStatus`. Omitted by older callers. */
+    readonly includeEmailStatus?: boolean;
 }
 
 export interface AcceptInviteRpcInput extends Correlated {
@@ -245,6 +247,12 @@ export interface CancelInviteRpcInput extends AuthorizedRpcInput {
 
 export interface ResendInviteRpcInput extends AuthorizedRpcInput {
     readonly inviteId: string;
+    /** When exactly `true`, the result carries `emailStatus`. Omitted by older callers. */
+    readonly includeEmailStatus?: boolean;
+}
+
+export interface ListInvitesRpcInput extends AuthorizedRpcInput {
+    readonly organizationId: string;
 }
 
 export interface RequestVerificationRpcInput extends AuthorizedRpcInput { }
@@ -256,6 +264,8 @@ export interface VerifyEmailRpcInput extends Correlated {
 
 export interface ForgotPasswordRpcInput extends Correlated {
     readonly email: string;
+    /** Validated against ALLOWED_APP_URLS before generating recovery links. */
+    readonly redirectUrl?: string;
 }
 
 export interface ResetPasswordRpcInput extends Correlated {
@@ -269,6 +279,7 @@ export interface InviteCreatedData {
     readonly inviteId: string;
     readonly email: string;
     readonly expiresAt: string;
+    readonly emailStatus?: "sent" | "failed";
 }
 
 export interface InviteAcceptedData {
@@ -285,6 +296,22 @@ export interface InviteResentData {
     readonly inviteId: string;
     readonly email: string;
     readonly expiresAt: string;
+    readonly emailStatus?: "sent" | "failed";
+}
+
+export interface PendingInviteData {
+    readonly inviteId: string;
+    readonly email: string;
+    readonly roles: readonly string[];
+    /** Sent date. */
+    readonly createdAt: string | null;
+    readonly expiresAt: string | null;
+    readonly status: "pending" | "expired";
+}
+
+export interface InviteListData {
+    readonly invites: readonly PendingInviteData[];
+    readonly truncated: boolean;
 }
 
 export interface VerificationRequestedData {
@@ -316,6 +343,7 @@ export type AcceptInviteRpcOutcome =
     | RpcTransientOutcome;
 export type CancelInviteRpcOutcome = WorkflowRpcOutcome<InviteCancelledData>;
 export type ResendInviteRpcOutcome = WorkflowRpcOutcome<InviteResentData>;
+export type ListInvitesRpcOutcome = WorkflowRpcOutcome<InviteListData>;
 export type RequestVerificationRpcOutcome = WorkflowRpcOutcome<VerificationRequestedData>;
 export type VerifyEmailRpcOutcome = WorkflowOrRotatedSessionRpcOutcome<EmailVerifiedData>;
 export type ForgotPasswordRpcOutcome = WorkflowRpcOutcome<PasswordRecoveryRequestedData>;
@@ -354,6 +382,7 @@ export interface SsoServiceBinding {
     acceptInvite(input: AcceptInviteRpcInput): Promise<AcceptInviteRpcOutcome>;
     cancelInvite(input: CancelInviteRpcInput): Promise<CancelInviteRpcOutcome>;
     resendInvite(input: ResendInviteRpcInput): Promise<ResendInviteRpcOutcome>;
+    listInvites(input: ListInvitesRpcInput): Promise<ListInvitesRpcOutcome>;
     requestVerification(input: RequestVerificationRpcInput): Promise<RequestVerificationRpcOutcome>;
     verifyEmail(input: VerifyEmailRpcInput): Promise<VerifyEmailRpcOutcome>;
     forgotPassword(input: ForgotPasswordRpcInput): Promise<ForgotPasswordRpcOutcome>;
@@ -380,6 +409,7 @@ export const SSO_RPC_METHODS = [
     "acceptInvite",
     "cancelInvite",
     "resendInvite",
+    "listInvites",
     "requestVerification",
     "verifyEmail",
     "forgotPassword",
