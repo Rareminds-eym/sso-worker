@@ -21,6 +21,8 @@ head_sampling_rate = 0.01
 crons = ["0 3 * * *"]
 
 [vars]
+ZOHO_CANDIDATE_PROVISIONING_ENABLED = "false"
+ZOHO_PROJECTION_DELIVERY_ENABLED = "false"
 ENVIRONMENT = "development"
 JWKS_FRESHNESS_SECONDS = "300"
 SUPABASE_URL = "https://quvdgaydpctuspzeqknc.supabase.co"
@@ -87,6 +89,8 @@ queue = "learner-admission-dlq"
 name = "sso-api-dev"
 
 [env.dev.vars]
+ZOHO_CANDIDATE_PROVISIONING_ENABLED = "false"
+ZOHO_PROJECTION_DELIVERY_ENABLED = "false"
 ENVIRONMENT = "development"
 JWKS_FRESHNESS_SECONDS = "300"
 SUPABASE_URL = "https://iwnmssuhlifpufttyjbj.supabase.co"
@@ -149,6 +153,8 @@ name = "sso-api-qa"
 account_id = "d10c2b1a3d702c710a036bc5a6d0902e"
 
 [env.qa.vars]
+ZOHO_CANDIDATE_PROVISIONING_ENABLED = "false"
+ZOHO_PROJECTION_DELIVERY_ENABLED = "false"
 ENVIRONMENT = "qa"
 JWKS_FRESHNESS_SECONDS = "300"
 # QA intentionally shares the existing dev SSO database.
@@ -211,9 +217,27 @@ dead_letter_queue = "learner-admission-dlq-qa"
 queue = "learner-admission-dlq-qa"
 
 [env.production.vars]
+ZOHO_CANDIDATE_PROVISIONING_ENABLED = "false"
+ZOHO_PROJECTION_DELIVERY_ENABLED = "false"
 ENVIRONMENT = "production"
 JWKS_FRESHNESS_SECONDS = "300"
 SUPABASE_URL = "https://quvdgaydpctuspzeqknc.supabase.co"
 SKILLPASSPORT_URL = "https://skillpassport.rareminds.in"
 ALLOWED_ORIGINS = "http://localhost:3000,https://*.rareminds.in,https://*.pages.dev"
 ALLOWED_APP_URLS = "https://skillpassport.rareminds.in,https://*.rareminds.in,https://*.pages.dev,http://localhost:3000,http://localhost:8788"
+
+# Read-only execution validation on the existing dashboard deployments. No new Worker.
+[[services]]
+binding = "ZOHO_CONTROL_PLANE"
+service = "sp-dash-2"
+entrypoint = "ZohoExecutionAuthority"
+
+[[env.dev.services]]
+binding = "ZOHO_CONTROL_PLANE"
+service = "sp-dash-2"
+entrypoint = "ZohoExecutionAuthority"
+
+[[env.qa.services]]
+binding = "ZOHO_CONTROL_PLANE"
+service = "sp-dash-2-qa"
+entrypoint = "ZohoExecutionAuthority"

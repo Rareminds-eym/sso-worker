@@ -88,6 +88,13 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     console.log(`[SSO] Cleaned up ${deletedSessions} expired session rows`);
 
     try {
+      await database.rpc<number>('zoho_cleanup_candidate_reviews');
+    } catch {
+      // Older deployments stay operational during an ordered schema rollout.
+      console.error('[SSO] Candidate review cleanup unavailable');
+    }
+
+    try {
       const result = await database.rpc<{ count: number }[]>("expire_old_subscriptions");
       const expired = Array.isArray(result) ? result[0]?.count ?? 0 : 0;
       if (expired > 0) console.log(`[SSO] Expired ${expired} subscription(s)`);
@@ -2298,3 +2305,6 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 }
 
 export default SsoWorker;
+export { ZohoApproverAuthority } from "./rpc/zoho-approver-authority";
+
+export { ZohoCandidateProvisioner } from "./rpc/zoho-candidate-provisioner";

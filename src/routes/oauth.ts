@@ -1,3 +1,5 @@
+import { recoverCandidateDeliveries } from '../lib/zoho-candidate-delivery';
+import { isImportedCandidate } from '../lib/zoho-candidate-sync-policy';
 import { audit } from "../lib/audit";
 import { SESSION_TTL_MS, PLATFORM_ORG_ID } from "../lib/constants";
 import { db } from "../lib/db";
@@ -86,7 +88,8 @@ export async function performOAuthLogin(
       }
       // Provider proved control of this address — clear the verification gate
       // so the user isn't stranded by App.tsx's verified-email requirement.
-      const needsVerification = !existing.is_email_verified;
+      const importedActivation = existing.user_metadata?.activation_pending === true;
+      const needsVerification = !existing.is_email_verified && !importedActivation;
       await Promise.all([
         insertOAuthLink(database, existing.id, providerUserId),
         needsVerification
@@ -97,7 +100,7 @@ export async function performOAuthLogin(
             )
           : Promise.resolve(),
       ]);
-      existing.is_email_verified = true;
+      if (!importedActivation) existing.is_email_verified = true;
       user = existing;
     }
   }
@@ -200,6 +203,19 @@ export async function performOAuthLogin(
   if (user.is_blocked) {
     return { error: "Account is blocked", status: 403 };
   }
+  // Imported accounts stay private and unverified until this provider proves
+  // ownership. Recheck the actual Google link and address in one transaction;
+  // clear only activation state, preserving profile preferences and entitlements.
+  const importedActivation = user.user_metadata?.activation_pending === true;
+  if (importedActivation) {
+    const activated = await database.rpc<{ activated: boolean; userMetadata: Record<string, unknown> }>(
+      'zoho_activate_candidate_oauth', { p_user: user.id, p_provider_subject: providerUserId, p_email: email },
+    );
+    if (activated?.activated !== true || !activated.userMetadata || typeof activated.userMetadata !== 'object' || Array.isArray(activated.userMetadata))
+      return { error: 'Candidate activation unavailable', status: 503 };
+    user.is_email_verified = true;
+    user.user_metadata = activated.userMetadata;
+  }
   // Closure-stable reference: TS narrowing doesn't survive into async callbacks.
   const authenticatedUser = user;
 
@@ -275,6 +291,10 @@ export async function performOAuthLogin(
   ctx.waitUntil(
     (async () => {
       try {
+        // During first imported sign-in the approved canonical outbox remains
+        // the projection authority; generic create events must not reconstruct
+        // a partial imported profile if delivery is still catching up.
+        if (importedActivation || await isImportedCandidate(env, authenticatedUser.id)) { await recoverCandidateDeliveries(env); return; }
         if (!env?.RATE_LIMIT_KV) return;
         const cacheKey = `login:user-synced:${authenticatedUser.id}`;
         const cached = await env.RATE_LIMIT_KV.get(cacheKey);

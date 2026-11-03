@@ -11,7 +11,9 @@
     "generate-keys": "node scripts/generate-keys.mjs",
     "test": "vitest",
     "lint:database": "node scripts/checks/validate-database.mjs",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "test:zoho:sql": "node scripts/checks/test-zoho-approver-sql.mjs",
+    "test:zoho:candidate:sql": "node scripts/checks/test-zoho-candidate-sql.mjs"
   },
   "dependencies": {
     "bcryptjs": "2.4.3",
