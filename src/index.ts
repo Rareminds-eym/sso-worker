@@ -1436,6 +1436,43 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return createSsoAuthority(this.env, this.ctx).resetPassword(input);
   }
 
+  async revokeAllSessionsForUser(input: Parameters<SsoServiceBinding["revokeAllSessionsForUser"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["revokeAllSessionsForUser"]>>> {
+    const { correlationId, targetUserId } = input;
+    const database = db(this.env);
+
+    try {
+      const activeSessions = await database.query<{ id: string }>(
+        `sessions?user_id=eq.${encodeURIComponent(targetUserId)}&revoked=eq.false&select=id`
+      );
+      const count = activeSessions?.length || 0;
+
+      if (count > 0) {
+        await database.update(
+          "sessions",
+          { user_id: `eq.${encodeURIComponent(targetUserId)}`, revoked: `eq.false` },
+          { revoked: true, last_used_at: new Date().toISOString() }
+        );
+      }
+
+      console.log(`[SSO] Revoked ${count} active sessions for user ${targetUserId}`);
+
+      return {
+        correlationId,
+        outcome: "succeeded",
+        kind: "succeeded",
+        data: { sessionsRevoked: count }
+      };
+    } catch (error) {
+      console.error(`[SSO] Failed to revoke sessions for user ${targetUserId}:`, error);
+      return {
+        correlationId,
+        outcome: "rejected",
+        kind: "rejected",
+        code: "invalid_request"
+      };
+    }
+  }
+
   async getIdentity(input: Parameters<SsoServiceBinding["getIdentity"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["getIdentity"]>>> {
     return createSsoAuthority(this.env, this.ctx).getIdentity(input);
   }

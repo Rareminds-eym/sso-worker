@@ -275,6 +275,10 @@ export interface ResetPasswordRpcInput extends Correlated {
     readonly currentRefreshToken?: string;
 }
 
+export interface RevokeAllSessionsRpcInput extends Correlated {
+    readonly targetUserId: string;
+}
+
 export interface InviteCreatedData {
     readonly inviteId: string;
     readonly email: string;
@@ -330,6 +334,11 @@ export interface PasswordRecoveryRequestedData {
 export interface PasswordResetData {
     readonly reset: true;
 }
+
+export interface SessionsRevokedData {
+    readonly sessionsRevoked: number;
+}
+
 export type OrganizationListRpcOutcome = WorkflowRpcOutcome<OrganizationListData>;
 export type CreateInviteRpcOutcome = WorkflowRpcOutcome<InviteCreatedData>;
 export type AcceptInviteRpcOutcome =
@@ -348,6 +357,7 @@ export type RequestVerificationRpcOutcome = WorkflowRpcOutcome<VerificationReque
 export type VerifyEmailRpcOutcome = WorkflowOrRotatedSessionRpcOutcome<EmailVerifiedData>;
 export type ForgotPasswordRpcOutcome = WorkflowRpcOutcome<PasswordRecoveryRequestedData>;
 export type ResetPasswordRpcOutcome = WorkflowOrNewSessionRpcOutcome<PasswordResetData>;
+export type RevokeAllSessionsRpcOutcome = WorkflowRpcOutcome<SessionsRevokedData>;
 export type IdentityRpcOutcome = WorkflowRpcOutcome<RpcIdentity>;
 
 /** Operation-specific aliases keep every binding method independently reviewable. */
@@ -387,6 +397,7 @@ export interface SsoServiceBinding {
     verifyEmail(input: VerifyEmailRpcInput): Promise<VerifyEmailRpcOutcome>;
     forgotPassword(input: ForgotPasswordRpcInput): Promise<ForgotPasswordRpcOutcome>;
     resetPassword(input: ResetPasswordRpcInput): Promise<ResetPasswordRpcOutcome>;
+    revokeAllSessionsForUser(input: RevokeAllSessionsRpcInput): Promise<RevokeAllSessionsRpcOutcome>;
     getIdentity(input: GetIdentityRpcInput): Promise<IdentityRpcOutcome>;
 }
 
@@ -414,5 +425,6 @@ export const SSO_RPC_METHODS = [
     "verifyEmail",
     "forgotPassword",
     "resetPassword",
+    "revokeAllSessionsForUser",
     "getIdentity",
 ] as const satisfies readonly (keyof SsoServiceBinding)[];
