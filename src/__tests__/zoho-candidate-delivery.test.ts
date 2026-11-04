@@ -1,3 +1,4 @@
+vi.mock('../lib/zoho-config',async original=>{const module=await original<typeof import('../lib/zoho-config')>();return {...module,readZohoSsoConfig:(env:Record<string,unknown>)=>({...module.readZohoSsoConfig(env),candidateProvisioning:env.ZOHO_CANDIDATE_PROVISIONING_ENABLED==='true',projectionDelivery:env.ZOHO_PROJECTION_DELIVERY_ENABLED==='true'})};});
 import { beforeEach, describe, it, expect, vi } from 'vitest';
 const { rpc } = vi.hoisted(() => ({ rpc: vi.fn() }));
 vi.mock('../lib/db', () => ({ db: () => ({ rpc }) }));
@@ -33,7 +34,7 @@ describe('durable candidate delivery boundary', () => {
     expect(send).not.toHaveBeenCalled();
   });
   it('accepts only reference reads and bounds canonical snapshot size', async () => {
-    const env = { ZOHO_PROJECTION_DELIVERY_ENABLED: 'true' } as Env;
+    const env = { ZOHO_PROJECTION_DELIVERY_ENABLED: 'true' } as unknown as Env;
     expect(await candidateProjectionSnapshot(env, { ...reference, planCode: 'premium' })).toBeNull();
     expect(rpc).not.toHaveBeenCalled();
     rpc.mockResolvedValue({ operationId: id, sourceHash, targetId: id, projectionHash: sourceHash, snapshot: '{"value":100.50}' });
@@ -43,7 +44,7 @@ describe('durable candidate delivery boundary', () => {
   });
   it('requires independent application proof before the canonical confirmation transaction', async () => {
     const input = { ...reference, projectionHash: sourceHash, projectionReceiptId: id };
-    await expect(confirmCandidateProjection({ ZOHO_PROJECTION_DELIVERY_ENABLED: 'true' } as Env, input)).rejects.toThrow();
+    await expect(confirmCandidateProjection({ ZOHO_PROJECTION_DELIVERY_ENABLED: 'true' } as unknown as Env, input)).rejects.toThrow();
     expect(rpc).not.toHaveBeenCalled();
     const validateProjectionReceipt = vi.fn(async () => ({ allowed: false }));
     const env = { ZOHO_PROJECTION_DELIVERY_ENABLED: 'true', ZOHO_CONTROL_PLANE: { validateProjectionReceipt } } as unknown as Env;

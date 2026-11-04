@@ -1,3 +1,4 @@
+import { readZohoSsoConfig } from '../lib/zoho-config';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { candidateProjectionSnapshot, confirmCandidateProjection, recoverCandidateDeliveries } from '../lib/zoho-candidate-delivery';
 import { db } from '../lib/db';
@@ -10,7 +11,7 @@ export { candidateCapabilities } from '../lib/zoho-candidate-capabilities';
 
 /** Canonical local commit only. Projection delivery/confirmation remains a separate gate. */
 export async function provisionCandidateCore(env: Env, grant: unknown): Promise<unknown> {
-  if (env.ZOHO_CANDIDATE_PROVISIONING_ENABLED !== 'true') throw new Error('Candidate provisioning disabled');
+  if (!readZohoSsoConfig(env).candidateProvisioning) throw new Error('Candidate provisioning disabled');
   if (!grant || typeof grant !== 'object' || Array.isArray(grant) ||
       (grant as Record<string, unknown>).module !== 'Candidates' || !(await validateApprovalEvidence(env, grant)).allowed)
     throw new Error('Candidate execution authority unavailable');

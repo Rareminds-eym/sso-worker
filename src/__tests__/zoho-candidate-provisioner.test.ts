@@ -1,3 +1,4 @@
+vi.mock('../lib/zoho-config',async original=>{const module=await original<typeof import('../lib/zoho-config')>();return {...module,readZohoSsoConfig:(env:Record<string,unknown>)=>({...module.readZohoSsoConfig(env),candidateProvisioning:env.ZOHO_CANDIDATE_PROVISIONING_ENABLED==='true',projectionDelivery:env.ZOHO_PROJECTION_DELIVERY_ENABLED==='true'})};});
 import { describe, it, beforeEach, expect, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ rpc: vi.fn(), validate: vi.fn() }));
 vi.mock('../lib/db', () => ({ db: () => ({ rpc: mocks.rpc }) }));

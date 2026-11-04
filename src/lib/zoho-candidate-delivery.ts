@@ -1,3 +1,4 @@
+import { readZohoSsoConfig, ZOHO_SSO_DEFAULTS } from './zoho-config';
 import { db } from './db';
 import { isValidUUID } from './validate';
 import type { Env } from '../types';
@@ -9,7 +10,7 @@ export function projectionReference(input: unknown): input is { operationId: str
   return Object.keys(value).length === 3 && typeof value.operationId === 'string' && isValidUUID(value.operationId) &&
     hash(value.sourceHash) && value.emailPolicy === 'forbidden';
 }
-export async function boundedDelivery<T>(work: () => Promise<T>, ms = 5000): Promise<T> {
+export async function boundedDelivery<T>(work: () => Promise<T>, ms: number = ZOHO_SSO_DEFAULTS.deliveryTimeoutMs): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([Promise.resolve().then(work), new Promise<never>((_, reject) => {
@@ -20,7 +21,7 @@ export async function boundedDelivery<T>(work: () => Promise<T>, ms = 5000): Pro
 
 /** Uses the existing auth sync queue. IDs only; no email, profile or entitlement DTO. */
 export async function recoverCandidateDeliveries(env: Env): Promise<{ published: number }> {
-  if (env.ZOHO_PROJECTION_DELIVERY_ENABLED !== 'true') return { published: 0 };
+  if (!readZohoSsoConfig(env).projectionDelivery) return { published: 0 };
   if (typeof env.SYNC_QUEUE?.send !== 'function') throw new Error('Projection queue unavailable');
   const database = db(env);
   const lease = crypto.randomUUID();
@@ -49,7 +50,7 @@ export async function recoverCandidateDeliveries(env: Env): Promise<{ published:
 
 /** Read authoritative current state, never accept an event-supplied identity or plan. */
 export async function candidateProjectionSnapshot(env: Env, input: unknown): Promise<unknown> {
-  if (env.ZOHO_PROJECTION_DELIVERY_ENABLED !== 'true' || !projectionReference(input)) return null;
+  if (!readZohoSsoConfig(env).projectionDelivery || !projectionReference(input)) return null;
   const result = await db(env).rpc<unknown>('zoho_get_candidate_projection', { p_operation: input.operationId, p_source_hash: input.sourceHash });
   if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
   const snapshot = result as Record<string, unknown>;
@@ -61,7 +62,7 @@ export async function candidateProjectionSnapshot(env: Env, input: unknown): Pro
 
 /** Read back application postconditions through an independent restricted authority. */
 export async function confirmCandidateProjection(env: Env, input: unknown): Promise<unknown> {
-  if (env.ZOHO_PROJECTION_DELIVERY_ENABLED !== 'true' || !input || typeof input !== 'object' || Array.isArray(input))
+  if (!readZohoSsoConfig(env).projectionDelivery || !input || typeof input !== 'object' || Array.isArray(input))
     throw new Error('Projection confirmation unavailable');
   const value = input as Record<string, unknown>;
   if (Object.keys(value).length !== 5 || !projectionReference({ operationId: value.operationId, sourceHash: value.sourceHash, emailPolicy: value.emailPolicy }) ||
