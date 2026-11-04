@@ -68,7 +68,8 @@ function sqlTokens(sql) {
 export function migrationDataCommands(sql) {
   const violations = new Set();
   const inspect = (tokens, block = false) => {
-    const words = tokens.filter(t => t.kind !== 'symbol').map(t => t.kind === 'word' ? t.text : '<QUOTED>');
+    const terms = tokens.filter(t => t.kind !== 'symbol');
+    const words = terms.map(t => t.kind === 'word' ? t.text : '<QUOTED>');
     const first = words[0];
     // Defining runtime functions/procedures/triggers/rules is schema work, not executing their DML.
     if (!block && first === 'CREATE') {
@@ -98,10 +99,28 @@ export function migrationDataCommands(sql) {
           }
         }
       }
-      if (word === 'SELECT' && words.slice(i + 1).includes('INTO')) violations.add('SELECT INTO');
+      if (word === 'SELECT' && words.slice(i + 1).includes('INTO')) {
+        // PL/pgSQL SELECT ... INTO a variable from extension catalogs installs
+        // schema objects; SELECT INTO a table from application data is still DML.
+        const statement = terms.slice(i, terms.findIndex((t,j) => j > i && t.kind === 'word' && t.text === 'EXECUTE') < 0 ? undefined
+          : terms.findIndex((t,j) => j > i && t.kind === 'word' && t.text === 'EXECUTE'));
+        const from = statement.findIndex(t => t.kind === 'word' && t.text === 'FROM');
+        const catalogRead = block && from >= 0 && statement[from + 1]?.text === 'PG_EXTENSION'
+          && statement.some(t => t.kind === 'word' && t.text === 'PG_NAMESPACE');
+        if (!catalogRead) violations.add('SELECT INTO');
+      }
       if (['SETVAL', 'NEXTVAL'].includes(word)) violations.add(word);
-      // Dynamic/procedural calls in executed DO blocks cannot be proven to be schema-only.
-      if (block && ['EXECUTE', 'PERFORM'].includes(word)) violations.add(`DO ${word}`);
+      if (block && word === 'EXECUTE') {
+        const command = terms[i + 1]?.kind === 'literal' ? terms[i + 1].text
+          : words[i + 1] === 'FORMAT' && terms[i + 2]?.kind === 'literal' ? terms[i + 2].text : null;
+        const executeIndex = tokens.indexOf(terms[i]);
+        const end = tokens.findIndex((t,j) => j > executeIndex && t.kind === 'symbol' && t.text === ';');
+        const expression = tokens.slice(executeIndex + 1, end < 0 ? undefined : end);
+        const schemaOnly = command && /^(?:GRANT|REVOKE|CREATE\s+(?:UNIQUE\s+)?INDEX)\s/i.test(command.trim())
+          && !command.includes(';') && !expression.some(t => t.kind === 'symbol' && t.text === '|');
+        if (!schemaOnly) violations.add('DO EXECUTE');
+      }
+      if (block && word === 'PERFORM') violations.add('DO PERFORM');
     }
   };
   let statement = [];

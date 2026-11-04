@@ -14,12 +14,6 @@ CREATE TABLE public.zoho_candidate_administration_fences (
  PRIMARY KEY(source_org_id,external_id)
 );
 REVOKE ALL ON public.zoho_candidate_administration_fences FROM PUBLIC,anon,authenticated,service_role;
-WITH numbered AS(SELECT request_id,row_number() OVER(PARTITION BY context->>'sourceOrgId',context->>'externalId' ORDER BY created_at,request_id) version
- FROM public.zoho_candidate_administration_operations)
-UPDATE public.zoho_candidate_administration_operations o SET administration_version=n.version FROM numbered n WHERE n.request_id=o.request_id;
-INSERT INTO public.zoho_candidate_administration_fences(source_org_id,external_id,administration_version,latest_request_id,pending_request_id)
-SELECT DISTINCT ON(context->>'sourceOrgId',context->>'externalId') context->>'sourceOrgId',context->>'externalId',administration_version,request_id,request_id
- FROM public.zoho_candidate_administration_operations ORDER BY context->>'sourceOrgId',context->>'externalId',administration_version DESC;
 CREATE INDEX zoho_administration_pending_source ON public.zoho_candidate_administration_operations
  ((context->>'sourceOrgId'),created_at DESC,request_id DESC) WHERE application_acknowledged_at IS NULL;
 
@@ -39,6 +33,8 @@ CREATE FUNCTION public.zoho_preview_candidate_administration(p_actor uuid,p_cont
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 BEGIN
  IF NOT public.zoho_is_active_import_approver(p_actor) THEN RETURN NULL; END IF;
+ IF EXISTS(SELECT 1 FROM public.zoho_candidate_administration_operations WHERE administration_version=0
+  AND context->>'sourceOrgId'=p_context->>'sourceOrgId' AND context->>'externalId'=p_context->>'externalId') THEN RETURN NULL; END IF;
  IF EXISTS(SELECT 1 FROM public.zoho_candidate_administration_fences WHERE source_org_id=p_context->>'sourceOrgId'
   AND external_id=p_context->>'externalId' AND pending_request_id IS NOT NULL) THEN RETURN NULL; END IF;
  RETURN public.zoho_preview_candidate_administration_before_recovery(p_actor,p_context);
@@ -60,6 +56,9 @@ BEGIN
  END IF;
  IF coalesce(p_context->>'sourceOrgId','') !~ '^[0-9]{1,40}$' OR coalesce(p_context->>'externalId','') !~ '^[0-9]{1,40}$' THEN RAISE EXCEPTION 'Invalid administration source' USING ERRCODE='22023'; END IF;
  PERFORM pg_advisory_xact_lock(hashtextextended('zoho-source:'||(p_context->>'sourceOrgId')||':'||(p_context->>'externalId'),0));
+ IF EXISTS(SELECT 1 FROM public.zoho_candidate_administration_operations WHERE administration_version=0
+  AND context->>'sourceOrgId'=p_context->>'sourceOrgId' AND context->>'externalId'=p_context->>'externalId') THEN
+  RAISE EXCEPTION 'Administration upgrade required' USING ERRCODE='40001'; END IF;
  INSERT INTO public.zoho_candidate_administration_fences(source_org_id,external_id) VALUES(p_context->>'sourceOrgId',p_context->>'externalId') ON CONFLICT DO NOTHING;
  SELECT * INTO STRICT fence FROM public.zoho_candidate_administration_fences WHERE source_org_id=p_context->>'sourceOrgId' AND external_id=p_context->>'externalId' FOR UPDATE;
  IF fence.pending_request_id IS NOT NULL THEN RAISE EXCEPTION 'Previous administration requires application confirmation' USING ERRCODE='40001'; END IF;
@@ -162,6 +161,7 @@ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 DECLARE signature text; function_oid oid;
 BEGIN
  IF public.zoho_candidate_runtime_ready_before_recovery() IS DISTINCT FROM true THEN RETURN false; END IF;
+ IF EXISTS(SELECT 1 FROM public.zoho_candidate_administration_operations WHERE administration_version=0) THEN RETURN false; END IF;
  PERFORM public.zoho_assert_private_identity_boundary();
  FOREACH signature IN ARRAY ARRAY['public.zoho_list_pending_candidate_administrations(uuid,text,timestamp with time zone,uuid)',
   'public.zoho_acknowledge_candidate_administration(uuid,uuid)'] LOOP

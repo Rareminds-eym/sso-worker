@@ -146,6 +146,18 @@ try {
   docker(psql, read('supabase/migrations/20270217020000_zoho_candidate_administration.sql'));
   docker(psql, ['BEGIN;', read('src/__tests__/sql/zoho-candidate-administration.sql'), 'ROLLBACK;'].join('\n'));
   docker(psql, read('supabase/migrations/20270218010000_zoho_administration_recovery.sql'));
-  docker(psql, ['BEGIN;', read('src/__tests__/sql/zoho-administration-recovery.sql'), 'ROLLBACK;'].join('\n'));
+  docker(psql, read('supabase/seed/dev/20270218010000_seed_zoho_administration_recovery.sql'));
+  docker(psql, read('supabase/seed/dev/20270218010000_seed_zoho_administration_recovery.sql'));
+  const recoverySeed=read('supabase/seed/dev/20270218010000_seed_zoho_administration_recovery.sql').trim().slice('BEGIN;'.length,-'COMMIT;'.length);
+  docker(psql, ['BEGIN;', read('src/__tests__/sql/zoho-administration-recovery.sql'),
+    'CREATE TEMP TABLE seed_fences_before AS TABLE public.zoho_candidate_administration_fences;',
+    'CREATE TEMP TABLE seed_operations_before AS TABLE public.zoho_candidate_administration_operations;',
+    recoverySeed,recoverySeed,
+    `DO $$ BEGIN
+      ASSERT NOT EXISTS((TABLE seed_fences_before EXCEPT TABLE public.zoho_candidate_administration_fences)
+        UNION ALL(TABLE public.zoho_candidate_administration_fences EXCEPT TABLE seed_fences_before));
+      ASSERT NOT EXISTS((TABLE seed_operations_before EXCEPT TABLE public.zoho_candidate_administration_operations)
+        UNION ALL(TABLE public.zoho_candidate_administration_operations EXCEPT TABLE seed_operations_before));
+    END $$;`, 'ROLLBACK;'].join('\n'));
   console.log('Canonical candidate SQL regressions, two-session operation/identity races and context-revocation fencing passed in a disposable database using actual SSO constraints and subscription trigger.');
 } finally { if (created) docker(['dropdb', '-U', 'postgres', database]); }
