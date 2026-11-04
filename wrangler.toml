@@ -217,3 +217,19 @@ SUPABASE_URL = "https://quvdgaydpctuspzeqknc.supabase.co"
 SKILLPASSPORT_URL = "https://skillpassport.rareminds.in"
 ALLOWED_ORIGINS = "http://localhost:3000,https://*.rareminds.in,https://*.pages.dev"
 ALLOWED_APP_URLS = "https://skillpassport.rareminds.in,https://*.rareminds.in,https://*.pages.dev,http://localhost:3000,http://localhost:8788"
+
+# Read-only execution validation on the existing dashboard deployments. No new Worker.
+[[services]]
+binding = "ZOHO_CONTROL_PLANE"
+service = "sp-dash-2"
+entrypoint = "ZohoExecutionAuthority"
+
+[[env.dev.services]]
+binding = "ZOHO_CONTROL_PLANE"
+service = "sp-dash-2"
+entrypoint = "ZohoExecutionAuthority"
+
+[[env.qa.services]]
+binding = "ZOHO_CONTROL_PLANE"
+service = "sp-dash-2-qa"
+entrypoint = "ZohoExecutionAuthority"

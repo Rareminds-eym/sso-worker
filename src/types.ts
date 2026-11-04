@@ -71,6 +71,10 @@ export interface MessageBatch<T = unknown> {
 
 // ─── Environment ───────────────────────────────────────────────
 export interface Env {
+  /** Existing platform context used to select code-owned integration profiles. */
+  ENVIRONMENT?: string;
+  /** Read-only named capability on the existing dashboard deployment. */
+  ZOHO_CONTROL_PLANE?: { validateOperation(grant: unknown): Promise<{ allowed: boolean }>; validateProjectionReceipt?(receipt: unknown): Promise<{ allowed: boolean }>; candidateProjectionCapabilities?(): Promise<unknown> };
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
   JWT_PRIVATE_KEY: string;
