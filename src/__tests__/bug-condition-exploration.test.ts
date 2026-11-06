@@ -1,3 +1,4 @@
+import { executionContext } from './execution-context';
 /**
  * Bug Condition Exploration Test - RPC Architecture
  *
@@ -80,7 +81,7 @@ const mockEnv: Env = {
 };
 
 async function createWorker() {
-  const ctx: ExecutionContext = { waitUntil: () => { }, passThroughOnException: () => { }, props: undefined };
+  const ctx = executionContext();
   const { default: SsoWorker } = await import('../index');
   const worker = new SsoWorker(ctx, mockEnv);
   return worker as FetchableWorker;

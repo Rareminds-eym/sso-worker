@@ -1,5 +1,5 @@
 /** Nonsecret Zoho policy is code-owned. Only credentials and platform bindings stay external. */
-export const ZOHO_SSO_DEFAULTS = Object.freeze({ dependencyTimeoutMs: 3500, deliveryTimeoutMs: 5000 });
+export const ZOHO_SSO_DEFAULTS = Object.freeze({ dependencyTimeoutMs: 3500, deliveryTimeoutMs: 5000, recoveryBatches: 10, recoveryBudgetMs: 15000 });
 const disabled=Object.freeze({emailPolicy:'forbidden' as const,requiresApproval:true as const,candidateProvisioning: false, projectionDelivery: false});
 export const ZOHO_PROFILES=Object.freeze({
   production:disabled,dev:disabled,qa:disabled,preview:disabled,'local-review':disabled,blocked:disabled,

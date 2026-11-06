@@ -20,9 +20,9 @@ export async function boundedDelivery<T>(work: () => Promise<T>, ms: number = ZO
 }
 
 /** Uses the existing auth sync queue. IDs only; no email, profile or entitlement DTO. */
-export async function recoverCandidateDeliveries(env: Env): Promise<{ published: number }> {
-  if (!readZohoSsoConfig(env).projectionDelivery) return { published: 0 };
-  if (typeof env.SYNC_QUEUE?.send !== 'function') throw new Error('Projection queue unavailable');
+async function recoverCandidateDeliveryBatch(env: Env): Promise<{ published: number; reserved: number }> {
+  if (!readZohoSsoConfig(env).projectionDelivery) return { published: 0, reserved: 0 };
+  if (typeof env.SYNC_QUEUE?.sendBatch !== 'function' && typeof env.SYNC_QUEUE?.send !== 'function') throw new Error('Projection queue unavailable');
   const database = db(env);
   const lease = crypto.randomUUID();
   const reserved = await database.rpc<unknown>('zoho_reserve_candidate_deliveries', { p_lease: lease });
@@ -33,18 +33,51 @@ export async function recoverCandidateDeliveries(env: Env): Promise<{ published:
       throw new Error('Invalid projection reservation');
   }
   let published = 0;
-  // Independent references finish within their shared one-minute reservation window.
-  const results = await Promise.allSettled(reserved.map(async item => {
-    let sent = false;
+  const events = reserved.map(item => ({ type: 'zoho.candidate.canonical_committed' as const,
+    payload: { operationId: item.operationId, sourceHash: item.sourceHash, emailPolicy: 'forbidden' as const }, timestamp: new Date().toISOString() }));
+  // Queue batch acceptance is all-or-unknown. On a timeout never fall back to
+  // individual sends: the durable outbox will retry the same immutable references.
+  let batchSent: boolean | undefined;
+  if (events.length && typeof env.SYNC_QUEUE.sendBatch === 'function') {
+    batchSent = false;
     try {
-      await boundedDelivery(() => env.SYNC_QUEUE.send({ type: 'zoho.candidate.canonical_committed',
-        payload: { operationId: item.operationId, sourceHash: item.sourceHash, emailPolicy: 'forbidden' }, timestamp: new Date().toISOString() }));
-      sent = true; published++;
-    } catch { /* Even a send timeout can publish; receipt idempotency handles duplicates. */ }
+      await boundedDelivery(() => env.SYNC_QUEUE.sendBatch(events.map(body => ({ body }))));
+      batchSent = true;
+    } catch { /* Ambiguous acceptance is reconciled by the existing receipts. */ }
+  }
+  if (batchSent !== undefined) {
+    const operations = reserved.map(item => item.operationId as string);
+    const recorded = await database.rpc<unknown>('zoho_record_candidate_publications', {
+      p_operations: operations, p_lease: lease, p_published: batchSent,
+    });
+    if (!Array.isArray(recorded) || recorded.length !== operations.length ||
+        new Set(recorded.map(item => item?.operationId)).size !== operations.length ||
+        recorded.some(item => !item || !operations.includes(item.operationId) || item.recorded !== true))
+      throw new Error('Projection publication acknowledgement unavailable');
+    return { published: batchSent ? reserved.length : 0, reserved: reserved.length };
+  }
+  const results = await Promise.allSettled(reserved.map(async (item, index) => {
+    let sent = batchSent === true;
+    if (batchSent === undefined) {
+      try { await boundedDelivery(() => env.SYNC_QUEUE.send(events[index])); sent = true; }
+      catch { /* Even a send timeout can publish; receipt idempotency handles duplicates. */ }
+    }
+    if (sent) published++;
     const recorded = await database.rpc('zoho_record_candidate_publication', { p_operation: item.operationId, p_lease: lease, p_published: sent });
     if (recorded !== true) throw new Error('Projection publication acknowledgement unavailable');
   }));
   if (results.some(result => result.status === 'rejected')) throw new Error('Projection publication recovery incomplete');
+  return { published, reserved: reserved.length };
+}
+
+/** Drain a bounded backlog rather than leaving a large import at ten deliveries per cron. */
+export async function recoverCandidateDeliveries(env: Env): Promise<{ published: number }> {
+  const started = Date.now(); let published = 0;
+  for (let batch = 0; batch < ZOHO_SSO_DEFAULTS.recoveryBatches && Date.now()-started < ZOHO_SSO_DEFAULTS.recoveryBudgetMs; batch++) {
+    const result = await recoverCandidateDeliveryBatch(env);
+    published += result.published;
+    if (result.reserved < 10 || result.published === 0) break;
+  }
   return { published };
 }
 

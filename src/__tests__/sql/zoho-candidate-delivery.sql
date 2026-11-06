@@ -17,7 +17,14 @@ BEGIN
   ASSERT NOT publications->0 ? 'payload' AND NOT publications->0 ? 'email';
   ASSERT public.zoho_reserve_candidate_deliveries(gen_random_uuid())='[]'::jsonb;
   ASSERT NOT public.zoho_record_candidate_publication(op,gen_random_uuid(),true);
-  ASSERT public.zoho_record_candidate_publication(op,lease,true);
+  ASSERT public.zoho_record_candidate_publications(ARRAY[op],gen_random_uuid(),true)->0->>'recorded'='false';
+  BEGIN
+    PERFORM public.zoho_record_candidate_publications(ARRAY[op,op],lease,true);
+    RAISE EXCEPTION 'Duplicate publication accepted';
+  EXCEPTION WHEN invalid_parameter_value THEN NULL; END;
+  ASSERT public.zoho_record_candidate_publications(ARRAY[op],lease,true)->0->>'recorded'='true';
+  ASSERT NOT has_function_privilege('anon','public.zoho_record_candidate_publications(uuid[],uuid,boolean)','EXECUTE');
+  ASSERT NOT has_function_privilege('authenticated','public.zoho_record_candidate_publications(uuid[],uuid,boolean)','EXECUTE');
   ASSERT (SELECT state='projection_pending' FROM public.zoho_candidate_receipts WHERE operation_id=op);
   ASSERT (SELECT published_at IS NOT NULL AND delivered_at IS NULL FROM public.zoho_candidate_outbox WHERE operation_id=op);
   FOR i IN 2..8 LOOP
