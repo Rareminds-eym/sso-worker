@@ -96,6 +96,7 @@ try {
     read('supabase/migrations/20261103000000_zoho_candidate_review.sql'),
     read('supabase/migrations/20261104000000_zoho_candidate_runtime_readiness.sql'),
     read('supabase/migrations/20261105000000_zoho_candidate_sync_policy.sql'),
+    read('supabase/migrations/20270226010000_zoho_publication_batch.sql'),
   ].join('\n'));
   // The canonical fixture is explicitly server-only. Baseline application grants
   // are not silently changed by production migrations.
