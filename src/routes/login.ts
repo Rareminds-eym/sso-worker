@@ -1,4 +1,6 @@
 import { audit } from "../lib/audit";
+import { isImportedCandidate } from '../lib/zoho-candidate-sync-policy';
+import { recoverCandidateDeliveries } from '../lib/zoho-candidate-delivery';
 import { SESSION_TTL_MS, PLATFORM_ORG_ID } from "../lib/constants";
 import { db } from "../lib/db";
 import { generateRefreshToken, hashToken, verifyPassword } from "../lib/hash";
@@ -142,6 +144,7 @@ export async function performLogin(
   ctx.waitUntil(
     (async () => {
       try {
+        if (await isImportedCandidate(env, user.id)) { await recoverCandidateDeliveries(env); return; }
         if (!env?.RATE_LIMIT_KV) return;
         const cacheKey = `login:user-synced:${user.id}`;
         const cached = await env.RATE_LIMIT_KV.get(cacheKey);

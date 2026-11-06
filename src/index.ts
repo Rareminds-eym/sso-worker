@@ -88,6 +88,13 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     console.log(`[SSO] Cleaned up ${deletedSessions} expired session rows`);
 
     try {
+      await database.rpc<number>('zoho_cleanup_candidate_reviews');
+    } catch {
+      // Older deployments stay operational during an ordered schema rollout.
+      console.error('[SSO] Candidate review cleanup unavailable');
+    }
+
+    try {
       const result = await database.rpc<{ count: number }[]>("expire_old_subscriptions");
       const expired = Array.isArray(result) ? result[0]?.count ?? 0 : 0;
       if (expired > 0) console.log(`[SSO] Expired ${expired} subscription(s)`);
@@ -1436,6 +1443,43 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     return createSsoAuthority(this.env, this.ctx).resetPassword(input);
   }
 
+  async revokeAllSessionsForUser(input: Parameters<SsoServiceBinding["revokeAllSessionsForUser"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["revokeAllSessionsForUser"]>>> {
+    const { correlationId, targetUserId } = input;
+    const database = db(this.env);
+
+    try {
+      const activeSessions = await database.query<{ id: string }>(
+        `sessions?user_id=eq.${encodeURIComponent(targetUserId)}&revoked=eq.false&select=id`
+      );
+      const count = activeSessions?.length || 0;
+
+      if (count > 0) {
+        await database.update(
+          "sessions",
+          { user_id: `eq.${encodeURIComponent(targetUserId)}`, revoked: `eq.false` },
+          { revoked: true, last_used_at: new Date().toISOString() }
+        );
+      }
+
+      console.log(`[SSO] Revoked ${count} active sessions for user ${targetUserId}`);
+
+      return {
+        correlationId,
+        outcome: "succeeded",
+        kind: "succeeded",
+        data: { sessionsRevoked: count }
+      };
+    } catch (error) {
+      console.error(`[SSO] Failed to revoke sessions for user ${targetUserId}:`, error);
+      return {
+        correlationId,
+        outcome: "rejected",
+        kind: "rejected",
+        code: "invalid_request"
+      };
+    }
+  }
+
   async getIdentity(input: Parameters<SsoServiceBinding["getIdentity"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["getIdentity"]>>> {
     return createSsoAuthority(this.env, this.ctx).getIdentity(input);
   }
@@ -2298,3 +2342,6 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 }
 
 export default SsoWorker;
+export { ZohoApproverAuthority } from "./rpc/zoho-approver-authority";
+
+export { ZohoCandidateProvisioner } from "./rpc/zoho-candidate-provisioner";
