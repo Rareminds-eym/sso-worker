@@ -1,3 +1,4 @@
+import { executionContext } from './execution-context';
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SsoWorker } from "../index";
 import { publishSyncEvent, type SyncEvent } from "../lib/sync-queue";
@@ -47,11 +48,7 @@ describe("Subscription seat_count Sync Verification", () => {
       })),
     };
 
-    const mockCtx: ExecutionContext = {
-      waitUntil: vi.fn(),
-      passThroughOnException: vi.fn(),
-      props: undefined,
-    };
+    const mockCtx = executionContext(vi.fn());
 
     const mockEnv = {
       SUPABASE_URL: "https://test.supabase.co",

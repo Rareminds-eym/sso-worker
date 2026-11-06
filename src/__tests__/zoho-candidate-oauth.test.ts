@@ -1,3 +1,4 @@
+import { executionContext } from './execution-context';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ query: vi.fn(), queryOne: vi.fn(), mutate: vi.fn(), update: vi.fn(), rpc: vi.fn(),
   sign: vi.fn(), rateLimit: vi.fn(), sync: vi.fn(), audit: vi.fn(), recover: vi.fn() }));
@@ -17,7 +18,7 @@ const user = () => ({ id, email: 'imported@example.com', password_hash: '!zoho-i
   is_blocked: false, is_email_verified: false, user_metadata: structuredClone(metadata) });
 const body = { provider: 'google', provider_user_id: 'provider-subject', email: 'imported@example.com', email_verified: true };
 let pending: Promise<unknown>[];
-const ctx = { waitUntil: (task: Promise<unknown>) => pending.push(task) } as ExecutionContext;
+const ctx = executionContext(task => { pending.push(task); });
 const env = { RATE_LIMIT_KV: { get: vi.fn(), put: vi.fn() }, EMAIL_QUEUE: { send: vi.fn() }, EMAIL_SERVICE: { sendEmail: vi.fn() }, SYNC_QUEUE: { send: vi.fn() } } as unknown as Env;
 beforeEach(() => {
   vi.resetAllMocks(); pending = [];
