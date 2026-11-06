@@ -1,3 +1,4 @@
+import { executionContext } from './execution-context';
 /**
  * Preservation Property Tests - SSO Worker RPC Architecture
  *
@@ -146,7 +147,7 @@ afterEach(() => {
 });
 
 async function createWorker() {
-  const ctx: ExecutionContext = { waitUntil: () => { }, passThroughOnException: () => { }, props: undefined };
+  const ctx = executionContext();
   const { default: SsoWorker } = await import('../index');
   return new SsoWorker(ctx, mockEnv);
 }

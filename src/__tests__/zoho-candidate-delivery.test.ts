@@ -28,6 +28,34 @@ describe('durable candidate delivery boundary', () => {
     expect(await recoverCandidateDeliveries({ ZOHO_PROJECTION_DELIVERY_ENABLED: 'true', SYNC_QUEUE: { send } } as unknown as Env)).toEqual({ published: 0 });
     expect(rpc).toHaveBeenLastCalledWith('zoho_record_candidate_publication', expect.objectContaining({ p_published: false }));
   });
+  it('drains up to 100 immutable references in bounded ten-record reservations', async () => {
+    let batches=0;
+    rpc.mockImplementation(async (name,args)=>name==='zoho_reserve_candidate_deliveries'
+      ? Array.from({length:10},(_,i)=>({operationId:`10000000-0000-4000-8000-${String(++batches*10+i).padStart(12,'0')}`,sourceHash,lease:args.p_lease})) : true);
+    const send=vi.fn(async()=>{});
+    expect(await recoverCandidateDeliveries({ZOHO_PROJECTION_DELIVERY_ENABLED:'true',SYNC_QUEUE:{send}} as unknown as Env)).toEqual({published:100});
+    expect(send).toHaveBeenCalledTimes(100);
+    expect(rpc.mock.calls.filter(([name])=>name==='zoho_reserve_candidate_deliveries')).toHaveLength(10);
+    for(const [event] of send.mock.calls as unknown as [{payload:Record<string,unknown>}][])expect(Object.keys(event.payload).sort()).toEqual(['emailPolicy','operationId','sourceHash']);
+  });
+  it('stops a draining run after a wholly failed batch instead of hammering more reservations', async () => {
+    rpc.mockImplementation(async(name,args)=>name==='zoho_reserve_candidate_deliveries'?Array.from({length:10},(_,i)=>({operationId:`10000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`,sourceHash,lease:args.p_lease})):true);
+    const send=vi.fn(async()=>{throw new Error('unavailable');});
+    expect(await recoverCandidateDeliveries({ZOHO_PROJECTION_DELIVERY_ENABLED:'true',SYNC_QUEUE:{send}} as unknown as Env)).toEqual({published:0});
+    expect(rpc.mock.calls.filter(([name])=>name==='zoho_reserve_candidate_deliveries')).toHaveLength(1);
+  });
+  it('stops starting new delivery batches once the recovery time budget is consumed',async()=>{
+    let clock=0;const now=vi.spyOn(Date,'now').mockImplementation(()=>clock);
+    try{
+      rpc.mockImplementation(async(name,args)=>{
+        if(name==='zoho_reserve_candidate_deliveries')return Array.from({length:10},(_,i)=>({operationId:`10000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`,sourceHash,lease:args.p_lease}));
+        clock+=2000;return true;
+      });
+      const send=vi.fn(async()=>{});
+      expect(await recoverCandidateDeliveries({ZOHO_PROJECTION_DELIVERY_ENABLED:'true',SYNC_QUEUE:{send}} as unknown as Env)).toEqual({published:10});
+      expect(rpc.mock.calls.filter(([name])=>name==='zoho_reserve_candidate_deliveries')).toHaveLength(1);
+    }finally{now.mockRestore();}
+  });
   it('does not publish malformed or unfenced reservations', async () => {
     const send = vi.fn(); rpc.mockResolvedValue([{ operationId: id, sourceHash, lease: id }]);
     await expect(recoverCandidateDeliveries({ ZOHO_PROJECTION_DELIVERY_ENABLED: 'true', SYNC_QUEUE: { send } } as unknown as Env)).rejects.toThrow();
@@ -62,4 +90,45 @@ describe('durable candidate delivery boundary', () => {
       await vi.advanceTimersByTimeAsync(5000); await rejected; expect(rpc).not.toHaveBeenCalled();
     } finally { vi.useRealTimers(); }
   });
+});
+
+describe('queue batch publication efficiency and ambiguity', () => {
+  it.each([false, true])('publishes ten references with one queue call; failure=%s never sends individual fallbacks', async failed => {
+    let reservations = 0;
+    rpc.mockImplementation(async (name, args) => name === 'zoho_reserve_candidate_deliveries'
+      ? ++reservations === 1 ? Array.from({ length: 10 }, (_, i) => ({ operationId: `10000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`, sourceHash, lease: args.p_lease })) : [] : name === 'zoho_record_candidate_publications' ? args.p_operations.map((operationId: string) => ({ operationId, recorded: true })) : true);
+    const send = vi.fn(), sendBatch = vi.fn(async (_messages: { body: { payload: Record<string, unknown> } }[]) => { if (failed) throw new Error('ambiguous queue response'); });
+    expect(await recoverCandidateDeliveries({ ZOHO_PROJECTION_DELIVERY_ENABLED: 'true', SYNC_QUEUE: { send, sendBatch } } as unknown as Env))
+      .toEqual({ published: failed ? 0 : 10 });
+    expect(sendBatch).toHaveBeenCalledTimes(1); expect(send).not.toHaveBeenCalled();
+    const messages = sendBatch.mock.calls[0][0];
+    expect(messages).toHaveLength(10);
+    for (const { body } of messages) expect(Object.keys(body.payload).sort()).toEqual(['emailPolicy','operationId','sourceHash']);
+    const acknowledgements = rpc.mock.calls.filter(([name]) => name === 'zoho_record_candidate_publications');
+    expect(acknowledgements).toHaveLength(1);
+    expect(acknowledgements[0][1].p_operations).toHaveLength(10);
+    for (const [, args] of acknowledgements) expect(args.p_published).toBe(!failed);
+  });
+});
+
+it('reduces a hundred projection publications from 210 network operations to 30', async () => {
+  let sequence=0;
+  rpc.mockImplementation(async(name,args)=>name==='zoho_reserve_candidate_deliveries'
+    ? Array.from({length:10},()=>({operationId:`10000000-0000-4000-8000-${String(++sequence).padStart(12,'0')}`,sourceHash,lease:args.p_lease}))
+    : args.p_operations.map((operationId:string)=>({operationId,recorded:true})));
+  const send=vi.fn(),sendBatch=vi.fn(async (_messages:unknown[])=>{});
+  expect(await recoverCandidateDeliveries({ZOHO_PROJECTION_DELIVERY_ENABLED:'true',SYNC_QUEUE:{send,sendBatch}} as unknown as Env)).toEqual({published:100});
+  expect(send).not.toHaveBeenCalled();expect(sendBatch).toHaveBeenCalledTimes(10);expect(rpc).toHaveBeenCalledTimes(20);
+});
+it.each(['missing','duplicate','unfenced','unavailable'])('fails closed on %s publication acknowledgement without resending',async kind=>{
+  rpc.mockImplementation(async(name,args)=>{
+    if(name==='zoho_reserve_candidate_deliveries')return [{operationId:id,sourceHash,lease:args.p_lease}];
+    if(kind==='unavailable')throw new Error('private storage error');
+    if(kind==='missing')return [];
+    if(kind==='duplicate')return [{operationId:id,recorded:true},{operationId:id,recorded:true}];
+    return [{operationId:id,recorded:false}];
+  });
+  const send=vi.fn(),sendBatch=vi.fn(async(_messages:unknown[])=>{});
+  await expect(recoverCandidateDeliveries({ZOHO_PROJECTION_DELIVERY_ENABLED:'true',SYNC_QUEUE:{send,sendBatch}} as unknown as Env)).rejects.toThrow();
+  expect(sendBatch).toHaveBeenCalledTimes(1);expect(send).not.toHaveBeenCalled();
 });
