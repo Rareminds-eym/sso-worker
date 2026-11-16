@@ -155,6 +155,8 @@ account_id = "d10c2b1a3d702c710a036bc5a6d0902e"
 
 [env.qa.vars]
 ENVIRONMENT = "qa"
+# Preserve the signing key ID from the existing QA deployment.
+JWT_KID = "key-1"
 JWKS_FRESHNESS_SECONDS = "300"
 # QA intentionally shares the existing dev SSO database.
 SUPABASE_URL = "https://iwnmssuhlifpufttyjbj.supabase.co"
