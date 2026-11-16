@@ -14,7 +14,10 @@ const hash = (v: unknown) => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v);
 /** No raw source data, passwords, sessions or notification settings are persisted. */
 export function validApprovalManifest(v: unknown): v is Record<string, unknown> {
   if (!object(v) || !exact(v, ['requestId', 'connectionId', 'sourceOrgId', 'publisherOrganizationId', 'configRevision', 'items', 'reason', 'emailPolicy']) ||
-      !uuid(v.requestId) || !uuid(v.connectionId) || !uuid(v.publisherOrganizationId) || !decimal(v.sourceOrgId) ||
+      !uuid(v.requestId) || !uuid(v.connectionId) ||
+      // The seeded platform organization intentionally uses a reserved UUID,
+      // rather than a generated versioned UUID. Other identifiers stay strict.
+      !(v.publisherOrganizationId === PLATFORM_ORG_ID || uuid(v.publisherOrganizationId)) || !decimal(v.sourceOrgId) ||
       !positive(v.configRevision) || v.emailPolicy !== 'forbidden' || typeof v.reason !== 'string' ||
       v.reason.trim() !== v.reason || v.reason.length < 3 || v.reason.length > 500 ||
       !Array.isArray(v.items) || v.items.length < 1 || v.items.length > 50) return false;

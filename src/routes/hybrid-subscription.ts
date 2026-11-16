@@ -298,6 +298,8 @@ export async function performUpdateHybridSubscription(
 		plan_id: string;
 		plan_code: string;
 		plan_type: string;
+		status: string;
+		subscription_end_date: string | null;
 		metadata?: Record<string, unknown>;
 	}>(
 		`subscriptions?organization_id=eq.${encodeURIComponent(organization.id)}&plan_code=eq.${HYBRID_PLAN_CODE}&status=in.(active,pending)`,
@@ -310,7 +312,6 @@ export async function performUpdateHybridSubscription(
 
 	const billingCycle = data.billing_cycle || "annual";
 	const now = new Date();
-	const endDate = addMonths(now, parseDurationMonths(billingCycle));
 	const organizationType = (organization.metadata?.organization_type as string) || null;
 	const adminRoleForFeatures =
 		organizationType && organizationType in ORG_TYPE_TO_ADMIN_ROLE
@@ -320,19 +321,19 @@ export async function performUpdateHybridSubscription(
 		? await sanitizeHybridFeatures(database, HYBRID_FEATURE_PRODUCT_CODE, adminRoleForFeatures, data.features)
 		: [];
 
+	// A terms edit does not renew or clear the current entitlement period.
 	const updatedFields: Record<string, unknown> = {
 		plan_amount: data.plan_amount,
 		seat_count: data.seat_count,
 		billing_cycle: billingCycle,
 		features,
 		auto_renew: billingCycle !== "lifetime",
-		subscription_end_date: billingCycle === "lifetime" ? null : endDate.toISOString(),
 		metadata: {
 			...(existing.metadata || {}),
 			activation_source: "admin_grant",
 			last_updated_by: data.admin_user_id,
 			last_updated_at: now.toISOString(),
-			notes: data.notes || (existing.metadata as Record<string, unknown>)?.notes || null,
+			notes: data.notes !== undefined ? data.notes : existing.metadata?.notes ?? null,
 		},
 	};
 
@@ -353,13 +354,15 @@ export async function performUpdateHybridSubscription(
 		plan_amount: data.plan_amount,
 		billing_cycle: billingCycle,
 		features,
-		status: "active",
+		status: existing.status,
+		subscription_end_date: existing.subscription_end_date,
+		auto_renew: updatedFields.auto_renew,
 		is_organization_subscription: true,
 		seat_count: data.seat_count,
 		updated_at: now.toISOString(),
 	});
 
-	return { id: existing.id, ...updatedFields };
+	return { id: existing.id, ...updatedFields, subscription_end_date: existing.subscription_end_date };
 }
 
 /**
@@ -534,6 +537,9 @@ export async function performListOrganizationsWithSubscriptions(
 		organization_id: string;
 		organization_name: string;
 		organization_type: string | null;
+		admin_email: string | null;
+		features: string[];
+		notes: string | null;
 		subscription_id: string | null;
 		plan_code: string | null;
 		plan_type: string | null;
@@ -559,7 +565,7 @@ export async function performListOrganizationsWithSubscriptions(
 	// if the organization count grows very large — same caveat that applies
 	// to sales-subscriptions.ts today. Revisit with a DB view/RPC if this
 	// list needs to scale past a few thousand orgs.
-	let orgQuery = "organizations?select=id,name,metadata,created_at&deleted_at=is.null&order=created_at.desc";
+	let orgQuery = "organizations?select=id,name,metadata,created_at,created_by&deleted_at=is.null&order=created_at.desc";
 	if (params.search) {
 		orgQuery += `&name=ilike.*${encodeURIComponent(params.search)}*`;
 	}
@@ -569,11 +575,18 @@ export async function performListOrganizationsWithSubscriptions(
 		name: string;
 		metadata?: Record<string, unknown>;
 		created_at: string;
+		created_by: string | null;
 	}>(orgQuery);
 
 	if (organizations.length === 0) {
 		return { data: [], pagination: { page, limit, total: 0, totalPages: 0 } };
 	}
+
+	const ownerIds = [...new Set(organizations.map(org => org.created_by).filter((id): id is string => Boolean(id)))];
+	const owners = ownerIds.length ? await database.query<{ id: string; email: string | null }>(
+		`users?select=id,email&id=in.(${ownerIds.map(encodeURIComponent).join(",")})`,
+	) : [];
+	const ownerEmails = new Map(owners.map(owner => [owner.id, owner.email]));
 
 	const orgIds = organizations.map((o) => encodeURIComponent(o.id)).join(",");
 	const subscriptions = await database.query<{
@@ -585,6 +598,8 @@ export async function performListOrganizationsWithSubscriptions(
 		billing_cycle: string;
 		status: string;
 		seat_count: number;
+		features: string[] | null;
+		metadata?: { notes?: string | null };
 		subscription_start_date: string;
 		subscription_end_date: string | null;
 		created_at: string;
@@ -605,6 +620,9 @@ export async function performListOrganizationsWithSubscriptions(
 		return {
 			organization_id: org.id,
 			organization_name: org.name,
+			admin_email: org.created_by ? ownerEmails.get(org.created_by) ?? null : null,
+			features: sub?.features ?? [],
+			notes: sub?.metadata?.notes ?? null,
 			organization_type: (org.metadata?.organization_type as string) || null,
 			subscription_id: sub?.id ?? null,
 			plan_code: sub?.plan_code ?? null,
