@@ -299,6 +299,7 @@ export async function performUpdateHybridSubscription(
 		plan_code: string;
 		plan_type: string;
 		status: string;
+		seat_count: number;
 		subscription_end_date: string | null;
 		metadata?: Record<string, unknown>;
 	}>(
@@ -309,6 +310,12 @@ export async function performUpdateHybridSubscription(
 			"No active or pending Hybrid subscription found for this organization. Use createHybridSubscription instead.",
 		);
 	}
+
+	// Usage lives in SkillPassport's database. Until a coordinated reduction
+  // workflow exists, an ordinary terms edit must never lower the source limit.
+  if (!Number.isInteger(existing.seat_count) || data.seat_count < existing.seat_count) {
+    throw new Error("Seat reductions require a coordinated contract change; terms edits can only keep or increase seats.");
+  }
 
 	const billingCycle = data.billing_cycle || "annual";
 	const now = new Date();
@@ -518,11 +525,27 @@ export async function performCreateHybridOrganization(
 	}
 }
 
-/**
- * List organizations with their most recent subscription (any plan), for
- * the sp-dash "Activate Hybrid Plan" org table. Admin-only, read via the
- * SSO_SERVICE binding.
- */
+/** Exhaust REST pages explicitly so summary totals cannot inherit a row cap. */
+async function readAllOrganizationRows<T>(database: DbClient, query: string): Promise<T[]> {
+	const rows: T[] = [];
+	for (let offset = 0; ; offset += 500) {
+		const batch = await database.query<T>(`${query}&limit=500&offset=${offset}`);
+		rows.push(...batch);
+		if (batch.length < 500) return rows;
+	}
+}
+
+/** Bound URL size independently of the number of organizations in the result. */
+async function readOrganizationRowsForIds<T>(database: DbClient, query: string, column: string, ids: string[], order: string): Promise<T[]> {
+	const rows: T[] = [];
+	for (let offset = 0; offset < ids.length; offset += 100) {
+		const batchIds = ids.slice(offset, offset + 100).map(encodeURIComponent).join(',');
+		rows.push(...await readAllOrganizationRows<T>(database, `${query}&${column}=in.(${batchIds})&order=${order}`));
+	}
+	return rows;
+}
+
+/** List all filtered organizations and summarize before applying UI pagination. */
 export async function performListOrganizationsWithSubscriptions(
 	env: Env,
 	params: {
@@ -551,6 +574,7 @@ export async function performListOrganizationsWithSubscriptions(
 		subscription_end_date: string | null;
 	}>;
 	pagination: { page: number; limit: number; total: number; totalPages: number };
+	summary: { total: number; hybridCount: number; totalSeats: number; totalDealValue: number };
 }> {
 	const database = db(env);
 	const page = Number.isInteger(params.page) && (params.page as number) > 0 ? (params.page as number) : 1;
@@ -561,35 +585,29 @@ export async function performListOrganizationsWithSubscriptions(
 	// lives on a joined table (subscriptions) that PostgREST can't filter in
 	// one request alongside organizations. This mirrors the same all-then-
 	// filter-then-paginate pattern already used by getSalesSubscriptions.
-	// Caveat: PostgREST's default row cap could silently truncate results
-	// if the organization count grows very large — same caveat that applies
-	// to sales-subscriptions.ts today. Revisit with a DB view/RPC if this
-	// list needs to scale past a few thousand orgs.
-	let orgQuery = "organizations?select=id,name,metadata,created_at,created_by&deleted_at=is.null&order=created_at.desc";
+	let orgQuery = "organizations?select=id,name,metadata,created_at,created_by&deleted_at=is.null&order=created_at.desc,id.asc";
 	if (params.search) {
 		orgQuery += `&name=ilike.*${encodeURIComponent(params.search)}*`;
 	}
 
-	const organizations = await database.query<{
+	const organizations = await readAllOrganizationRows<{
 		id: string;
 		name: string;
 		metadata?: Record<string, unknown>;
 		created_at: string;
 		created_by: string | null;
-	}>(orgQuery);
+	}>(database, orgQuery);
 
 	if (organizations.length === 0) {
-		return { data: [], pagination: { page, limit, total: 0, totalPages: 0 } };
+		return { data: [], pagination: { page, limit, total: 0, totalPages: 0 }, summary: { total: 0, hybridCount: 0, totalSeats: 0, totalDealValue: 0 } };
 	}
 
 	const ownerIds = [...new Set(organizations.map(org => org.created_by).filter((id): id is string => Boolean(id)))];
-	const owners = ownerIds.length ? await database.query<{ id: string; email: string | null }>(
-		`users?select=id,email&id=in.(${ownerIds.map(encodeURIComponent).join(",")})`,
-	) : [];
+	const owners = await readOrganizationRowsForIds<{ id: string; email: string | null }>(database,
+		'users?select=id,email', 'id', ownerIds, 'id.asc');
 	const ownerEmails = new Map(owners.map(owner => [owner.id, owner.email]));
 
-	const orgIds = organizations.map((o) => encodeURIComponent(o.id)).join(",");
-	const subscriptions = await database.query<{
+	const subscriptions = await readOrganizationRowsForIds<{
 		id: string;
 		organization_id: string;
 		plan_code: string;
@@ -603,8 +621,8 @@ export async function performListOrganizationsWithSubscriptions(
 		subscription_start_date: string;
 		subscription_end_date: string | null;
 		created_at: string;
-	}>(
-		`subscriptions?organization_id=in.(${orgIds})&is_organization_subscription=eq.true&order=created_at.desc`,
+	}>(database,
+		'subscriptions?is_organization_subscription=eq.true', 'organization_id', organizations.map(org => org.id), 'created_at.desc,id.asc',
 	);
 
 	// Keep only the most recent subscription per org.
@@ -649,6 +667,12 @@ export async function performListOrganizationsWithSubscriptions(
 	const paginated = rows.slice(offset, offset + limit);
 
 	return {
+		summary: {
+      total,
+      hybridCount: rows.filter(row => row.plan_code === 'hybrid' && row.status === 'active').length,
+      totalSeats: rows.reduce((sum, row) => sum + (row.seat_count ?? 0), 0),
+      totalDealValue: rows.reduce((sum, row) => sum + Number(row.plan_amount ?? 0), 0),
+    },
 		data: paginated,
 		pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
 	};

@@ -75,6 +75,10 @@ import type {
 
 // ─── WorkerEntrypoint ─────────────────────────────────────────
 export class SsoWorker extends WorkerEntrypoint<Env> {
+  // WorkerEntrypoint supplies these at runtime; keep the private binding
+  // contract explicit when local tooling cannot resolve cloudflare:workers.
+  declare protected env: Env;
+  declare protected ctx: ExecutionContext;
   // ── Scheduled (cron) ──────────────────────────────────────────
   async scheduled(_event: ScheduledEvent): Promise<void> {
     const database = db(this.env);
@@ -710,6 +714,19 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   }
 
   // ── Transactions ──────────────────────────────────────────────
+
+  async getSubscriptionPaymentFulfillment(data: import('./lib/subscription-payment').SubscriptionPaymentReference): Promise<import('./lib/subscription-payment').SubscriptionPaymentResult | null> {
+    const { readSubscriptionPayment } = await import('./lib/subscription-payment');
+    return readSubscriptionPayment(db(this.env), data);
+  }
+
+  async fulfillSubscriptionPayment(data: import('./lib/subscription-payment').SubscriptionPaymentInput): Promise<import('./lib/subscription-payment').SubscriptionPaymentResult> {
+    const { fulfillSubscriptionPayment } = await import('./lib/subscription-payment');
+    const result = await fulfillSubscriptionPayment(db(this.env), data);
+    if (!result.already_fulfilled) publishSyncEvent(this.env.SYNC_QUEUE, this.ctx,
+      result.is_upgrade ? 'subscription.updated' : 'subscription.created', result.subscription);
+    return result;
+  }
 
   async recordTransaction(data: {
     subscription_id?: string;
