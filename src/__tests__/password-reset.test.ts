@@ -529,7 +529,7 @@ describe("forgotPassword", () => {
     expect(mailSent[0].body.html).toContain("app.rareminds.in/reset-password?token=");
   });
 
-  it("should return 200 for non-existent user (prevent email enumeration)", async () => {
+  it("should return not found for a non-existent user", async () => {
     const req = new Request("https://sso-api/auth/forgot-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -539,9 +539,8 @@ describe("forgotPassword", () => {
     const res = await invokeForgotPassword(req, env, ctx);
     const data = await res.json();
 
-    // Always returns same message
-    expect(res.status).toBe(200);
-    expect(data).toEqual({ message: "If an account exists, a reset email has been sent." });
+    expect(res.status).toBe(404);
+    expect(data.error).toContain("couldn't find an account");
 
     await flushWaitUntil();
 
@@ -549,7 +548,7 @@ describe("forgotPassword", () => {
     expect(mailSent.length).toBe(0);
   });
 
-  it("should return 200 for blocked user (prevent email enumeration)", async () => {
+  it("should send a reset email for a blocked user row in users", async () => {
     setupUser("blocked@example.com", { is_blocked: true });
 
     const req = new Request("https://sso-api/auth/forgot-password", {
@@ -566,11 +565,11 @@ describe("forgotPassword", () => {
 
     await flushWaitUntil();
 
-    // No email for blocked user
-    expect(mailSent.length).toBe(0);
+    expect(mailSent).toHaveLength(1);
+    expect(mailSent[0].body.to).toBe("blocked@example.com");
   });
 
-  it("should return same response whether user exists or not (timing protection)", async () => {
+  it("should distinguish a user row from an absent email", async () => {
 
     // Request for existing user
     setupUser("exists@example.com");
@@ -595,8 +594,9 @@ describe("forgotPassword", () => {
     const data2 = await res2.json();
 
     expect(res1.status).toBe(200);
-    expect(res2.status).toBe(200);
-    expect(data1).toEqual(data2);
+    expect(data1.message).toBe("If an account exists, a reset email has been sent.");
+    expect(res2.status).toBe(404);
+    expect(data2.error).toContain("couldn't find an account");
   });
 
   it("should return 429 when email throttle limit is exceeded", async () => {
