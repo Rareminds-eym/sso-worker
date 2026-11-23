@@ -17,7 +17,7 @@ import type {
     Correlated,
     CurrentLogoutRpcInput,
     CurrentLogoutRpcOutcome,
-    LoginRpcInput, OAuthAuthenticateRpcInput, RpcIdentity,
+    LoginRpcInput, OAuthAuthenticateRpcInput, RevokeAllSessionsRpcInput, RevokeAllSessionsRpcOutcome, RpcIdentity,
     RpcSession,
     SessionIssueRpcOutcome,
     SessionRejectionCode,
@@ -95,6 +95,7 @@ export function createSsoAuthority(
         refreshCurrentSession: (input) => rotateSession(env, ctx, input, database, dependencies),
         logoutCurrentSession: (input) => revokeCurrent(env, input, database, dependencies),
         logoutAllSessions: (input) => revokeAll(env, input, database, dependencies),
+        revokeAllSessionsForUser: (input) => revokeUserSessions(input, database),
         ...preserved,
     };
 }
@@ -475,6 +476,23 @@ async function revokeAll(
     }
 }
 
+/** Administrative revocation of every active session for one user; one atomic update, no read-then-write race. */
+async function revokeUserSessions(input: RevokeAllSessionsRpcInput, database: DbClient): Promise<RevokeAllSessionsRpcOutcome> {
+    try {
+        const rows = await database.query<{ id: string }>(
+            `sessions?user_id=eq.${encodeURIComponent(input.targetUserId)}&revoked=eq.false&select=id`,
+            {
+                method: "PATCH",
+                headers: { Prefer: "return=representation" },
+                body: JSON.stringify({ revoked: true, last_used_at: new Date().toISOString() }),
+            },
+        );
+        return { correlationId: input.correlationId, kind: "succeeded", data: { sessionsRevoked: rows.length } };
+    } catch (error) {
+        console.error("[SSO] Failed to revoke sessions for user:", error instanceof Error ? error.message : String(error));
+        return { correlationId: input.correlationId, kind: "rejected", code: "invalid_request" };
+    }
+}
 async function sessionIdForToken(
     refreshToken: string,
     database: DbClient,

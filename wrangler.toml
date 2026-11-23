@@ -240,3 +240,17 @@ entrypoint = "ZohoExecutionAuthority"
 binding = "ZOHO_CONTROL_PLANE"
 service = "sp-dash-2-qa"
 entrypoint = "ZohoExecutionAuthority"
+# Subscription commerce provider (owner quotes, orders, settlement and refunds call PaymentService over RPC).
+# Same Payments Worker entrypoint SkillPassport binds; without it every non-free purchase step is unavailable.
+[[services]]
+binding = "PAYMENT_WORKER"
+service = "razorpay-api"
+entrypoint = "PaymentService"
+[[env.dev.services]]
+binding = "PAYMENT_WORKER"
+service = "razorpay-api-dev"
+entrypoint = "PaymentService"
+[[env.qa.services]]
+binding = "PAYMENT_WORKER"
+service = "razorpay-api-qa"
+entrypoint = "PaymentService"

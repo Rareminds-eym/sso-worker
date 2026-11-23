@@ -1,5 +1,6 @@
 import type { AuthorizationCodeStore } from './durable-objects/AuthorizationCodeStore';
 import type { SyncEvent } from './lib/sync-queue';
+import type { CommerceProvider } from './lib/subscriptions/commerce';
 
 // ─── EMAIL_SERVICE Types (from email-worker RPC) ───────────────
 export interface EmailServiceSendRequest {
@@ -71,6 +72,8 @@ export interface MessageBatch<T = unknown> {
 
 // ─── Environment ───────────────────────────────────────────────
 export interface Env {
+  /** Existing payment owner RPC; absent binding makes subscription commerce unavailable. */
+  PAYMENT_WORKER?: CommerceProvider;
   /** Existing platform context used to select code-owned integration profiles. */
   ENVIRONMENT?: string;
   /** Read-only named capability on the existing dashboard deployment. */

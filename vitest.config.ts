@@ -1,8 +1,10 @@
 import path from 'path';
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    // node:test suites under scripts/ run with `npm run test:scripts`, not vitest.
+    exclude: [...configDefaults.exclude, 'scripts/**/*.test.mjs'],
     globals: true,
     environment: 'node',
     watch: false,

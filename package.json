@@ -11,6 +11,7 @@
     "generate-keys": "node scripts/generate-keys.mjs",
     "test": "vitest",
     "lint:database": "node scripts/checks/validate-database.mjs",
+    "test:scripts": "node --test scripts/checks/validate-database.test.mjs",
     "test:run": "vitest run",
     "test:zoho:sql": "node scripts/checks/test-zoho-approver-sql.mjs",
     "test:zoho:candidate:sql": "node scripts/checks/test-zoho-candidate-sql.mjs"

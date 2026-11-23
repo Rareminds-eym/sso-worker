@@ -1,4 +1,6 @@
 import { recoverCandidateDeliveries } from '../lib/zoho-candidate-delivery';
+import { signupWithFreeEntry, verifyOAuthWithFreeEntry } from '../lib/subscriptions/free-entry';
+import { publishCommittedSubscriptions } from '../lib/subscriptions/projection-sync';
 import { isImportedCandidate } from '../lib/zoho-candidate-sync-policy';
 import { audit } from "../lib/audit";
 import { SESSION_TTL_MS, PLATFORM_ORG_ID } from "../lib/constants";
@@ -19,7 +21,7 @@ import type { Env, JwtClaims, Membership, OAuthLoginBody, User } from "../types"
  *   1. Existing oauth_accounts link → log in.
  *   2. No link, matching email → link identities (only safe because the
  *      caller guarantees the provider verified the email) and mark verified.
- *   3. Neither → create a learner via direct inserts with an unguessable
+ *   3. Neither → create a learner through the personal signup owner with an unguessable
  *      placeholder password hash (password login impossible until reset),
  *      attach membership to the seeded PLATFORM org with the learner role,
  *      verify email immediately (provider-verified), then link.
@@ -88,19 +90,7 @@ export async function performOAuthLogin(
       }
       // Provider proved control of this address — clear the verification gate
       // so the user isn't stranded by App.tsx's verified-email requirement.
-      const importedActivation = existing.user_metadata?.activation_pending === true;
-      const needsVerification = !existing.is_email_verified && !importedActivation;
-      await Promise.all([
-        insertOAuthLink(database, existing.id, providerUserId),
-        needsVerification
-          ? database.update(
-              "users",
-              { id: `eq.${encodeURIComponent(existing.id)}` },
-              { is_email_verified: true },
-            )
-          : Promise.resolve(),
-      ]);
-      if (!importedActivation) existing.is_email_verified = true;
+      await insertOAuthLink(database, existing.id, providerUserId);
       user = existing;
     }
   }
@@ -129,18 +119,17 @@ export async function performOAuthLogin(
       ...(lastName ? { lastName } : {}),
     };
 
-    // Direct inserts (no signup_user RPC): schema-drift-proof and skips the
-    // temp-org creation entirely. ponytail: placeholder bcrypt hash satisfies
-    // NOT NULL; password login stays impossible until password-reset runs.
+    // Reuse personal signup so identity, learner membership and immutable free
+    // intent share one transaction. Provider verification activates it below.
     const createdAt = new Date().toISOString();
     let createdUser: { id: string };
     try {
-      createdUser = await database.mutate<{ id: string }>("users", {
-        email,
-        password_hash: await hashPassword(crypto.randomUUID()),
-        is_email_verified: true,
-        user_metadata,
+      const created = await signupWithFreeEntry<{ user_id: string; org_id: string }>(database, 'member', {
+        p_email: email,
+        p_password_hash: await hashPassword(crypto.randomUUID()),
+        p_role: 'learner', p_org_id: platformOrg.id, p_user_metadata: user_metadata,
       });
+      createdUser = { id: created.user_id };
     } catch (err: unknown) {
       const errMessage = err instanceof Error ? err.message : String(err);
       if (errMessage.includes("duplicate") || errMessage.includes("23505") || errMessage.includes("[409]")) {
@@ -151,31 +140,13 @@ export async function performOAuthLogin(
       throw err;
     }
 
-    // Membership on the platform org + learner role assignment are
-    // independent writes once the user exists.
-    const membership = await database.mutate<{ id: string }>("memberships", {
-      user_id: createdUser.id,
-      org_id: platformOrg.id,
-      status: "active",
-    });
-    const learnerRole = await database.queryOne<{ id: string }>(
-      `roles?name=eq.learner&select=id`,
-    );
-    if (!learnerRole) {
-      console.error("[SSO] 'learner' role missing from identity DB roles table");
-      return { error: "Learner role missing", status: 500 };
-    }
-    await database.mutate("membership_roles", {
-      membership_id: membership.id,
-      role_id: learnerRole.id,
-    });
     await insertOAuthLink(database, createdUser.id, providerUserId);
 
     user = {
       id: createdUser.id,
       email,
       password_hash: "",
-      is_email_verified: true,
+      is_email_verified: false,
       is_blocked: false,
       last_login_at: null,
       created_at: createdAt,
@@ -203,6 +174,7 @@ export async function performOAuthLogin(
   if (user.is_blocked) {
     return { error: "Account is blocked", status: 403 };
   }
+  if (user.email.toLowerCase().trim() !== email) return { error: 'Provider account address differs', status: 403 };
   // Imported accounts stay private and unverified until this provider proves
   // ownership. Recheck the actual Google link and address in one transaction;
   // clear only activation state, preserving profile preferences and entitlements.
@@ -215,6 +187,14 @@ export async function performOAuthLogin(
       return { error: 'Candidate activation unavailable', status: 503 };
     user.is_email_verified = true;
     user.user_metadata = activated.userMetadata;
+  } else if (!user.is_email_verified) {
+    let receipt;
+    try { receipt = await verifyOAuthWithFreeEntry(database, user.id, providerUserId, email); }
+    catch { return { error: 'Email verification and subscription activation unavailable', status: 503 }; }
+    user.is_email_verified = true;
+    publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.email_verified', { user_id: user.id });
+    ctx.waitUntil(publishCommittedSubscriptions(database, env.SYNC_QUEUE, ctx, receipt.userId, receipt.subscriptionIds)
+      .catch(() => console.error('[SUBSCRIPTION_SYNC] Committed provider projection unavailable')));
   }
   // Closure-stable reference: TS narrowing doesn't survive into async callbacks.
   const authenticatedUser = user;

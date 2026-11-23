@@ -1,110 +1,58 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { executionContext } from './execution-context';
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { SsoWorker } from "../index";
-import { publishSyncEvent, type SyncEvent } from "../lib/sync-queue";
-import type { Env } from "../types";
+import type { Env } from '../types';
 
-vi.mock("../lib/sync-queue", () => ({
-  publishSyncEvent: vi.fn(),
-}));
+const mocks = vi.hoisted(() => ({ queryOne: vi.fn(), mutate: vi.fn(), publish: vi.fn() }));
+vi.mock('../lib/db', () => ({ db: () => mocks }));
+vi.mock('../lib/sync-queue', () => ({ publishSyncEvent: mocks.publish }));
+import { SsoWorker } from '../index';
 
-describe("Subscription seat_count Sync Verification", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+const input = {
+  user_id: 'user-123', plan_id: 'plan-enterprise-123', plan_code: 'college_enterprise',
+  plan_type: 'College Enterprise', plan_amount: 0, billing_cycle: 'lifetime', features: [],
+  full_name: 'Test User', email: 'user-123@example.invalid',
+  organization_id: 'org-123', organization_type: 'college',
+};
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  mocks.queryOne.mockResolvedValue({
+    id: input.plan_id, is_active: true, business_type: 'b2b', product_id: 'product-123',
+    entity_config: { college: { max_users: 5000 } },
+  });
+  mocks.mutate.mockImplementation(async (table: string, payload: Record<string, unknown>) => {
+    if (table !== 'subscriptions') throw new Error('Unexpected test write');
+    return { id: 'sub-123', ...payload };
+  });
+});
+
+describe('production subscription seat-count sync', () => {
+  it('persists configured capacity and publishes it after the real method completes its write', async () => {
+    const context = executionContext(vi.fn());
+    const queue = {} as Queue;
+    const worker = new SsoWorker(context, { SYNC_QUEUE: queue } as Env);
+    // Exercise the real method. Only its IO dependencies are mocked.
+    const result = await worker.createSubscription(input);
+
+    expect(mocks.queryOne).toHaveBeenCalledExactlyOnceWith('plans?id=eq.plan-enterprise-123');
+    expect(mocks.mutate).toHaveBeenCalledExactlyOnceWith('subscriptions', expect.objectContaining({
+      plan_id: input.plan_id, organization_id: input.organization_id,
+      seat_count: 5000, product_id: 'product-123',
+    }));
+    expect(result.seat_count).toBe(5000);
+    expect(mocks.publish).toHaveBeenCalledExactlyOnceWith(queue, context, 'subscription.created', expect.objectContaining({
+      id: 'sub-123', plan_id: input.plan_id, plan_code: input.plan_code,
+      seat_count: 5000, product_id: 'product-123',
+    }));
+    expect(mocks.mutate.mock.invocationCallOrder[0]).toBeLessThan(mocks.publish.mock.invocationCallOrder[0]);
   });
 
-  it("should calculate seat_count from plan entity_config and include it in subscription.created sync event", async () => {
-    const mockDbQueryOne = vi.fn(async (query: string) => {
-      if (query.startsWith("plans?id=")) {
-        return {
-          id: "plan-enterprise-123",
-          plan_code: "college_enterprise",
-          entity_config: {
-            college: { max_users: 5000 },
-          },
-        };
-      }
-      return null;
-    });
-
-    const mockDbMutate = vi.fn(async (table: string, payload: Record<string, unknown>) => {
-      return {
-        id: "sub-uuid-123",
-        ...payload,
-      };
-    });
-
-    // Fully typed mocks matching the Cloudflare Workers types
-    const mockQueue: Queue<SyncEvent> = {
-      metrics: vi.fn(async (): Promise<QueueMetrics> => ({
-        backlogCount: 0,
-        backlogBytes: 0,
-      })),
-      send: vi.fn(async (): Promise<QueueSendResponse> => ({
-        metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
-      })),
-      sendBatch: vi.fn(async (): Promise<QueueSendBatchResponse> => ({
-        metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
-      })),
-    };
-
-    const mockCtx = executionContext(vi.fn());
-
-    const mockEnv = {
-      SUPABASE_URL: "https://test.supabase.co",
-      SUPABASE_SERVICE_ROLE_KEY: "test-key",
-      SYNC_QUEUE: mockQueue,
-    } as Env;
-
-    const worker = new SsoWorker(mockCtx, mockEnv);
-
-    // Mock internal db call on worker
-    vi.spyOn(worker, "createSubscription").mockImplementation(async (data: Parameters<typeof worker.createSubscription>[0]) => {
-      let seatCount = data.seat_count || 1;
-      if ((!data.seat_count || data.seat_count === 1) && data.plan_id) {
-        const planRow = await mockDbQueryOne(`plans?id=${data.plan_id}`);
-        if (planRow?.entity_config?.college?.max_users) {
-          seatCount = Number(planRow.entity_config.college.max_users);
-        }
-      }
-
-      const subscription = await mockDbMutate("subscriptions", {
-        user_id: data.user_id,
-        plan_id: data.plan_id,
-        seat_count: seatCount,
-      });
-
-      publishSyncEvent(mockEnv.SYNC_QUEUE, mockCtx, "subscription.created", {
-        id: subscription.id,
-        user_id: data.user_id,
-        seat_count: seatCount,
-        plan_code: "college_enterprise",
-      });
-
-      return subscription;
-    });
-
-    const result = await worker.createSubscription({
-      user_id: "user-123",
-      plan_id: "plan-enterprise-123",
-      plan_code: "college_enterprise",
-      plan_type: "college_enterprise",
-      plan_amount: 0,
-      billing_cycle: "lifetime",
-      features: [],
-      full_name: "Test User",
-      email: "user-123@test.example",
-    });
-
-    expect(result.seat_count).toBe(5000);
-    expect(publishSyncEvent).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      "subscription.created",
-      expect.objectContaining({
-        seat_count: 5000,
-        plan_code: "college_enterprise",
-      })
-    );
+  it('does not publish an unpersisted seat count when storage rejects creation', async () => {
+    const failure = new Error('Synthetic persistence rejection');
+    mocks.mutate.mockRejectedValue(failure);
+    const worker = new SsoWorker(executionContext(), {} as Env);
+    await expect(worker.createSubscription(input)).rejects.toBe(failure);
+    expect(mocks.mutate).toHaveBeenCalledTimes(1);
+    expect(mocks.publish).not.toHaveBeenCalled();
   });
 });

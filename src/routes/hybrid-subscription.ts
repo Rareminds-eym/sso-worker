@@ -5,7 +5,18 @@ import { publishSyncEvent } from "../lib/sync-queue";
 import { validatePassword } from "../lib/validate";
 import type { Env } from "../types";
 
-const HYBRID_PLAN_CODE = "hybrid";
+/**
+ * The retained Hybrid plan is the one recorded by the signed catalog adoption (owner decision 1a); its canonical
+ * code is opaque, so Hybrid is identified by plan id only. No adoption means Hybrid is unavailable (fail closed).
+ */
+export async function readAdoptedHybridPlan(database: DbClient) {
+	const adoptions = await database.query<{ receipt: { plan?: { id?: unknown } } }>(
+		"subscription_hybrid_offer_adoptions?select=receipt&limit=2", undefined, "json-array");
+	const planId = adoptions.length === 1 ? adoptions[0].receipt?.plan?.id : undefined;
+	if (typeof planId !== "string" || !/^[0-9a-f-]{36}$/i.test(planId)) return null;
+	return database.queryOne<{ id: string; plan_code: string; name: string }>(
+		`plans?select=id,plan_code,name&id=eq.${encodeURIComponent(planId)}&is_active=eq.true`);
+}
 const VALID_HYBRID_ORG_TYPES = ["school", "college", "university"] as const;
 type HybridOrgType = (typeof VALID_HYBRID_ORG_TYPES)[number];
 /** products.code for the admin-dashboard nav features this grants access to. */
@@ -106,16 +117,14 @@ async function activateHybridForOrganization(
 	adminUserId: string,
 	contactEmail = "",
 ): Promise<Record<string, unknown>> {
-	const hybridPlan = await database.queryOne<{ id: string; plan_code: string; name: string }>(
-		`plans?plan_code=eq.${HYBRID_PLAN_CODE}&is_active=eq.true`,
-	);
+	const hybridPlan = await readAdoptedHybridPlan(database);
 	if (!hybridPlan) {
-		throw new Error("Hybrid plan not found in catalog. Apply seed_hybrid_sales_plan.sql first.");
+		throw new Error("Hybrid plan is unavailable: no active adopted Hybrid catalog offer.");
 	}
 
 	// One org can hold only one active/pending Hybrid subscription at a time.
 	const existing = await database.queryOne(
-		`subscriptions?organization_id=eq.${encodeURIComponent(organization.id)}&plan_code=eq.${HYBRID_PLAN_CODE}&status=in.(active,pending)`,
+		`subscriptions?organization_id=eq.${encodeURIComponent(organization.id)}&plan_id=eq.${hybridPlan.id}&status=in.(active,pending)`,
 	);
 	if (existing) {
 		throw new Error("This organization already has an active or pending Hybrid subscription");
@@ -291,6 +300,8 @@ export async function performUpdateHybridSubscription(
 		throw new Error(`Organization ${data.organization_id} not found`);
 	}
 
+	const hybridPlan = await readAdoptedHybridPlan(database);
+	if (!hybridPlan) throw new Error("Hybrid plan is unavailable: no active adopted Hybrid catalog offer.");
 	// Find the existing active/pending Hybrid subscription to update.
 	const existing = await database.queryOne<{
 		id: string;
@@ -303,7 +314,7 @@ export async function performUpdateHybridSubscription(
 		subscription_end_date: string | null;
 		metadata?: Record<string, unknown>;
 	}>(
-		`subscriptions?organization_id=eq.${encodeURIComponent(organization.id)}&plan_code=eq.${HYBRID_PLAN_CODE}&status=in.(active,pending)`,
+		`subscriptions?organization_id=eq.${encodeURIComponent(organization.id)}&plan_id=eq.${hybridPlan.id}&status=in.(active,pending)`,
 	);
 	if (!existing) {
 		throw new Error(
@@ -565,6 +576,8 @@ export async function performListOrganizationsWithSubscriptions(
 		notes: string | null;
 		subscription_id: string | null;
 		plan_code: string | null;
+		/** Hybrid is identified by the adopted plan id; purchase codes are historical snapshots. */
+		is_hybrid: boolean;
 		plan_type: string | null;
 		plan_amount: number | null;
 		billing_cycle: string | null;
@@ -577,6 +590,7 @@ export async function performListOrganizationsWithSubscriptions(
 	summary: { total: number; hybridCount: number; totalSeats: number; totalDealValue: number };
 }> {
 	const database = db(env);
+	const hybridPlanId = (await readAdoptedHybridPlan(database))?.id ?? null;
 	const page = Number.isInteger(params.page) && (params.page as number) > 0 ? (params.page as number) : 1;
 	const limit = Number.isInteger(params.limit) && (params.limit as number) > 0 ? Math.min(params.limit as number, 100) : 20;
 	const offset = (page - 1) * limit;
@@ -610,6 +624,7 @@ export async function performListOrganizationsWithSubscriptions(
 	const subscriptions = await readOrganizationRowsForIds<{
 		id: string;
 		organization_id: string;
+		plan_id: string;
 		plan_code: string;
 		plan_type: string;
 		plan_amount: number;
@@ -644,6 +659,7 @@ export async function performListOrganizationsWithSubscriptions(
 			organization_type: (org.metadata?.organization_type as string) || null,
 			subscription_id: sub?.id ?? null,
 			plan_code: sub?.plan_code ?? null,
+			is_hybrid: hybridPlanId !== null && sub?.plan_id === hybridPlanId,
 			plan_type: sub?.plan_type ?? null,
 			plan_amount: sub?.plan_amount ?? null,
 			billing_cycle: sub?.billing_cycle ?? null,
@@ -669,7 +685,7 @@ export async function performListOrganizationsWithSubscriptions(
 	return {
 		summary: {
       total,
-      hybridCount: rows.filter(row => row.plan_code === 'hybrid' && row.status === 'active').length,
+      hybridCount: rows.filter(row => row.is_hybrid && row.status === 'active').length,
       totalSeats: rows.reduce((sum, row) => sum + (row.seat_count ?? 0), 0),
       totalDealValue: rows.reduce((sum, row) => sum + Number(row.plan_amount ?? 0), 0),
     },
