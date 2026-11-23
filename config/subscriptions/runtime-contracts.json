@@ -1,0 +1,670 @@
+{
+  "schemaVersion": 1,
+  "purpose": "reviewed_source_contracts_not_applied",
+  "source": "brd-catalog.json",
+  "features": [
+    {
+      "label": "Career roadmap",
+      "key": "career_roadmap",
+      "type": "enum",
+      "terms": [
+        {
+          "text": "Sample roadmap",
+          "value": "sample_roadmap",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Basic AI roadmap",
+          "value": "basic_ai_roadmap",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "6-month guided roadmap",
+          "value": "six_month_guided_roadmap",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Advanced roadmap with milestone tracking",
+          "value": "advanced_roadmap_with_milestone_tracking",
+          "enabled": true,
+          "requiresContract": false
+        }
+      ]
+    },
+    {
+      "label": "Portfolio",
+      "key": "learner_portfolio",
+      "type": "enum",
+      "terms": [
+        {
+          "text": "Basic profile only",
+          "value": "basic_profile_only",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Portfolio preview",
+          "value": "portfolio_preview",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Portfolio builder",
+          "value": "portfolio_builder",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Premium portfolio proof and review",
+          "value": "premium_portfolio_proof_and_review",
+          "enabled": true,
+          "requiresContract": false
+        }
+      ]
+    },
+    {
+      "label": "Resume/profile review",
+      "key": "profile_review",
+      "type": "enum",
+      "terms": [
+        {
+          "text": "Not included",
+          "value": "not_included",
+          "enabled": false,
+          "requiresContract": false
+        },
+        {
+          "text": "1 AI review",
+          "value": "one_ai_review",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "3 AI reviews",
+          "value": "three_ai_reviews",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "AI + expert-assisted review as add-on/included by policy",
+          "value": "ai_expert_assisted_review_as_add_on_included_by_policy",
+          "enabled": true,
+          "requiresContract": true
+        }
+      ]
+    },
+    {
+      "label": "Mock interview/readiness",
+      "key": "interview_practice",
+      "type": "enum",
+      "terms": [
+        {
+          "text": "Not included",
+          "value": "not_included",
+          "enabled": false,
+          "requiresContract": false
+        },
+        {
+          "text": "Limited AI practice",
+          "value": "limited_ai_practice",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Included AI practice + interview readiness reports",
+          "value": "included_ai_practice_interview_readiness_reports",
+          "enabled": true,
+          "requiresContract": false
+        }
+      ]
+    },
+    {
+      "label": "Opportunity access",
+      "key": "opportunity_access",
+      "type": "enum",
+      "terms": [
+        {
+          "text": "Limited view",
+          "value": "limited_view",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Basic opportunity access",
+          "value": "basic_opportunity_access",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Matched opportunities",
+          "value": "matched_opportunities",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Priority matching and advanced alerts",
+          "value": "priority_matching_and_advanced_alerts",
+          "enabled": true,
+          "requiresContract": false
+        }
+      ]
+    },
+    {
+      "label": "Support",
+      "key": "support_tier",
+      "type": "enum",
+      "terms": [
+        {
+          "text": "Self-help/email",
+          "value": "self_help_email",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Email support",
+          "value": "email",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Priority email",
+          "value": "priority_email",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Priority support",
+          "value": "priority_support",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Email",
+          "value": "email",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Dedicated/SLA",
+          "value": "dedicated_sla",
+          "enabled": true,
+          "requiresContract": true
+        }
+      ]
+    },
+    {
+      "label": "Analytics",
+      "key": "institution_analytics",
+      "type": "enum",
+      "terms": [
+        {
+          "text": "Sample reports",
+          "value": "sample_reports",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Basic class-wise reports",
+          "value": "basic_class_wise_reports",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Class-wise analytics + intervention tracking",
+          "value": "class_wise_analytics_intervention_tracking",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Advanced analytics + annual review dashboard",
+          "value": "advanced_analytics_annual_review_dashboard",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Sample campus report",
+          "value": "sample_campus_report",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Department-level reports",
+          "value": "department_level_reports",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Advanced learner and placement analytics",
+          "value": "advanced_learner_and_placement_analytics",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Custom dashboards and governance reports",
+          "value": "custom_dashboards_and_governance_reports",
+          "enabled": true,
+          "requiresContract": false
+        }
+      ]
+    },
+    {
+      "label": "Branches/campuses",
+      "key": "campus_hierarchy",
+      "type": "enum",
+      "terms": [
+        {
+          "text": "Not applicable",
+          "value": "not_applicable",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Single school",
+          "value": "single_school",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Multi-branch support",
+          "value": "multi_branch_support",
+          "enabled": true,
+          "requiresContract": false
+        }
+      ]
+    },
+    {
+      "label": "Support/onboarding",
+      "key": "onboarding_tier",
+      "type": "enum",
+      "terms": [
+        {
+          "text": "Demo support",
+          "value": "demo_support",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Email support",
+          "value": "email",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Priority support + onboarding",
+          "value": "priority_support_onboarding",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Dedicated onboarding + priority support",
+          "value": "dedicated_onboarding_priority_support",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Standard onboarding",
+          "value": "standard_onboarding",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Priority onboarding + success reviews",
+          "value": "priority_onboarding_success_reviews",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Dedicated success manager",
+          "value": "dedicated_success_manager",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Priority onboarding + reviews",
+          "value": "priority_onboarding_reviews",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Dedicated account manager and SLA",
+          "value": "dedicated_account_manager_and_sla",
+          "enabled": true,
+          "requiresContract": false
+        }
+      ]
+    },
+    {
+      "label": "Recruiter access",
+      "key": "institution_recruiter_access",
+      "type": "enum",
+      "terms": [
+        {
+          "text": "No",
+          "value": "no",
+          "enabled": false,
+          "requiresContract": false
+        },
+        {
+          "text": "No; add-on only",
+          "value": "no_add_on_only",
+          "enabled": false,
+          "requiresContract": false
+        },
+        {
+          "text": "Limited recruiter access/add-on",
+          "value": "limited_recruiter_access_add_on",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Recruiter ecosystem access by contract",
+          "value": "recruiter_ecosystem_access_by_contract",
+          "enabled": true,
+          "requiresContract": true
+        }
+      ]
+    },
+    {
+      "label": "Placement analytics",
+      "key": "placement_analytics",
+      "type": "enum",
+      "terms": [
+        {
+          "text": "Sample report",
+          "value": "sample_report",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Basic placement readiness view",
+          "value": "basic_placement_readiness_view",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Skill gap analytics + placement readiness reports",
+          "value": "skill_gap_analytics_placement_readiness_reports",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Advanced placement dashboard + custom reports",
+          "value": "advanced_placement_dashboard_custom_reports",
+          "enabled": true,
+          "requiresContract": true
+        }
+      ]
+    },
+    {
+      "label": "Departments",
+      "key": "department_capacity_mode",
+      "type": "enum",
+      "terms": [
+        {
+          "text": "Demo only",
+          "value": "demo_only",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Up to 3 departments",
+          "value": "up_to_3_departments",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Up to 10 departments",
+          "value": "up_to_10_departments",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Custom multi-department setup",
+          "value": "custom_multi_department_setup",
+          "enabled": true,
+          "requiresContract": false
+        }
+      ]
+    },
+    {
+      "label": "Campus/college hierarchy",
+      "key": "campus_college_hierarchy",
+      "type": "enum",
+      "terms": [
+        {
+          "text": "Sample campus report",
+          "value": "sample_campus_report",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Single department/pilot",
+          "value": "single_department_pilot",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Multi-department rollout",
+          "value": "multi_department_rollout",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Multi-campus/multi-college management",
+          "value": "multi_campus_multi_college_management",
+          "enabled": true,
+          "requiresContract": false
+        }
+      ]
+    },
+    {
+      "label": "API/LMS integration",
+      "key": "lms_api_integration",
+      "type": "enum",
+      "terms": [
+        {
+          "text": "No",
+          "value": "no",
+          "enabled": false,
+          "requiresContract": false
+        },
+        {
+          "text": "No; add-on only",
+          "value": "no_add_on_only",
+          "enabled": false,
+          "requiresContract": false
+        },
+        {
+          "text": "Available as add-on",
+          "value": "available_as_add_on",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Available/included by contract",
+          "value": "available_included_by_contract",
+          "enabled": true,
+          "requiresContract": true
+        }
+      ]
+    },
+    {
+      "label": "Candidate search",
+      "key": "candidate_search_depth",
+      "type": "enum",
+      "terms": [
+        {
+          "text": "Limited",
+          "value": "limited",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Basic",
+          "value": "basic",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Advanced",
+          "value": "advanced",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Advanced + saved searches",
+          "value": "advanced_saved_searches",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Custom",
+          "value": "custom",
+          "enabled": true,
+          "requiresContract": false
+        }
+      ]
+    },
+    {
+      "label": "Assessment visibility",
+      "key": "assessment_visibility",
+      "type": "enum",
+      "terms": [
+        {
+          "text": "Basic readiness band",
+          "value": "readiness_band",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Basic score",
+          "value": "basic_score",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Readiness + skill filters",
+          "value": "readiness_skill_filters",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Full assessment insight",
+          "value": "full_insight",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Custom",
+          "value": "custom",
+          "enabled": true,
+          "requiresContract": false
+        }
+      ]
+    },
+    {
+      "label": "Portfolio access",
+      "key": "portfolio_access",
+      "type": "enum",
+      "terms": [
+        {
+          "text": "Preview",
+          "value": "preview",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Full portfolio",
+          "value": "full",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Full + proof-of-work",
+          "value": "full_proof_of_work",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Full/custom",
+          "value": "full_custom",
+          "enabled": true,
+          "requiresContract": true
+        }
+      ]
+    },
+    {
+      "label": "Campus talent access",
+      "key": "campus_talent_access_mode",
+      "type": "enum",
+      "terms": [
+        {
+          "text": "No",
+          "value": "no",
+          "enabled": false,
+          "requiresContract": false
+        },
+        {
+          "text": "Add-on",
+          "value": "add_on",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Add-on/limited",
+          "value": "add_on_limited",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Included/custom",
+          "value": "included_custom",
+          "enabled": true,
+          "requiresContract": true
+        }
+      ]
+    },
+    {
+      "label": "API/ATS integration",
+      "key": "ats_api_integration_mode",
+      "type": "enum",
+      "terms": [
+        {
+          "text": "No",
+          "value": "no",
+          "enabled": false,
+          "requiresContract": false
+        },
+        {
+          "text": "Add-on",
+          "value": "add_on",
+          "enabled": true,
+          "requiresContract": false
+        },
+        {
+          "text": "Available by contract",
+          "value": "available_by_contract",
+          "enabled": true,
+          "requiresContract": true
+        }
+      ]
+    }
+  ],
+  "entry": {
+    "schemaVersion": 1,
+    "validity": "owner_contract_required"
+  },
+  "commercialUsage": {
+    "schemaVersion": 1,
+    "basis": "time_proportional_service"
+  },
+  "ownerInputs": [
+    "live signed roles by audience and operation",
+    "explicit quote validity milliseconds",
+    "registered monthly calendar time policy",
+    "approved activation or negotiated contract with exact validity"
+  ]
+}

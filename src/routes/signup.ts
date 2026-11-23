@@ -1,3 +1,4 @@
+import { signupWithFreeEntry } from '../lib/subscriptions/free-entry';
 import { audit } from "../lib/audit";
 import { SESSION_TTL_MS } from "../lib/constants";
 import { db } from "../lib/db";
@@ -115,8 +116,8 @@ export async function performSignup(
       role
     });
 
-    result = await database.rpc<{ user_id: string; org_id: string; slug: string }>(
-      "signup_user",
+    result = await signupWithFreeEntry<{ user_id: string; org_id: string; slug: string }>(
+      database, 'organization',
       {
         p_email: email,
         p_password_hash: password_hash,

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "source": "audit-evidence/local-subscription-db-audit/business-decisions.md",
+  "ai": {
+    "conversion": "provider_cost",
+    "costSource": "openrouter_usage_cost",
+    "chargeTiming": "after_call",
+    "billedAttempts": "all_provider_billed",
+    "unpricedAttempts": "record_without_charge",
+    "creditPrecisionDecimals": 4,
+    "rateSource": "tariff_version"
+  },
+  "licensing": { "includedLearnerCapacity": true },
+  "courseLte": { "included": true, "preserveConfiguredQuantities": true },
+  "assessments": {
+    "categories": ["basic", "advanced", "domain", "role_readiness", "psychometric", "interview_readiness"],
+    "excludeFree": true,
+    "retake": { "currency": "INR", "minorUnit": 2, "amountMinor": 9900, "everyRetake": true }
+  },
+  "refunds": {
+    "windowDays": 7,
+    "calculation": "paid_less_recorded_usage_less_previous_refunds",
+    "revokeAfterRefundedCancellation": true
+  },
+  "retention": { "graceDays": 15, "readOnlyDays": 90, "suspendAtEnd": true, "preserveHistory": true },
+  "enterprise": { "terms": "negotiated_existing_hybrid_owner" }
+}
