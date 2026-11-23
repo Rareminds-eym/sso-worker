@@ -5,6 +5,10 @@
   "scripts": {
     "db:reset:dev": "npx supabase db reset --sql-paths \"./seed/dev/*.sql\"",
     "db:reset:prod": "npx supabase db reset --sql-paths \"./seed/production/*.sql\"",
+    "db:seed:generate": "node scripts/generate-subscription-seeds.mjs",
+    "db:seed:check": "node scripts/generate-subscription-seeds.mjs --check",
+    "test:subscription-seeds": "node --test scripts/checks/subscription-seeds.test.mjs && npm run test:subscription-seed-consumer",
+    "test:subscription-seed-consumer": "vitest run scripts/checks/subscription-seed-consumer.test.ts",
     "dev": "wrangler dev",
     "dev:stack": "wrangler dev -c wrangler.toml -c ../auth-sync-consumer/wrangler.toml -c ../email-worker/wrangler.toml -c ../payments-worker/wrangler.toml -c ../realtime-worker/wrangler.toml -c ../embedding-worker/wrangler.toml",
     "deploy": "wrangler deploy",
@@ -22,6 +26,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20261006.1",
+    "@electric-sql/pglite": "0.3.14",
     "@types/bcryptjs": "2.4.6",
     "fast-check": "^4.9.0",
     "supabase": "2.109.1",
