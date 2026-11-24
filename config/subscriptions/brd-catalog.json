@@ -1,0 +1,2296 @@
+{
+  "schemaVersion": 1,
+  "purpose": "configuration_preparation",
+  "source": {
+    "title": "Skill Ecosystem Subscription Entitlement BRD",
+    "version": "v1.0 - Draft for review",
+    "sections": [
+      6,
+      7,
+      8,
+      9,
+      10
+    ]
+  },
+  "currency": {
+    "code": "INR",
+    "minorUnit": 2
+  },
+  "retainedOffer": {
+    "displayName": "Hybrid",
+    "resolution": "existing_owner_binding_required",
+    "preserveHistory": true
+  },
+  "profiles": [
+    {
+      "reference": "brd:6:1",
+      "section": 6,
+      "column": 1,
+      "displayName": "Discover",
+      "price": {
+        "kind": "fixed",
+        "amountMinor": 0,
+        "intervalUnit": null
+      },
+      "cells": [
+        {
+          "row": 1,
+          "label": "Public price",
+          "text": "INR 0",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 2,
+          "label": "Learner seat",
+          "text": "1 learner",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 3,
+          "label": "AI credits",
+          "text": "10/month; no rollover",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 4,
+          "label": "Assessments",
+          "text": "1 preview assessment",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 5,
+          "label": "Course/LTE access",
+          "text": "Preview only",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 6,
+          "label": "Career roadmap",
+          "text": "Sample roadmap",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 7,
+          "label": "Portfolio",
+          "text": "Basic profile only",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 8,
+          "label": "Resume/profile review",
+          "text": "Not included",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 9,
+          "label": "Mock interview/readiness",
+          "text": "Not included",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 10,
+          "label": "Opportunity access",
+          "text": "Limited view",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 11,
+          "label": "Support",
+          "text": "Self-help/email",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        }
+      ]
+    },
+    {
+      "reference": "brd:6:2",
+      "section": 6,
+      "column": 2,
+      "displayName": "Skill Starter",
+      "price": {
+        "kind": "fixed",
+        "amountMinor": 250000,
+        "intervalUnit": "year"
+      },
+      "cells": [
+        {
+          "row": 1,
+          "label": "Public price",
+          "text": "INR 2,500/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 2,
+          "label": "Learner seat",
+          "text": "1 learner",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 3,
+          "label": "AI credits",
+          "text": "150/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 4,
+          "label": "Assessments",
+          "text": "2 full assessments/year + 1 retake",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 5,
+          "label": "Course/LTE access",
+          "text": "Up to 3 courses/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 6,
+          "label": "Career roadmap",
+          "text": "Basic AI roadmap",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 7,
+          "label": "Portfolio",
+          "text": "Portfolio preview",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 8,
+          "label": "Resume/profile review",
+          "text": "1 AI review",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 9,
+          "label": "Mock interview/readiness",
+          "text": "Not included",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 10,
+          "label": "Opportunity access",
+          "text": "Basic opportunity access",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 11,
+          "label": "Support",
+          "text": "Email support",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        }
+      ]
+    },
+    {
+      "reference": "brd:6:3",
+      "section": 6,
+      "column": 3,
+      "displayName": "Career Builder",
+      "price": {
+        "kind": "fixed",
+        "amountMinor": 500000,
+        "intervalUnit": "year"
+      },
+      "cells": [
+        {
+          "row": 1,
+          "label": "Public price",
+          "text": "INR 5,000/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 2,
+          "label": "Learner seat",
+          "text": "1 learner",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 3,
+          "label": "AI credits",
+          "text": "500/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 4,
+          "label": "Assessments",
+          "text": "4 full assessments/year + 2 retakes",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 5,
+          "label": "Course/LTE access",
+          "text": "Up to 10 courses/LTE tracks/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 6,
+          "label": "Career roadmap",
+          "text": "6-month guided roadmap",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 7,
+          "label": "Portfolio",
+          "text": "Portfolio builder",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 8,
+          "label": "Resume/profile review",
+          "text": "3 AI reviews",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 9,
+          "label": "Mock interview/readiness",
+          "text": "Limited AI practice",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 10,
+          "label": "Opportunity access",
+          "text": "Matched opportunities",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 11,
+          "label": "Support",
+          "text": "Priority email",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        }
+      ]
+    },
+    {
+      "reference": "brd:6:4",
+      "section": 6,
+      "column": 4,
+      "displayName": "Career Accelerator",
+      "price": {
+        "kind": "fixed",
+        "amountMinor": 2500000,
+        "intervalUnit": "year"
+      },
+      "cells": [
+        {
+          "row": 1,
+          "label": "Public price",
+          "text": "INR 25,000/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 2,
+          "label": "Learner seat",
+          "text": "1 learner",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 3,
+          "label": "AI credits",
+          "text": "2,000/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 4,
+          "label": "Assessments",
+          "text": "8 full assessments/year + 4 retakes",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 5,
+          "label": "Course/LTE access",
+          "text": "Up to 25 courses/LTE tracks/year; additional by add-on",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 6,
+          "label": "Career roadmap",
+          "text": "Advanced roadmap with milestone tracking",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 7,
+          "label": "Portfolio",
+          "text": "Premium portfolio proof and review",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 8,
+          "label": "Resume/profile review",
+          "text": "AI + expert-assisted review as add-on/included by policy",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 9,
+          "label": "Mock interview/readiness",
+          "text": "Included AI practice + interview readiness reports",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 10,
+          "label": "Opportunity access",
+          "text": "Priority matching and advanced alerts",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 11,
+          "label": "Support",
+          "text": "Priority support",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        }
+      ]
+    },
+    {
+      "reference": "brd:7:1",
+      "section": 7,
+      "column": 1,
+      "displayName": "Institution Trial",
+      "price": {
+        "kind": "fixed",
+        "amountMinor": 0,
+        "intervalUnit": null
+      },
+      "cells": [
+        {
+          "row": 1,
+          "label": "Public price",
+          "text": "INR 0",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 2,
+          "label": "Learner limit",
+          "text": "Demo/sample only",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 3,
+          "label": "Institution/admin seats",
+          "text": "1 trial admin",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 4,
+          "label": "Educator/faculty seats",
+          "text": "Not included",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 5,
+          "label": "Counsellor seats",
+          "text": "Not included",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 6,
+          "label": "AI credits",
+          "text": "100 trial credits",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 7,
+          "label": "Assessments",
+          "text": "1 trial assessment",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 8,
+          "label": "Course/LTE access",
+          "text": "Sample listing view",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 9,
+          "label": "Analytics",
+          "text": "Sample reports",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 10,
+          "label": "Branches/campuses",
+          "text": "Not applicable",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 11,
+          "label": "Support/onboarding",
+          "text": "Demo support",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        }
+      ]
+    },
+    {
+      "reference": "brd:7:2",
+      "section": 7,
+      "column": 2,
+      "displayName": "School Starter",
+      "price": {
+        "kind": "starting_at",
+        "amountMinor": 1500000,
+        "intervalUnit": "year"
+      },
+      "cells": [
+        {
+          "row": 1,
+          "label": "Public price",
+          "text": "From INR 15,000/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 2,
+          "label": "Learner limit",
+          "text": "Up to 250 active learners",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 3,
+          "label": "Institution/admin seats",
+          "text": "2 admins",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 4,
+          "label": "Educator/faculty seats",
+          "text": "10 educators",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 5,
+          "label": "Counsellor seats",
+          "text": "2 counsellors",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 6,
+          "label": "AI credits",
+          "text": "500 admin credits + 2 credits/learner/month",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 7,
+          "label": "Assessments",
+          "text": "1 assessment/learner/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 8,
+          "label": "Course/LTE access",
+          "text": "Assign up to 5 course/LTE tracks",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 9,
+          "label": "Analytics",
+          "text": "Basic class-wise reports",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 10,
+          "label": "Branches/campuses",
+          "text": "Single school",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 11,
+          "label": "Support/onboarding",
+          "text": "Email support",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        }
+      ]
+    },
+    {
+      "reference": "brd:7:3",
+      "section": 7,
+      "column": 3,
+      "displayName": "School Professional",
+      "price": {
+        "kind": "starting_at",
+        "amountMinor": 15000000,
+        "intervalUnit": "year"
+      },
+      "cells": [
+        {
+          "row": 1,
+          "label": "Public price",
+          "text": "From INR 1,50,000/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 2,
+          "label": "Learner limit",
+          "text": "Up to 1,000 active learners",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 3,
+          "label": "Institution/admin seats",
+          "text": "5 admins",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 4,
+          "label": "Educator/faculty seats",
+          "text": "50 educators",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 5,
+          "label": "Counsellor seats",
+          "text": "10 counsellors",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 6,
+          "label": "AI credits",
+          "text": "2,500 admin credits + 5 credits/learner/month",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 7,
+          "label": "Assessments",
+          "text": "3 assessments/learner/year + retake policy",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 8,
+          "label": "Course/LTE access",
+          "text": "Assign up to 25 course/LTE tracks",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 9,
+          "label": "Analytics",
+          "text": "Class-wise analytics + intervention tracking",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 10,
+          "label": "Branches/campuses",
+          "text": "Single school",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 11,
+          "label": "Support/onboarding",
+          "text": "Priority support + onboarding",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        }
+      ]
+    },
+    {
+      "reference": "brd:7:4",
+      "section": 7,
+      "column": 4,
+      "displayName": "School Enterprise",
+      "price": {
+        "kind": "starting_at",
+        "amountMinor": 35000000,
+        "intervalUnit": "year"
+      },
+      "cells": [
+        {
+          "row": 1,
+          "label": "Public price",
+          "text": "From INR 3,50,000/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 2,
+          "label": "Learner limit",
+          "text": "Custom learner volume/school group",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 3,
+          "label": "Institution/admin seats",
+          "text": "20 admins or custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 4,
+          "label": "Educator/faculty seats",
+          "text": "Custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 5,
+          "label": "Counsellor seats",
+          "text": "Custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 6,
+          "label": "AI credits",
+          "text": "10,000 admin credits + custom learner AI pool",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 7,
+          "label": "Assessments",
+          "text": "5 assessments/learner/year or custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 8,
+          "label": "Course/LTE access",
+          "text": "Custom course/LTE catalog and assignments",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 9,
+          "label": "Analytics",
+          "text": "Advanced analytics + annual review dashboard",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 10,
+          "label": "Branches/campuses",
+          "text": "Multi-branch support",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 11,
+          "label": "Support/onboarding",
+          "text": "Dedicated onboarding + priority support",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        }
+      ]
+    },
+    {
+      "reference": "brd:8:1",
+      "section": 8,
+      "column": 1,
+      "displayName": "Institution Trial",
+      "price": {
+        "kind": "fixed",
+        "amountMinor": 0,
+        "intervalUnit": null
+      },
+      "cells": [
+        {
+          "row": 1,
+          "label": "Public price",
+          "text": "INR 0",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 2,
+          "label": "Learner limit",
+          "text": "Demo/sample only",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 3,
+          "label": "Institution/admin seats",
+          "text": "1 trial admin",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 4,
+          "label": "Faculty/mentor seats",
+          "text": "Not included",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 5,
+          "label": "Placement/counsellor seats",
+          "text": "Not included",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 6,
+          "label": "Recruiter access",
+          "text": "No",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 7,
+          "label": "AI credits",
+          "text": "250 trial credits",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 8,
+          "label": "Assessments",
+          "text": "1 trial assessment",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 9,
+          "label": "Course/LTE access",
+          "text": "Sample listing view",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 10,
+          "label": "Placement analytics",
+          "text": "Sample report",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 11,
+          "label": "Departments",
+          "text": "Demo only",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 12,
+          "label": "Support/onboarding",
+          "text": "Demo support",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        }
+      ]
+    },
+    {
+      "reference": "brd:8:2",
+      "section": 8,
+      "column": 2,
+      "displayName": "College Starter",
+      "price": {
+        "kind": "starting_at",
+        "amountMinor": 22500000,
+        "intervalUnit": "year"
+      },
+      "cells": [
+        {
+          "row": 1,
+          "label": "Public price",
+          "text": "From INR 2,25,000/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 2,
+          "label": "Learner limit",
+          "text": "Up to 500 active learners",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 3,
+          "label": "Institution/admin seats",
+          "text": "5 admins",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 4,
+          "label": "Faculty/mentor seats",
+          "text": "25 faculty/mentors",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 5,
+          "label": "Placement/counsellor seats",
+          "text": "5 placement/counsellor users",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 6,
+          "label": "Recruiter access",
+          "text": "No; add-on only",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 7,
+          "label": "AI credits",
+          "text": "5,000 admin credits + 3 credits/learner/month",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 8,
+          "label": "Assessments",
+          "text": "2 assessments/learner/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 9,
+          "label": "Course/LTE access",
+          "text": "Assign up to 15 course/LTE tracks",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 10,
+          "label": "Placement analytics",
+          "text": "Basic placement readiness view",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 11,
+          "label": "Departments",
+          "text": "Up to 3 departments",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 12,
+          "label": "Support/onboarding",
+          "text": "Standard onboarding",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        }
+      ]
+    },
+    {
+      "reference": "brd:8:3",
+      "section": 8,
+      "column": 3,
+      "displayName": "College Professional",
+      "price": {
+        "kind": "starting_at",
+        "amountMinor": 67500000,
+        "intervalUnit": "year"
+      },
+      "cells": [
+        {
+          "row": 1,
+          "label": "Public price",
+          "text": "From INR 6,75,000/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 2,
+          "label": "Learner limit",
+          "text": "Up to 2,000 active learners",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 3,
+          "label": "Institution/admin seats",
+          "text": "15 admins",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 4,
+          "label": "Faculty/mentor seats",
+          "text": "100 faculty/mentors",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 5,
+          "label": "Placement/counsellor seats",
+          "text": "20 placement/counsellor users",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 6,
+          "label": "Recruiter access",
+          "text": "Limited recruiter access/add-on",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 7,
+          "label": "AI credits",
+          "text": "25,000 admin credits + 6 credits/learner/month",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 8,
+          "label": "Assessments",
+          "text": "4 assessments/learner/year + retake policy",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 9,
+          "label": "Course/LTE access",
+          "text": "Assign up to 50 course/LTE tracks",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 10,
+          "label": "Placement analytics",
+          "text": "Skill gap analytics + placement readiness reports",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 11,
+          "label": "Departments",
+          "text": "Up to 10 departments",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 12,
+          "label": "Support/onboarding",
+          "text": "Priority onboarding + success reviews",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        }
+      ]
+    },
+    {
+      "reference": "brd:8:4",
+      "section": 8,
+      "column": 4,
+      "displayName": "College Enterprise",
+      "price": {
+        "kind": "starting_at",
+        "amountMinor": 85000000,
+        "intervalUnit": "year"
+      },
+      "cells": [
+        {
+          "row": 1,
+          "label": "Public price",
+          "text": "From INR 8,50,000/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 2,
+          "label": "Learner limit",
+          "text": "Up to 5,000 learners or custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 3,
+          "label": "Institution/admin seats",
+          "text": "50 admins or custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 4,
+          "label": "Faculty/mentor seats",
+          "text": "Custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 5,
+          "label": "Placement/counsellor seats",
+          "text": "Custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 6,
+          "label": "Recruiter access",
+          "text": "Recruiter ecosystem access by contract",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 7,
+          "label": "AI credits",
+          "text": "75,000 admin credits + custom learner AI pool",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 8,
+          "label": "Assessments",
+          "text": "6 assessments/learner/year or custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 9,
+          "label": "Course/LTE access",
+          "text": "Custom LTE/course marketplace, cohorts and bulk assignments",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 10,
+          "label": "Placement analytics",
+          "text": "Advanced placement dashboard + custom reports",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 11,
+          "label": "Departments",
+          "text": "Custom multi-department setup",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 12,
+          "label": "Support/onboarding",
+          "text": "Dedicated success manager",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        }
+      ]
+    },
+    {
+      "reference": "brd:9:1",
+      "section": 9,
+      "column": 1,
+      "displayName": "Institution Trial",
+      "price": {
+        "kind": "fixed",
+        "amountMinor": 0,
+        "intervalUnit": null
+      },
+      "cells": [
+        {
+          "row": 1,
+          "label": "Public price",
+          "text": "INR 0",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 2,
+          "label": "Learner limit",
+          "text": "Demo/sample only",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 3,
+          "label": "Admin seats",
+          "text": "1 trial admin",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 4,
+          "label": "Faculty/mentor seats",
+          "text": "Not included",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 5,
+          "label": "Placement/counsellor seats",
+          "text": "Not included",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 6,
+          "label": "Campus/college hierarchy",
+          "text": "Sample campus report",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 7,
+          "label": "AI credits",
+          "text": "500 trial credits",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 8,
+          "label": "Assessments",
+          "text": "1 trial assessment",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 9,
+          "label": "Course/LTE access",
+          "text": "Sample listing view",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 10,
+          "label": "API/LMS integration",
+          "text": "No",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 11,
+          "label": "Analytics",
+          "text": "Sample campus report",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 12,
+          "label": "Support/onboarding",
+          "text": "Demo support",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        }
+      ]
+    },
+    {
+      "reference": "brd:9:2",
+      "section": 9,
+      "column": 2,
+      "displayName": "University Starter",
+      "price": {
+        "kind": "starting_at",
+        "amountMinor": 155000000,
+        "intervalUnit": "year"
+      },
+      "cells": [
+        {
+          "row": 1,
+          "label": "Public price",
+          "text": "From INR 15,50,000/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 2,
+          "label": "Learner limit",
+          "text": "Pilot up to 2,000 learners",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 3,
+          "label": "Admin seats",
+          "text": "10 admins",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 4,
+          "label": "Faculty/mentor seats",
+          "text": "100 faculty/mentors",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 5,
+          "label": "Placement/counsellor seats",
+          "text": "10 placement/counsellor users",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 6,
+          "label": "Campus/college hierarchy",
+          "text": "Single department/pilot",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 7,
+          "label": "AI credits",
+          "text": "25,000 admin credits + 3 credits/learner/month",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 8,
+          "label": "Assessments",
+          "text": "2 assessments/learner/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 9,
+          "label": "Course/LTE access",
+          "text": "Assign up to 25 course/LTE tracks",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 10,
+          "label": "API/LMS integration",
+          "text": "No; add-on only",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 11,
+          "label": "Analytics",
+          "text": "Department-level reports",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 12,
+          "label": "Support/onboarding",
+          "text": "Standard onboarding",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        }
+      ]
+    },
+    {
+      "reference": "brd:9:3",
+      "section": 9,
+      "column": 3,
+      "displayName": "University Professional",
+      "price": {
+        "kind": "starting_at",
+        "amountMinor": 185000000,
+        "intervalUnit": "year"
+      },
+      "cells": [
+        {
+          "row": 1,
+          "label": "Public price",
+          "text": "From INR 18,50,000/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 2,
+          "label": "Learner limit",
+          "text": "Multi-department up to 10,000 learners",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 3,
+          "label": "Admin seats",
+          "text": "50 admins",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 4,
+          "label": "Faculty/mentor seats",
+          "text": "500 faculty/mentors",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 5,
+          "label": "Placement/counsellor seats",
+          "text": "50 placement/counsellor users",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 6,
+          "label": "Campus/college hierarchy",
+          "text": "Multi-department rollout",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 7,
+          "label": "AI credits",
+          "text": "1,00,000 admin credits + 6 credits/learner/month",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 8,
+          "label": "Assessments",
+          "text": "4 assessments/learner/year + retake policy",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 9,
+          "label": "Course/LTE access",
+          "text": "Assign up to 100 course/LTE tracks",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 10,
+          "label": "API/LMS integration",
+          "text": "Available as add-on",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 11,
+          "label": "Analytics",
+          "text": "Advanced learner and placement analytics",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 12,
+          "label": "Support/onboarding",
+          "text": "Priority onboarding + reviews",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        }
+      ]
+    },
+    {
+      "reference": "brd:9:4",
+      "section": 9,
+      "column": 4,
+      "displayName": "University Enterprise",
+      "price": {
+        "kind": "starting_at",
+        "amountMinor": 250000000,
+        "intervalUnit": "year"
+      },
+      "cells": [
+        {
+          "row": 1,
+          "label": "Public price",
+          "text": "From INR 25,00,000/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 2,
+          "label": "Learner limit",
+          "text": "University-wide/custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 3,
+          "label": "Admin seats",
+          "text": "Custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 4,
+          "label": "Faculty/mentor seats",
+          "text": "Custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 5,
+          "label": "Placement/counsellor seats",
+          "text": "Custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 6,
+          "label": "Campus/college hierarchy",
+          "text": "Multi-campus/multi-college management",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 7,
+          "label": "AI credits",
+          "text": "3,00,000 admin credits + custom learner AI pool",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 8,
+          "label": "Assessments",
+          "text": "6 assessments/learner/year or custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 9,
+          "label": "Course/LTE access",
+          "text": "Custom LTE/course ecosystem and governance",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 10,
+          "label": "API/LMS integration",
+          "text": "Available/included by contract",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 11,
+          "label": "Analytics",
+          "text": "Custom dashboards and governance reports",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 12,
+          "label": "Support/onboarding",
+          "text": "Dedicated account manager and SLA",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        }
+      ]
+    },
+    {
+      "reference": "brd:10:1",
+      "section": 10,
+      "column": 1,
+      "displayName": "Free",
+      "price": {
+        "kind": "fixed",
+        "amountMinor": 0,
+        "intervalUnit": null
+      },
+      "cells": [
+        {
+          "row": 1,
+          "label": "Public price",
+          "text": "INR 0",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 2,
+          "label": "Active job posts",
+          "text": "1",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 3,
+          "label": "Recruiter seats",
+          "text": "1",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 4,
+          "label": "Hiring manager seats",
+          "text": "0",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 5,
+          "label": "Contact unlocks",
+          "text": "0",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 6,
+          "label": "Candidate invites",
+          "text": "25/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 7,
+          "label": "AI credits",
+          "text": "25 trial credits",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 8,
+          "label": "Candidate search",
+          "text": "Limited",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 9,
+          "label": "Assessment visibility",
+          "text": "Basic readiness band",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 10,
+          "label": "Portfolio access",
+          "text": "Preview",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 11,
+          "label": "Job boost credits",
+          "text": "0",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 12,
+          "label": "Campus talent access",
+          "text": "No",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 13,
+          "label": "API/ATS integration",
+          "text": "No",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 14,
+          "label": "Support",
+          "text": "Email",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        }
+      ]
+    },
+    {
+      "reference": "brd:10:2",
+      "section": 10,
+      "column": 2,
+      "displayName": "Lite",
+      "price": {
+        "kind": "fixed",
+        "amountMinor": 250000,
+        "intervalUnit": "year"
+      },
+      "cells": [
+        {
+          "row": 1,
+          "label": "Public price",
+          "text": "INR 2,500/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 2,
+          "label": "Active job posts",
+          "text": "3",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 3,
+          "label": "Recruiter seats",
+          "text": "1",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 4,
+          "label": "Hiring manager seats",
+          "text": "0",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 5,
+          "label": "Contact unlocks",
+          "text": "25/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 6,
+          "label": "Candidate invites",
+          "text": "100/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 7,
+          "label": "AI credits",
+          "text": "100/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 8,
+          "label": "Candidate search",
+          "text": "Basic",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 9,
+          "label": "Assessment visibility",
+          "text": "Basic score",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 10,
+          "label": "Portfolio access",
+          "text": "Preview",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 11,
+          "label": "Job boost credits",
+          "text": "0",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 12,
+          "label": "Campus talent access",
+          "text": "No",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 13,
+          "label": "API/ATS integration",
+          "text": "No",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 14,
+          "label": "Support",
+          "text": "Email",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        }
+      ]
+    },
+    {
+      "reference": "brd:10:3",
+      "section": 10,
+      "column": 3,
+      "displayName": "Growth",
+      "price": {
+        "kind": "fixed",
+        "amountMinor": 1500000,
+        "intervalUnit": "year"
+      },
+      "cells": [
+        {
+          "row": 1,
+          "label": "Public price",
+          "text": "INR 15,000/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 2,
+          "label": "Active job posts",
+          "text": "15",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 3,
+          "label": "Recruiter seats",
+          "text": "3",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 4,
+          "label": "Hiring manager seats",
+          "text": "3",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 5,
+          "label": "Contact unlocks",
+          "text": "200/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 6,
+          "label": "Candidate invites",
+          "text": "1,000/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 7,
+          "label": "AI credits",
+          "text": "1,000/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 8,
+          "label": "Candidate search",
+          "text": "Advanced",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 9,
+          "label": "Assessment visibility",
+          "text": "Readiness + skill filters",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 10,
+          "label": "Portfolio access",
+          "text": "Full portfolio",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 11,
+          "label": "Job boost credits",
+          "text": "20/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 12,
+          "label": "Campus talent access",
+          "text": "Add-on",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 13,
+          "label": "API/ATS integration",
+          "text": "No",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 14,
+          "label": "Support",
+          "text": "Priority email",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        }
+      ]
+    },
+    {
+      "reference": "brd:10:4",
+      "section": 10,
+      "column": 4,
+      "displayName": "Pro",
+      "price": {
+        "kind": "fixed",
+        "amountMinor": 3500000,
+        "intervalUnit": "year"
+      },
+      "cells": [
+        {
+          "row": 1,
+          "label": "Public price",
+          "text": "INR 35,000/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 2,
+          "label": "Active job posts",
+          "text": "40",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 3,
+          "label": "Recruiter seats",
+          "text": "5",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 4,
+          "label": "Hiring manager seats",
+          "text": "5",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 5,
+          "label": "Contact unlocks",
+          "text": "500/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 6,
+          "label": "Candidate invites",
+          "text": "3,000/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 7,
+          "label": "AI credits",
+          "text": "3,000/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 8,
+          "label": "Candidate search",
+          "text": "Advanced + saved searches",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 9,
+          "label": "Assessment visibility",
+          "text": "Full assessment insight",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 10,
+          "label": "Portfolio access",
+          "text": "Full + proof-of-work",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 11,
+          "label": "Job boost credits",
+          "text": "75/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 12,
+          "label": "Campus talent access",
+          "text": "Add-on/limited",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 13,
+          "label": "API/ATS integration",
+          "text": "Add-on",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 14,
+          "label": "Support",
+          "text": "Priority support",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        }
+      ]
+    },
+    {
+      "reference": "brd:10:5",
+      "section": 10,
+      "column": 5,
+      "displayName": "Enterprise",
+      "price": {
+        "kind": "starting_at",
+        "amountMinor": 7500000,
+        "intervalUnit": "year"
+      },
+      "cells": [
+        {
+          "row": 1,
+          "label": "Public price",
+          "text": "From INR 75,000/year",
+          "interpretation": "source_only",
+          "policyRequirement": null
+        },
+        {
+          "row": 2,
+          "label": "Active job posts",
+          "text": "Custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 3,
+          "label": "Recruiter seats",
+          "text": "Custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 4,
+          "label": "Hiring manager seats",
+          "text": "Custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 5,
+          "label": "Contact unlocks",
+          "text": "Custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 6,
+          "label": "Candidate invites",
+          "text": "Custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 7,
+          "label": "AI credits",
+          "text": "Custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 8,
+          "label": "Candidate search",
+          "text": "Custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 9,
+          "label": "Assessment visibility",
+          "text": "Custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 10,
+          "label": "Portfolio access",
+          "text": "Full/custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 11,
+          "label": "Job boost credits",
+          "text": "Custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 12,
+          "label": "Campus talent access",
+          "text": "Included/custom",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 13,
+          "label": "API/ATS integration",
+          "text": "Available by contract",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        },
+        {
+          "row": 14,
+          "label": "Support",
+          "text": "Dedicated/SLA",
+          "interpretation": "policy_required",
+          "policyRequirement": "Approve exact commercial/domain mapping before this term becomes executable."
+        }
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "reference": "brd:21:1",
+      "area": "Final AI credit cost per action",
+      "requirement": "Product must approve a credit tariff for each AI action before release.",
+      "status": "policy_required"
+    },
+    {
+      "reference": "brd:21:2",
+      "area": "Institution licensing model",
+      "requirement": "Confirm whether prices include learner licenses or whether platform fee and learner licenses are billed separately.",
+      "status": "policy_required"
+    },
+    {
+      "reference": "brd:21:3",
+      "area": "Course/LTE commercial model",
+      "requirement": "Confirm whether course/LTE access is included, credit-based, individually purchased or institution-assigned.",
+      "status": "policy_required"
+    },
+    {
+      "reference": "brd:21:4",
+      "area": "Assessment catalog mapping",
+      "requirement": "Map each assessment type to the plans that can consume it and define retake pricing.",
+      "status": "policy_required"
+    },
+    {
+      "reference": "brd:21:5",
+      "area": "Refund policy",
+      "requirement": "Finance/Legal must finalize refund period, partial refund rules and cancellation access.",
+      "status": "policy_required"
+    },
+    {
+      "reference": "brd:21:6",
+      "area": "Enterprise custom limits",
+      "requirement": "Sales/Commercial must define approval workflow for custom seats, credits, discounts and SLA commitments.",
+      "status": "policy_required"
+    },
+    {
+      "reference": "brd:21:7",
+      "area": "Data retention after downgrade/expiry",
+      "requirement": "Product/Legal must confirm retention, read-only access and deletion policy.",
+      "status": "policy_required"
+    }
+  ],
+  "publicationRequirements": [
+    "Resolve owner feature, audience, role and credit-pool mappings without name-based logic.",
+    "Assign canonical identities through the existing identity owner; source references are not plan codes.",
+    "Approve every applicable policy-required cell and section-21 decision before affected operations are enabled.",
+    "Bind retained Hybrid to its existing canonical owner record without replacing its terms or history.",
+    "Author complete revision bundles, verify application projections, and publish through the authorized publication owner."
+  ],
+  "roleAvailability": {
+    "section": 11,
+    "interpretation": "source_only",
+    "audiences": [
+      "Learner",
+      "School",
+      "College",
+      "University",
+      "Recruiter"
+    ],
+    "roles": [
+      {
+        "role": "Learner",
+        "terms": [
+          "Included in all learner plans",
+          "Managed learner profiles",
+          "Managed learner profiles",
+          "Managed learner profiles",
+          "Candidate view only, subject to consent"
+        ]
+      },
+      {
+        "role": "Institution Owner/Admin",
+        "terms": [
+          "No",
+          "Starter+",
+          "Starter+",
+          "Starter+",
+          "No"
+        ]
+      },
+      {
+        "role": "Faculty/Educator",
+        "terms": [
+          "No",
+          "Starter+",
+          "Starter+",
+          "Starter+",
+          "No"
+        ]
+      },
+      {
+        "role": "Mentor",
+        "terms": [
+          "No",
+          "Add-on/Professional+",
+          "Starter+",
+          "Starter+",
+          "No"
+        ]
+      },
+      {
+        "role": "Counsellor",
+        "terms": [
+          "No",
+          "Starter+",
+          "Starter+",
+          "Starter+",
+          "No"
+        ]
+      },
+      {
+        "role": "Placement Officer",
+        "terms": [
+          "No",
+          "No/add-on",
+          "Starter+",
+          "Starter+",
+          "No"
+        ]
+      },
+      {
+        "role": "Branch/Campus Admin",
+        "terms": [
+          "No",
+          "Enterprise",
+          "Enterprise",
+          "Professional+",
+          "No"
+        ]
+      },
+      {
+        "role": "Recruiter Admin",
+        "terms": [
+          "No",
+          "No",
+          "Enterprise/add-on",
+          "Enterprise/add-on",
+          "Included"
+        ]
+      },
+      {
+        "role": "Recruiter",
+        "terms": [
+          "No",
+          "No",
+          "Add-on/Enterprise",
+          "Add-on/Enterprise",
+          "Included by plan"
+        ]
+      },
+      {
+        "role": "Hiring Manager",
+        "terms": [
+          "No",
+          "No",
+          "No",
+          "No",
+          "Growth+"
+        ]
+      },
+      {
+        "role": "Reports Viewer/Finance",
+        "terms": [
+          "No",
+          "Professional+",
+          "Professional+",
+          "Professional+",
+          "Pro+/Enterprise"
+        ]
+      }
+    ],
+    "sharedSeatRows": [
+      {
+        "section": 8,
+        "row": 4,
+        "label": "Faculty/mentor seats",
+        "roles": [
+          "Faculty/Educator",
+          "Mentor"
+        ]
+      },
+      {
+        "section": 8,
+        "row": 5,
+        "label": "Placement/counsellor seats",
+        "roles": [
+          "Placement Officer",
+          "Counsellor"
+        ]
+      },
+      {
+        "section": 9,
+        "row": 4,
+        "label": "Faculty/mentor seats",
+        "roles": [
+          "Faculty/Educator",
+          "Mentor"
+        ]
+      },
+      {
+        "section": 9,
+        "row": 5,
+        "label": "Placement/counsellor seats",
+        "roles": [
+          "Placement Officer",
+          "Counsellor"
+        ]
+      }
+    ],
+    "requiredOwnerInputs": [
+      "Bind BRD role labels to canonical registered roles before enabling invitation or assignment enforcement in Task 21.",
+      "Define the School mentor seat quantity or its approved shared pool; section 11 specifies availability but section 7 supplies no mentor quantity.",
+      "Define Branch/Campus Admin seat quantities or approved shared pools for the eligible plans; sections 7-11 supply no separate quantity.",
+      "Define Reports Viewer/Finance seat quantities or approved shared pools for eligible plans; sections 7-11 supply no separate quantity.",
+      "Bind add-on and contract-qualified role access to the purchased add-on or approved contract; source text alone must never grant access."
+    ]
+  }
+}

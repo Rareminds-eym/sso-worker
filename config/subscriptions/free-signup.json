@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "source": "Subscription completion Task 6 and owner decision 2026-11-22: activate after email verification. Roles match UnifiedSignup and owner-inputs; organization types match catalog-audiences.",
+  "productCode": "skillpassport",
+  "signupRoles": {
+    "owner": { "audience": "recruitment", "organizationType": "company" },
+    "school_admin": { "audience": "school", "organizationType": "school" },
+    "college_admin": { "audience": "college", "organizationType": "college" },
+    "university_admin": { "audience": "university", "organizationType": "university" }
+  },
+  "memberRoles": {
+    "learner": { "audience": "individual", "organizationType": null }
+  }
+}

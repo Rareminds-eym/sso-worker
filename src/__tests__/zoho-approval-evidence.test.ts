@@ -4,6 +4,7 @@ vi.mock('../lib/db', () => ({ db: () => ({ rpc: mocks.rpc }) }));
 vi.mock('../lib/jwt', () => ({ verifyAccessToken: mocks.verify }));
 import { recordApprovalEvidence, validateApprovalEvidence, validApprovalManifest } from '../rpc/zoho-approval-evidence';
 import type { Env } from '../types';
+import { PLATFORM_ORG_ID } from '../lib/constants';
 const env = {} as Env;
 const id = '10000000-0000-4000-8000-000000000001';
 const manifest = () => ({ requestId: id, connectionId: id, sourceOrgId: '123', publisherOrganizationId: id, configRevision: 1,
@@ -14,6 +15,29 @@ beforeEach(() => {
   mocks.rpc.mockResolvedValue(true);
 });
 describe('canonical human approval evidence', () => {
+  it('records a full job batch published by the reserved SkillPassport Platform organization', async () => {
+    const jobManifest = { ...manifest(), publisherOrganizationId: PLATFORM_ORG_ID,
+      items: Array.from({ length: 50 }, (_, index) => ({
+        recordId: `20000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+        revision: 2, sourceHash: 'a'.repeat(64), module: 'Job_Openings',
+        externalId: String(29510000000000000n + BigInt(index)), targetId: null,
+      })) };
+    expect(validApprovalManifest(jobManifest)).toBe(true);
+    expect(await recordApprovalEvidence(env, { accessToken: 'signed', manifest: jobManifest })).toEqual({ recorded: true });
+    expect(mocks.rpc).toHaveBeenCalledWith('zoho_record_import_approval', { p_actor: id, p_manifest: jobManifest });
+  });
+
+  it('allows the reserved platform UUID only as publisher, keeping identity and request UUID checks strict', () => {
+    const valid = { ...manifest(), publisherOrganizationId: PLATFORM_ORG_ID };
+    expect(validApprovalManifest(valid)).toBe(true);
+    for (const value of [
+      { ...valid, publisherOrganizationId: '00000000-0000-0000-0000-000000000002' },
+      { ...valid, requestId: PLATFORM_ORG_ID },
+      { ...valid, connectionId: PLATFORM_ORG_ID },
+      { ...valid, items: [{ ...valid.items[0], recordId: PLATFORM_ORG_ID }] },
+      { ...valid, items: [{ ...valid.items[0], targetId: PLATFORM_ORG_ID }] },
+    ]) expect(validApprovalManifest(value)).toBe(false);
+  });
   it('verifies SSO signed credentials and never trusts a caller actor', async () => {
     const input = { accessToken: 'signed', manifest: manifest() };
     expect(await recordApprovalEvidence(env, input)).toEqual({ recorded: true });

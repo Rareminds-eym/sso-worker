@@ -19,7 +19,6 @@ async function validationError(response: Response): Promise<{ error: string; sta
 /**
  * POST /auth/forgot-password
  * Sends a password reset email if the account exists.
- * Always returns the same message to prevent email enumeration.
  */
 export async function performForgotPassword(
   env: Env,
@@ -54,12 +53,14 @@ export async function performForgotPassword(
   if (throttled) return { error: "Too many requests", status: 429 };
 
   const user = await database.queryOne<User>(
-    `users?email=eq.${encodeURIComponent(email)}&select=id,is_blocked`,
+    `users?email=eq.${encodeURIComponent(email)}&select=id`,
   );
 
-  // Always return success to prevent email enumeration
-  if (!user || user.is_blocked) {
-    return { message: "If an account exists, a reset email has been sent." };
+  if (!user) {
+    return {
+      error: "We couldn't find an account matching this email address. sign up.",
+      status: 404,
+    };
   }
 
   const token = crypto.randomUUID();

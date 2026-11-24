@@ -1,0 +1,209 @@
+{
+  "schemaVersion": 1,
+  "source": ".kiro/specs/subscription-entitlement-completion (user decisions 2026-11-20/21)",
+  "quoteValidityMs": 1800000,
+  "paidLifecycle": {
+    "id": "ed485367-7184-4e63-ace1-06682caa1301",
+    "version": 1,
+    "cancellationAccess": "until_period_end",
+    "immediateDowngradeAllowed": false,
+    "paymentFailureRestrictedMs": 1296000000,
+    "paymentFailureAfterAccess": "read_only",
+    "paymentRetryOffsetsMs": [86400000, 259200000, 604800000],
+    "suspensionApprovalRequired": true,
+    "reactivationApprovalRequired": true
+  },
+  "upgradePaths": {
+    "brd:6:1": ["brd:6:2", "brd:6:3", "brd:6:4"],
+    "brd:6:2": ["brd:6:3", "brd:6:4"],
+    "brd:6:3": ["brd:6:4"],
+    "brd:7:1": ["brd:7:2", "brd:7:3"],
+    "brd:7:2": ["brd:7:3"],
+    "brd:8:1": ["brd:8:2", "brd:8:3"],
+    "brd:8:2": ["brd:8:3"],
+    "brd:9:1": ["brd:9:2", "brd:9:3"],
+    "brd:9:2": ["brd:9:3"],
+    "brd:10:1": ["brd:10:2", "brd:10:3", "brd:10:4"],
+    "brd:10:2": ["brd:10:3", "brd:10:4"],
+    "brd:10:3": ["brd:10:4"]
+  },
+  "trialLearnerCapacities": {
+    "brd:7:1": 25,
+    "brd:8:1": 25,
+    "brd:9:1": 25
+  },
+  "freeLifecycle": {
+    "id": "16d5e69c-bbed-46b8-bee9-41fdaced7f0a",
+    "version": 1,
+    "billing": "not_applicable",
+    "cancellationAccess": "read_only",
+    "immediateDowngradeAllowed": false,
+    "paymentFailureRestrictedMs": null,
+    "paymentFailureAfterAccess": null,
+    "paymentRetryOffsetsMs": [],
+    "suspensionApprovalRequired": true,
+    "reactivationApprovalRequired": true
+  },
+  "monthlyTimePolicy": {
+    "id": "e0db0723-1e80-43d2-9dcc-604b86d96c6c",
+    "timeZone": "Asia/Kolkata",
+    "monthlyAnchor": "subscription_anniversary",
+    "monthDayOverflow": "clamp",
+    "ambiguousTime": "reject",
+    "nonexistentTime": "reject"
+  },
+  "audiences": {
+    "individual": {
+      "subjectKind": "user",
+      "managerRoles": [
+        "learner"
+      ],
+      "memberRoles": [],
+      "businessType": "b2c"
+    },
+    "school": {
+      "subjectKind": "organization",
+      "managerRoles": [
+        "owner",
+        "school_admin"
+      ],
+      "memberRoles": [
+        "school_educator"
+      ],
+      "businessType": "b2b"
+    },
+    "college": {
+      "subjectKind": "organization",
+      "managerRoles": [
+        "owner",
+        "college_admin"
+      ],
+      "memberRoles": [
+        "college_educator"
+      ],
+      "businessType": "b2b"
+    },
+    "university": {
+      "subjectKind": "organization",
+      "managerRoles": [
+        "owner",
+        "university_admin"
+      ],
+      "memberRoles": [
+        "educator"
+      ],
+      "businessType": "b2b"
+    },
+    "recruitment": {
+      "subjectKind": "organization",
+      "managerRoles": [
+        "owner",
+        "company_admin"
+      ],
+      "memberRoles": [
+        "recruiter",
+        "hr"
+      ],
+      "businessType": "b2b"
+    }
+  },
+  "managedLearnerRoles": [
+    "learner"
+  ],
+  "managerOperations": [
+    "read",
+    "consume",
+    "audit",
+    "commerce_quote",
+    "commerce_order",
+    "commerce_settle",
+    "commerce_activate",
+    "commerce_refund",
+    "commerce_refund_confirm",
+    "commerce_retake",
+    "upgrade",
+    "renew",
+    "downgrade",
+    "cancel"
+  ],
+  "memberOperations": [
+    "read",
+    "consume"
+  ],
+  "unboundOperations": {
+    "allocate": "Task 16 scheduled allocation runner",
+    "expire": "Task 29 lifecycle runner",
+    "payment_failed": "Task 30 payment failure handling",
+    "suspend": "Task 40 approvals",
+    "reactivate": "Task 40 approvals"
+  },
+  "freeEntry": {
+    "brd:6:1": {
+      "validity": "perpetual"
+    },
+    "brd:7:1": {
+      "validity": "fixed_duration",
+      "durationDays": 30
+    },
+    "brd:8:1": {
+      "validity": "fixed_duration",
+      "durationDays": 30
+    },
+    "brd:9:1": {
+      "validity": "fixed_duration",
+      "durationDays": 30
+    },
+    "brd:10:1": {
+      "validity": "perpetual"
+    }
+  },
+  "selfServeStartingAt": {
+    "brd:7:2": {
+      "priceId": "81b51368-3da4-4fd4-9ae6-5b488bb24512"
+    },
+    "brd:7:3": {
+      "priceId": "39daa81e-ef1f-46b0-89d8-4fc6de91c8b1"
+    },
+    "brd:8:2": {
+      "priceId": "8a87b062-f3cd-40b9-b2d1-1489a90c9bb5"
+    },
+    "brd:8:3": {
+      "priceId": "aed4ac1f-e3ea-47d2-a6ca-75bed7096e25"
+    },
+    "brd:9:2": {
+      "priceId": "ef0998cd-51c5-41dd-9d01-17ddc6bee22b"
+    },
+    "brd:9:3": {
+      "priceId": "dd559409-9b62-46d9-af97-4cbbd23966a4"
+    }
+  },
+  "presentationBadges": {
+    "brd:6:3": "Most Popular for Career Growth",
+    "brd:7:3": "Recommended for Active Learner Management",
+    "brd:8:3": "Recommended for Active Learner Management",
+    "brd:9:3": "Recommended for Active Learner Management",
+    "brd:10:3": "Most Popular for Active Hiring"
+  },
+  "legacyReplacements": {
+    "freemium": "brd:6:1",
+    "basic": "brd:6:2",
+    "professional": "brd:6:3",
+    "premium": "brd:6:4",
+    "school_freemium": "brd:7:1",
+    "school_starter": "brd:7:2",
+    "school_professional": "brd:7:3",
+    "school_enterprise": "brd:7:4",
+    "college_starter": "brd:8:2",
+    "college_professional": "brd:8:3",
+    "college_enterprise": "brd:8:4",
+    "university_starter": "brd:9:2",
+    "university_professional": "brd:9:3",
+    "university_enterprise": "brd:9:4",
+    "recruiter_free": "brd:10:1",
+    "recruiter_lite": "brd:10:2",
+    "recruiter_starter": "brd:10:3",
+    "recruiter_growth": "brd:10:3",
+    "recruiter_pro": "brd:10:4",
+    "recruiter_enterprise": "brd:10:5"
+  }
+}

@@ -1,8 +1,14 @@
 import type { Env } from "../types";
 import type { LteSubscriptionSnapshot } from "../types/sso-code";
 import { db } from "./db";
+import { readSubscriptionLifecycle } from './subscriptions/lifecycle-persistence';
 
 interface SubscriptionRow {
+  is_organization_subscription: boolean;
+  plan_revision_id: string | null;
+  lifecycle_state: Record<string, unknown> | null;
+  lifecycle_policy: Record<string, unknown> | null;
+  lifecycle_activated_at: string | null;
   id: string;
   user_id: string;
   organization_id: string | null;
@@ -97,7 +103,28 @@ export async function getLteSubscriptionSnapshot(
 
   if (!selectedSubscription) return null;
 
+  let revisionBinding: Pick<LteSubscriptionSnapshot, 'plan_revision_id' | 'lifecycle_state' | 'lifecycle_policy' | 'lifecycle_activated_at'> = {};
+  const revisionId = selectedSubscription.plan_revision_id;
+  if (revisionId !== null && revisionId !== undefined) {
+    const subscription = selectedSubscription;
+    if (!subscription.product_id || !subscription.lifecycle_state || !subscription.lifecycle_policy || !subscription.lifecycle_activated_at) {
+      throw new Error('Incomplete subscription revision snapshot');
+    }
+    if (subscription.is_organization_subscription && !subscription.organization_id) throw new Error('Subscription snapshot organization missing');
+    const owner = subscription.is_organization_subscription && subscription.organization_id
+      ? { kind: 'organization' as const, id: subscription.organization_id }
+      : { kind: 'user' as const, id: subscription.user_id };
+    const current = await readSubscriptionLifecycle(database, subscription.id, subscription.product_id, owner);
+    if (current.state.revisionId !== revisionId || current.state.planId !== subscription.plan_id
+      || current.state.status !== subscription.status || current.state.version !== subscription.lifecycle_state.version) {
+      throw new Error('Subscription snapshot revision differs');
+    }
+    revisionBinding = { plan_revision_id: revisionId, lifecycle_state: subscription.lifecycle_state,
+      lifecycle_policy: subscription.lifecycle_policy, lifecycle_activated_at: subscription.lifecycle_activated_at };
+  }
+
   return {
+    ...revisionBinding,
     id: selectedSubscription.id,
     user_id: selectedSubscription.user_id,
     organization_id: selectedSubscription.organization_id,

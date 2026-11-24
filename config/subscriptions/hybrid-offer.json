@@ -1,0 +1,136 @@
+{
+  "schemaVersion": 1,
+  "source": "Owner decisions 2026-11-21 (Hybrid 1a; a-d): Hybrid is published as a sales-led catalog offer for school, college and university. Every seat and usage limit is Custom (negotiated) and no credits are allocated automatically. Card copy is the existing Hybrid copy (plans.entity_config.all, 2026-10-01). Action bindings are the reviewed Enterprise bindings (catalog-rollout brd:7:4) restricted to Hybrid's limits. Sales contact routing is server-side (SkillPassport SALES_ENQUIRY_EMAIL), not part of the published offer.",
+  "name": "Hybrid",
+  "audiences": [
+    "school",
+    "college",
+    "university"
+  ],
+  "numericFeatureKeys": [
+    "included_learner_capacity",
+    "institution_admin_seats",
+    "educator_seats",
+    "counsellor_seats",
+    "course_lte_assignments",
+    "assessment_attempts"
+  ],
+  "credit": {
+    "featureKey": "ai_credits",
+    "poolKey": "organization_ai_credits",
+    "recipient": "organization"
+  },
+  "actions": [
+    {
+      "actionKey": "organization.learner.assign",
+      "featureKey": "included_learner_capacity",
+      "mode": "write",
+      "quota": {
+        "period": "concurrent",
+        "countingEvent": "learner_assignment"
+      }
+    },
+    {
+      "actionKey": "assessment.start",
+      "featureKey": "assessment_attempts",
+      "mode": "write",
+      "quota": {
+        "period": "billing_period",
+        "countingEvent": "assessment_start"
+      }
+    },
+    {
+      "actionKey": "assessment.start",
+      "featureKey": "assessment_attempts",
+      "mode": "write",
+      "quota": {
+        "period": "billing_period",
+        "countingEvent": "assessment_start"
+      },
+      "assessmentCategory": "basic"
+    },
+    {
+      "actionKey": "assessment.start",
+      "featureKey": "assessment_attempts",
+      "mode": "write",
+      "quota": {
+        "period": "billing_period",
+        "countingEvent": "assessment_start"
+      },
+      "assessmentCategory": "advanced"
+    },
+    {
+      "actionKey": "assessment.start",
+      "featureKey": "assessment_attempts",
+      "mode": "write",
+      "quota": {
+        "period": "billing_period",
+        "countingEvent": "assessment_start"
+      },
+      "assessmentCategory": "domain"
+    },
+    {
+      "actionKey": "assessment.start",
+      "featureKey": "assessment_attempts",
+      "mode": "write",
+      "quota": {
+        "period": "billing_period",
+        "countingEvent": "assessment_start"
+      },
+      "assessmentCategory": "role_readiness"
+    },
+    {
+      "actionKey": "assessment.start",
+      "featureKey": "assessment_attempts",
+      "mode": "write",
+      "quota": {
+        "period": "billing_period",
+        "countingEvent": "assessment_start"
+      },
+      "assessmentCategory": "psychometric"
+    },
+    {
+      "actionKey": "assessment.start",
+      "featureKey": "assessment_attempts",
+      "mode": "write",
+      "quota": {
+        "period": "billing_period",
+        "countingEvent": "assessment_start"
+      },
+      "assessmentCategory": "interview_readiness"
+    },
+    {
+      "actionKey": "course.enroll",
+      "featureKey": "course_lte_assignments",
+      "mode": "write",
+      "quota": {
+        "period": "billing_period",
+        "countingEvent": "course_lte_assignment"
+      }
+    },
+    {
+      "actionKey": "learning_path.activate",
+      "featureKey": "course_lte_assignments",
+      "mode": "write",
+      "quota": {
+        "period": "billing_period",
+        "countingEvent": "course_lte_assignment"
+      }
+    }
+  ],
+  "copy": {
+    "tagline": "Your institution. Your plan.",
+    "positioning": "Built around you",
+    "description": "Work with our sales team to choose your features, user limits, integrations, support, and billing terms.",
+    "priceText": "Custom pricing",
+    "termsNote": "Features and services are subject to the agreed proposal.",
+    "highlights": [
+      "Tailored combination of features",
+      "Flexible student and educator licenses",
+      "Agreed usage allowances",
+      "Optional integrations and onboarding",
+      "Personalized support options",
+      "Negotiated pricing and contract terms"
+    ]
+  }
+}

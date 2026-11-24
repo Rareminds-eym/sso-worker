@@ -5,7 +5,18 @@ import { publishSyncEvent } from "../lib/sync-queue";
 import { validatePassword } from "../lib/validate";
 import type { Env } from "../types";
 
-const HYBRID_PLAN_CODE = "hybrid";
+/**
+ * The retained Hybrid plan is the one recorded by the signed catalog adoption (owner decision 1a); its canonical
+ * code is opaque, so Hybrid is identified by plan id only. No adoption means Hybrid is unavailable (fail closed).
+ */
+export async function readAdoptedHybridPlan(database: DbClient) {
+	const adoptions = await database.query<{ receipt: { plan?: { id?: unknown } } }>(
+		"subscription_hybrid_offer_adoptions?select=receipt&limit=2", undefined, "json-array");
+	const planId = adoptions.length === 1 ? adoptions[0].receipt?.plan?.id : undefined;
+	if (typeof planId !== "string" || !/^[0-9a-f-]{36}$/i.test(planId)) return null;
+	return database.queryOne<{ id: string; plan_code: string; name: string }>(
+		`plans?select=id,plan_code,name&id=eq.${encodeURIComponent(planId)}&is_active=eq.true`);
+}
 const VALID_HYBRID_ORG_TYPES = ["school", "college", "university"] as const;
 type HybridOrgType = (typeof VALID_HYBRID_ORG_TYPES)[number];
 /** products.code for the admin-dashboard nav features this grants access to. */
@@ -106,16 +117,14 @@ async function activateHybridForOrganization(
 	adminUserId: string,
 	contactEmail = "",
 ): Promise<Record<string, unknown>> {
-	const hybridPlan = await database.queryOne<{ id: string; plan_code: string; name: string }>(
-		`plans?plan_code=eq.${HYBRID_PLAN_CODE}&is_active=eq.true`,
-	);
+	const hybridPlan = await readAdoptedHybridPlan(database);
 	if (!hybridPlan) {
-		throw new Error("Hybrid plan not found in catalog. Apply seed_hybrid_sales_plan.sql first.");
+		throw new Error("Hybrid plan is unavailable: no active adopted Hybrid catalog offer.");
 	}
 
 	// One org can hold only one active/pending Hybrid subscription at a time.
 	const existing = await database.queryOne(
-		`subscriptions?organization_id=eq.${encodeURIComponent(organization.id)}&plan_code=eq.${HYBRID_PLAN_CODE}&status=in.(active,pending)`,
+		`subscriptions?organization_id=eq.${encodeURIComponent(organization.id)}&plan_id=eq.${hybridPlan.id}&status=in.(active,pending)`,
 	);
 	if (existing) {
 		throw new Error("This organization already has an active or pending Hybrid subscription");
@@ -291,6 +300,8 @@ export async function performUpdateHybridSubscription(
 		throw new Error(`Organization ${data.organization_id} not found`);
 	}
 
+	const hybridPlan = await readAdoptedHybridPlan(database);
+	if (!hybridPlan) throw new Error("Hybrid plan is unavailable: no active adopted Hybrid catalog offer.");
 	// Find the existing active/pending Hybrid subscription to update.
 	const existing = await database.queryOne<{
 		id: string;
@@ -298,9 +309,12 @@ export async function performUpdateHybridSubscription(
 		plan_id: string;
 		plan_code: string;
 		plan_type: string;
+		status: string;
+		seat_count: number;
+		subscription_end_date: string | null;
 		metadata?: Record<string, unknown>;
 	}>(
-		`subscriptions?organization_id=eq.${encodeURIComponent(organization.id)}&plan_code=eq.${HYBRID_PLAN_CODE}&status=in.(active,pending)`,
+		`subscriptions?organization_id=eq.${encodeURIComponent(organization.id)}&plan_id=eq.${hybridPlan.id}&status=in.(active,pending)`,
 	);
 	if (!existing) {
 		throw new Error(
@@ -308,9 +322,14 @@ export async function performUpdateHybridSubscription(
 		);
 	}
 
+	// Usage lives in SkillPassport's database. Until a coordinated reduction
+  // workflow exists, an ordinary terms edit must never lower the source limit.
+  if (!Number.isInteger(existing.seat_count) || data.seat_count < existing.seat_count) {
+    throw new Error("Seat reductions require a coordinated contract change; terms edits can only keep or increase seats.");
+  }
+
 	const billingCycle = data.billing_cycle || "annual";
 	const now = new Date();
-	const endDate = addMonths(now, parseDurationMonths(billingCycle));
 	const organizationType = (organization.metadata?.organization_type as string) || null;
 	const adminRoleForFeatures =
 		organizationType && organizationType in ORG_TYPE_TO_ADMIN_ROLE
@@ -320,19 +339,19 @@ export async function performUpdateHybridSubscription(
 		? await sanitizeHybridFeatures(database, HYBRID_FEATURE_PRODUCT_CODE, adminRoleForFeatures, data.features)
 		: [];
 
+	// A terms edit does not renew or clear the current entitlement period.
 	const updatedFields: Record<string, unknown> = {
 		plan_amount: data.plan_amount,
 		seat_count: data.seat_count,
 		billing_cycle: billingCycle,
 		features,
 		auto_renew: billingCycle !== "lifetime",
-		subscription_end_date: billingCycle === "lifetime" ? null : endDate.toISOString(),
 		metadata: {
 			...(existing.metadata || {}),
 			activation_source: "admin_grant",
 			last_updated_by: data.admin_user_id,
 			last_updated_at: now.toISOString(),
-			notes: data.notes || (existing.metadata as Record<string, unknown>)?.notes || null,
+			notes: data.notes !== undefined ? data.notes : existing.metadata?.notes ?? null,
 		},
 	};
 
@@ -353,13 +372,15 @@ export async function performUpdateHybridSubscription(
 		plan_amount: data.plan_amount,
 		billing_cycle: billingCycle,
 		features,
-		status: "active",
+		status: existing.status,
+		subscription_end_date: existing.subscription_end_date,
+		auto_renew: updatedFields.auto_renew,
 		is_organization_subscription: true,
 		seat_count: data.seat_count,
 		updated_at: now.toISOString(),
 	});
 
-	return { id: existing.id, ...updatedFields };
+	return { id: existing.id, ...updatedFields, subscription_end_date: existing.subscription_end_date };
 }
 
 /**
@@ -515,11 +536,27 @@ export async function performCreateHybridOrganization(
 	}
 }
 
-/**
- * List organizations with their most recent subscription (any plan), for
- * the sp-dash "Activate Hybrid Plan" org table. Admin-only, read via the
- * SSO_SERVICE binding.
- */
+/** Exhaust REST pages explicitly so summary totals cannot inherit a row cap. */
+async function readAllOrganizationRows<T>(database: DbClient, query: string): Promise<T[]> {
+	const rows: T[] = [];
+	for (let offset = 0; ; offset += 500) {
+		const batch = await database.query<T>(`${query}&limit=500&offset=${offset}`);
+		rows.push(...batch);
+		if (batch.length < 500) return rows;
+	}
+}
+
+/** Bound URL size independently of the number of organizations in the result. */
+async function readOrganizationRowsForIds<T>(database: DbClient, query: string, column: string, ids: string[], order: string): Promise<T[]> {
+	const rows: T[] = [];
+	for (let offset = 0; offset < ids.length; offset += 100) {
+		const batchIds = ids.slice(offset, offset + 100).map(encodeURIComponent).join(',');
+		rows.push(...await readAllOrganizationRows<T>(database, `${query}&${column}=in.(${batchIds})&order=${order}`));
+	}
+	return rows;
+}
+
+/** List all filtered organizations and summarize before applying UI pagination. */
 export async function performListOrganizationsWithSubscriptions(
 	env: Env,
 	params: {
@@ -534,8 +571,13 @@ export async function performListOrganizationsWithSubscriptions(
 		organization_id: string;
 		organization_name: string;
 		organization_type: string | null;
+		admin_email: string | null;
+		features: string[];
+		notes: string | null;
 		subscription_id: string | null;
 		plan_code: string | null;
+		/** Hybrid is identified by the adopted plan id; purchase codes are historical snapshots. */
+		is_hybrid: boolean;
 		plan_type: string | null;
 		plan_amount: number | null;
 		billing_cycle: string | null;
@@ -545,8 +587,10 @@ export async function performListOrganizationsWithSubscriptions(
 		subscription_end_date: string | null;
 	}>;
 	pagination: { page: number; limit: number; total: number; totalPages: number };
+	summary: { total: number; hybridCount: number; totalSeats: number; totalDealValue: number };
 }> {
 	const database = db(env);
+	const hybridPlanId = (await readAdoptedHybridPlan(database))?.id ?? null;
 	const page = Number.isInteger(params.page) && (params.page as number) > 0 ? (params.page as number) : 1;
 	const limit = Number.isInteger(params.limit) && (params.limit as number) > 0 ? Math.min(params.limit as number, 100) : 20;
 	const offset = (page - 1) * limit;
@@ -555,41 +599,45 @@ export async function performListOrganizationsWithSubscriptions(
 	// lives on a joined table (subscriptions) that PostgREST can't filter in
 	// one request alongside organizations. This mirrors the same all-then-
 	// filter-then-paginate pattern already used by getSalesSubscriptions.
-	// Caveat: PostgREST's default row cap could silently truncate results
-	// if the organization count grows very large — same caveat that applies
-	// to sales-subscriptions.ts today. Revisit with a DB view/RPC if this
-	// list needs to scale past a few thousand orgs.
-	let orgQuery = "organizations?select=id,name,metadata,created_at&deleted_at=is.null&order=created_at.desc";
+	let orgQuery = "organizations?select=id,name,metadata,created_at,created_by&deleted_at=is.null&order=created_at.desc,id.asc";
 	if (params.search) {
 		orgQuery += `&name=ilike.*${encodeURIComponent(params.search)}*`;
 	}
 
-	const organizations = await database.query<{
+	const organizations = await readAllOrganizationRows<{
 		id: string;
 		name: string;
 		metadata?: Record<string, unknown>;
 		created_at: string;
-	}>(orgQuery);
+		created_by: string | null;
+	}>(database, orgQuery);
 
 	if (organizations.length === 0) {
-		return { data: [], pagination: { page, limit, total: 0, totalPages: 0 } };
+		return { data: [], pagination: { page, limit, total: 0, totalPages: 0 }, summary: { total: 0, hybridCount: 0, totalSeats: 0, totalDealValue: 0 } };
 	}
 
-	const orgIds = organizations.map((o) => encodeURIComponent(o.id)).join(",");
-	const subscriptions = await database.query<{
+	const ownerIds = [...new Set(organizations.map(org => org.created_by).filter((id): id is string => Boolean(id)))];
+	const owners = await readOrganizationRowsForIds<{ id: string; email: string | null }>(database,
+		'users?select=id,email', 'id', ownerIds, 'id.asc');
+	const ownerEmails = new Map(owners.map(owner => [owner.id, owner.email]));
+
+	const subscriptions = await readOrganizationRowsForIds<{
 		id: string;
 		organization_id: string;
+		plan_id: string;
 		plan_code: string;
 		plan_type: string;
 		plan_amount: number;
 		billing_cycle: string;
 		status: string;
 		seat_count: number;
+		features: string[] | null;
+		metadata?: { notes?: string | null };
 		subscription_start_date: string;
 		subscription_end_date: string | null;
 		created_at: string;
-	}>(
-		`subscriptions?organization_id=in.(${orgIds})&is_organization_subscription=eq.true&order=created_at.desc`,
+	}>(database,
+		'subscriptions?is_organization_subscription=eq.true', 'organization_id', organizations.map(org => org.id), 'created_at.desc,id.asc',
 	);
 
 	// Keep only the most recent subscription per org.
@@ -605,9 +653,13 @@ export async function performListOrganizationsWithSubscriptions(
 		return {
 			organization_id: org.id,
 			organization_name: org.name,
+			admin_email: org.created_by ? ownerEmails.get(org.created_by) ?? null : null,
+			features: sub?.features ?? [],
+			notes: sub?.metadata?.notes ?? null,
 			organization_type: (org.metadata?.organization_type as string) || null,
 			subscription_id: sub?.id ?? null,
 			plan_code: sub?.plan_code ?? null,
+			is_hybrid: hybridPlanId !== null && sub?.plan_id === hybridPlanId,
 			plan_type: sub?.plan_type ?? null,
 			plan_amount: sub?.plan_amount ?? null,
 			billing_cycle: sub?.billing_cycle ?? null,
@@ -631,6 +683,12 @@ export async function performListOrganizationsWithSubscriptions(
 	const paginated = rows.slice(offset, offset + limit);
 
 	return {
+		summary: {
+      total,
+      hybridCount: rows.filter(row => row.is_hybrid && row.status === 'active').length,
+      totalSeats: rows.reduce((sum, row) => sum + (row.seat_count ?? 0), 0),
+      totalDealValue: rows.reduce((sum, row) => sum + Number(row.plan_amount ?? 0), 0),
+    },
 		data: paginated,
 		pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
 	};

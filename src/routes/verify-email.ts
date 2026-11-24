@@ -1,3 +1,5 @@
+import { verifyEmailWithFreeEntry } from '../lib/subscriptions/free-entry';
+import { publishCommittedSubscriptions } from '../lib/subscriptions/projection-sync';
 import { audit } from "../lib/audit";
 import { db } from "../lib/db";
 import { sendEmail } from "../lib/email";
@@ -88,38 +90,19 @@ export async function performVerifyEmail(
   const database = db(env);
 
   const tokenHash = await hashToken(params.token);
-  const record = await database.queryOne<{
-    id: string;
-    user_id: string;
-    used: boolean;
-    expires_at: string;
-  }>(
-    `email_verifications?token_hash=eq.${encodeURIComponent(tokenHash)}&select=*`,
-  );
-
-  if (!record) return { error: "Invalid verification token", status: 404 };
-  if (record.used) return { error: "Token already used", status: 410 };
-  if (new Date(record.expires_at) < new Date()) return { error: "Token expired", status: 410 };
-
-  // Mark token as used and verify the user's email
-  await database.update(
-    "email_verifications",
-    { id: `eq.${encodeURIComponent(record.id)}` },
-    { used: true },
-  );
-
-  await database.update(
-    "users",
-    { id: `eq.${encodeURIComponent(record.user_id)}` },
-    { is_email_verified: true },
-  );
+  let receipt;
+  try { receipt = await verifyEmailWithFreeEntry(database, tokenHash); }
+  catch { return { error: 'Email verification and subscription activation unavailable', status: 503 }; }
+  if ('error' in receipt) return receipt;
 
   publishSyncEvent(env.SYNC_QUEUE, ctx, 'user.email_verified', {
-    user_id: record.user_id,
+    user_id: receipt.userId,
   });
+  ctx.waitUntil(publishCommittedSubscriptions(database, env.SYNC_QUEUE, ctx, receipt.userId, receipt.subscriptionIds)
+    .catch(() => console.error('[SUBSCRIPTION_SYNC] Committed verification projection unavailable')));
 
   audit(ctx, env, "email_verified", {
-    user_id: record.user_id,
+    user_id: receipt.userId,
     ip_address: ip || null,
     user_agent: ua || null,
   });
