@@ -734,3 +734,22 @@ describe('actual commerce issuer/provider boundary (isolated database contract)'
     await expect(readSettledRetake(database as never, id(8), id(2), id(5), actor.subject, id(11))).rejects.toThrow();
   });
 });
+
+
+describe('server-authorized promo quote pricing', () => {
+  it.each([39900, 123700])('uses exact accepted amount %i in the issued quote', async amount => {
+    const f = fixture();
+    const result = await executeSubscriptionCommerce(f.database as never, f.provider, actor, id(5), id(7), {
+      ...baseRequest(), priceAdjustmentMinor: amount - price.amountMinor,
+    });
+    expect(result).toMatchObject({ kind: 'quote', quote: { amountMinor: amount } });
+    expect(f.provider.createOrder).not.toHaveBeenCalled();
+  });
+  it.each([-100000, -100001, 1000001, 0.5, NaN])('rejects unsafe adjustment %s before issuing a quote', async adjustment => {
+    const f = fixture();
+    await expect(executeSubscriptionCommerce(f.database as never, f.provider, actor, id(5), id(7), {
+      ...baseRequest(), priceAdjustmentMinor: adjustment,
+    })).rejects.toThrow();
+    expect(f.provider.createOrder).not.toHaveBeenCalled();
+  });
+});
