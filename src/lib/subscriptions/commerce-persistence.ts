@@ -1,6 +1,6 @@
 import type { DbClient } from '../db';
 import {
-  calculateCommerceRefund, createCommerceQuote, includedLearnerCapacity, inspectCommerceCheckout, parseCommerceRequest,
+  calculateCommerceRefund, createCommerceQuote, includedLearnerCapacity, inspectCommerceCheckout, MAX_PROMO_ADJUSTMENT_MINOR, parseCommerceRequest,
   reconcileCommercePayment,
   validateCommercePolicy, verifyCommerceOrder, verifyCommercePayment,
   type CommerceActor, type CommerceCapture, type CommerceOrder,
@@ -283,9 +283,23 @@ export async function executeSubscriptionCommerce(database: Database, provider: 
     }).map(price);
     if (selected !== null && selected.length !== 1) fail('Commerce price must resolve exactly once');
     if (!state && (purpose !== 'purchase' || request.expectedRevisionId !== revisionId)) fail('Initial purchase revision differs');
+    // SkillPassport is the sole authority on whether a promo applies and by how much (see
+    // promo_codes/promo_redemptions in SkillPassport's own database — this worker never reads
+    // that data). This worker only ever adjusts the independently-derived published price above
+    // (additive-only, matching the existing promo_codes.price_adjustment convention), by a
+    // bounded amount, and never accepts an adjustment that leaves a non-positive final price.
+    // An absent adjustment changes nothing (ordinary checkout is untouched).
+    let effectivePrice = selected === null ? null : selected[0];
+    if (effectivePrice && request.priceAdjustmentMinor !== undefined) {
+      const adjustment = integer(request.priceAdjustmentMinor, 'commerce.priceAdjustmentMinor');
+      if (adjustment > MAX_PROMO_ADJUSTMENT_MINOR) fail('Commerce price adjustment exceeds the fixed limit');
+      const adjustedAmountMinor = effectivePrice.amountMinor + adjustment;
+      if (adjustedAmountMinor < 1) fail('Commerce price adjustment would not leave a positive price');
+      effectivePrice = { ...effectivePrice, amountMinor: adjustedAmountMinor };
+    }
     const quote = createCommerceQuote({
       id: operationId, actor, subscriptionId: request.subscriptionId, productId, audience: actor.audience, purpose, state,
-      planId: retained.planId, revisionId, sourcePurchaseMode: transition?.sourcePurchaseMode, price: selected === null ? null : selected[0], referenceId: request.referenceId === undefined ? null : uuid(request.referenceId, 'commerce.referenceId'), policy: retained.policy, now
+      planId: retained.planId, revisionId, sourcePurchaseMode: transition?.sourcePurchaseMode, price: effectivePrice, referenceId: request.referenceId === undefined ? null : uuid(request.referenceId, 'commerce.referenceId'), policy: retained.policy, now
     });
     return database.rpc(purpose === 'retake' ? 'issue_subscription_commerce_retake_quote' : 'issue_subscription_commerce_quote', { p_identity: identity, p_quote: quote });
   }

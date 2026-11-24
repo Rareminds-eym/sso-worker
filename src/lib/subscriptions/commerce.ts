@@ -3,6 +3,13 @@ import type { PriceOption } from './types';
 import { choice, integer, invalid, record, text, uuid } from './validation';
 
 const MILLISECONDS_PER_SECOND = 1000;
+/**
+ * A generic safety ceiling on any caller-supplied price adjustment (checkout and catalog
+ * display), independent of any specific campaign's actual adjustment value — it exists only to
+ * bound a bug or malformed request, not to encode a real price. SkillPassport alone decides the
+ * actual adjustment for a given promo.
+ */
+export const MAX_PROMO_ADJUSTMENT_MINOR = 1_000_000;
 
 export type CommercePurpose = 'purchase' | 'renew' | 'upgrade' | 'retake';
 export type CommerceSubject = LifecycleState['subject'];
@@ -167,15 +174,23 @@ export interface CommerceRequest {
   kind: 'activate' | 'quote' | 'order' | 'checkout' | 'settle' | 'refund' | 'refund_confirm'; subscriptionId: string; subject: CommerceSubject;
   expectedVersion: number; expectedRevisionId: string;
   purpose?: unknown; revisionId?: unknown; priceId?: unknown; referenceId?: unknown; quoteId?: unknown; paymentId?: unknown; reconcile?: unknown; settlementId?: unknown; refundId?: unknown; contractId?: unknown;
+  /**
+   * A SkillPassport-decided, bounded price adjustment (see MAX_PROMO_ADJUSTMENT_MINOR in
+   * ./commerce-persistence) — quote requests only, always optional. SkillPassport remains the
+   * sole authority on promo validity/eligibility/quota; this worker never evaluates a promo
+   * code itself, it only ever narrows the independently-derived published price by this amount,
+   * within a fixed cap, and never below a positive final price.
+   */
+  priceAdjustmentMinor?: unknown;
 }
 export function parseCommerceRequest(value: unknown): CommerceRequest {
-  const r = record(value, 'commerce.request', ['kind', 'subscriptionId', 'subject', 'expectedVersion', 'expectedRevisionId', 'purpose', 'revisionId', 'priceId', 'referenceId', 'quoteId', 'paymentId', 'reconcile', 'settlementId', 'refundId', 'contractId']);
+  const r = record(value, 'commerce.request', ['kind', 'subscriptionId', 'subject', 'expectedVersion', 'expectedRevisionId', 'purpose', 'revisionId', 'priceId', 'referenceId', 'quoteId', 'paymentId', 'reconcile', 'settlementId', 'refundId', 'contractId', 'priceAdjustmentMinor']);
   const kind = choice(r.kind, 'commerce.kind', ['activate', 'quote', 'order', 'checkout', 'settle', 'refund', 'refund_confirm']);
   const s = record(r.subject, 'commerce.subject', ['kind', 'id']);
   const common = { kind, subscriptionId: uuid(r.subscriptionId, 'commerce.subscriptionId'), subject: { kind: choice(s.kind, 'commerce.subject.kind', ['user', 'organization']), id: uuid(s.id, 'commerce.subject.id') }, expectedVersion: integer(r.expectedVersion, 'commerce.expectedVersion'), expectedRevisionId: uuid(r.expectedRevisionId, 'commerce.expectedRevisionId') };
   if (common.expectedVersion === 0 && (kind === 'refund' || kind === 'refund_confirm' || (kind === 'quote' && r.purpose !== 'purchase'))) invalid('commerce.expectedVersion', 'zero version applies only to a new purchase quote/order/settlement');
   if (kind === 'activate' && common.expectedVersion !== 0) invalid('commerce.expectedVersion', 'activation requires uninitialized subscription');
-  const allowed = kind === 'activate' ? ['contractId'] : kind === 'quote' ? ['purpose', 'revisionId', 'priceId', 'referenceId'] : kind === 'order' || kind === 'checkout' ? ['quoteId'] : kind === 'settle' ? ['quoteId', 'paymentId', 'reconcile'] : kind === 'refund' ? ['settlementId'] : ['settlementId', 'refundId'];
+  const allowed = kind === 'activate' ? ['contractId'] : kind === 'quote' ? ['purpose', 'revisionId', 'priceId', 'referenceId', 'priceAdjustmentMinor'] : kind === 'order' || kind === 'checkout' ? ['quoteId'] : kind === 'settle' ? ['quoteId', 'paymentId', 'reconcile'] : kind === 'refund' ? ['settlementId'] : ['settlementId', 'refundId'];
   for (const k of Object.keys(r)) if (!['kind', 'subscriptionId', 'subject', 'expectedVersion', 'expectedRevisionId', ...allowed].includes(k)) invalid('commerce.request', 'field not applicable');
   if (kind === 'settle' && (r.reconcile === true ? Object.hasOwn(r, 'paymentId') : Object.hasOwn(r, 'reconcile') || typeof r.paymentId !== 'string' || !/^pay_[A-Za-z0-9]+$/.test(r.paymentId))) invalid('commerce.settlement', 'explicit payment reference or reconciliation required exclusively');
   if (kind === 'activate') uuid(r.contractId, 'commerce.contractId');
@@ -189,6 +204,10 @@ export function parseCommerceRequest(value: unknown): CommerceRequest {
       uuid(r.priceId, 'commerce.priceId');
       if (Object.hasOwn(r, 'referenceId')) invalid('commerce.referenceId', 'not applicable');
     }
+    // Additive-only, matching the existing DIDAC promo_codes.price_adjustment convention
+    // (CHECK price_adjustment >= 0) — never a caller-chosen negative value. The fixed cap
+    // itself is enforced where the adjustment is applied, not here.
+    if (Object.hasOwn(r, 'priceAdjustmentMinor')) integer(r.priceAdjustmentMinor, 'commerce.priceAdjustmentMinor');
   }
   return { ...common, ...Object.fromEntries(allowed.filter(k => Object.hasOwn(r, k)).map(k => [k, r[k]])) };
 }
