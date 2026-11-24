@@ -160,5 +160,8 @@ try {
       ASSERT NOT EXISTS((TABLE seed_operations_before EXCEPT TABLE public.zoho_candidate_administration_operations)
         UNION ALL(TABLE public.zoho_candidate_administration_operations EXCEPT TABLE seed_operations_before));
     END $$;`, 'ROLLBACK;'].join('\n'));
+  docker(psql,'CREATE EXTENSION IF NOT EXISTS pg_graphql;\nGRANT SELECT ON public.users TO service_role;\nCREATE VIEW public.fixture_candidate_identity_reader AS SELECT id,email FROM public.users;\nGRANT SELECT ON public.fixture_candidate_identity_reader TO anon;\nGRANT SELECT(email) ON public.users TO authenticated;\nCREATE FUNCTION public.fixture_candidate_identity_count() RETURNS bigint LANGUAGE sql SECURITY DEFINER\n SET search_path=pg_catalog,public AS $$ SELECT count(*) FROM public.users $$;\nGRANT EXECUTE ON FUNCTION public.fixture_candidate_identity_count() TO PUBLIC;\n');
+  docker(psql,read('supabase/migrations/20270312000000_zoho_identity_server_boundary.sql'));
+  docker(psql,read('src/__tests__/sql/zoho-server-identity-boundary.sql'));
   console.log('Canonical candidate SQL regressions, two-session operation/identity races and context-revocation fencing passed in a disposable database using actual SSO constraints and subscription trigger.');
 } finally { if (created) docker(['dropdb', '-U', 'postgres', database]); }

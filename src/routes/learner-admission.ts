@@ -1,3 +1,4 @@
+import { buildLearnerProfile } from '../lib/learner-profile';
 import { db } from "../lib/db";
 import { buildLearnerInvitationEmail } from "../lib/email-templates";
 import { getErrorMessage } from "../lib/error-utils";
@@ -257,6 +258,12 @@ export async function performCreateLearnerUser(
 					organization_id,
 					roles: ["learner"],
 					status: "active",
+					learner_profile: buildLearnerProfile({
+						...metadata, name, email,
+						contactNumber: contact_number,
+						enrollmentNumber: enrollment_number,
+						program_id,
+					}),
 				},
 				timestamp: new Date().toISOString(),
 			});

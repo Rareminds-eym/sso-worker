@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "source": "Spec design.md §Approved values: GST, supplier state Karnataka (29), 18%, CGST 9 + SGST 9 intra-state, IGST 18 inter-state; GST-exclusive display. Supplier GSTIN and SAC are owner inputs (Task 46); invoice issuing stays disabled until both are set.",
+  "kind": "gst",
+  "rateBasisPoints": 1800,
+  "supplierStateCode": "29",
+  "intraState": [
+    { "name": "CGST", "rateBasisPoints": 900 },
+    { "name": "SGST", "rateBasisPoints": 900 }
+  ],
+  "interState": [
+    { "name": "IGST", "rateBasisPoints": 1800 }
+  ],
+  "priceDisplay": "exclusive",
+  "supplierGstin": null,
+  "sacCode": null
+}

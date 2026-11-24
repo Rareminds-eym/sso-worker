@@ -64,7 +64,7 @@ describe("membership.created producers other than acceptInvite carry no `source`
             queryOne: vi.fn(async (path: string) => {
                 if (path.startsWith("users?")) {
                     return {
-                        id: "user-login-1", email: "edu@example.com", password_hash: "x", is_blocked: false,
+                        id: "00c52487-710f-4b3c-9541-3b3928639266", email: "edu@example.com", password_hash: "x", is_blocked: false,
                         is_email_verified: true, user_metadata: {}
                     };
                 }
@@ -72,12 +72,15 @@ describe("membership.created producers other than acceptInvite carry no `source`
                 return null;
             }),
             query: vi.fn(async (path: string) => {
-                if (path.startsWith("memberships?")) return [{ id: "m1", user_id: "user-login-1", org_id: ORG, status: "active" }];
+                if (path.startsWith("memberships?")) return [{ id: "m1", user_id: "00c52487-710f-4b3c-9541-3b3928639266", org_id: ORG, status: "active" }];
                 return [];
             }),
             mutate: vi.fn(async () => ({})),
             update: vi.fn(async () => undefined),
-            rpc: vi.fn(async () => ({ roles: ["college_educator"], products: [], membership_status: "active" })),
+            // Ordinary (non-imported) users are allowed generic identity sync by the Zoho candidate policy.
+            rpc: vi.fn(async (fn: string) => fn === "zoho_candidate_sync_policy"
+                ? { version: 1, genericSyncAllowed: true }
+                : { roles: ["college_educator"], products: [], membership_status: "active" }),
         };
         const { env } = envWith();
         const { ctx, flush } = ctxCollector();

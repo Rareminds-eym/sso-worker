@@ -45,7 +45,7 @@ const dbState = {
   oauth_accounts: [] as Array<Record<string, unknown>>,
   memberships: [] as Array<Record<string, unknown>>,
   sessions: [] as Array<Record<string, unknown>>,
-  insertedUsers: [] as Array<{ id: string; email: string; is_email_verified: boolean; user_metadata: Record<string, unknown> }>,
+  insertedUsers: [] as Array<{ id: string; email: string; is_email_verified: boolean; user_metadata: Record<string, unknown>; password_hash?: unknown }>,
   rpcCalls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
 };
 
@@ -258,6 +258,8 @@ describe("performOAuthLogin", () => {
     vi.mocked(checkUserExistsInSkillpassport).mockResolvedValue(false);
     const normalFetch = createMockSupabaseFetch();
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      // Ordinary OAuth users are allowed generic identity sync by the Zoho candidate policy.
+      if (String(input).includes("/rest/v1/rpc/zoho_candidate_sync_policy")) return Response.json({ version: 1, genericSyncAllowed: true });
       if (String(input).includes("/rest/v1/subscriptions?")) {
         return Response.json([{ id: "org-sub", organization_id: "org-id", seat_count: 5000,
           assigned_seats: 0, is_organization_subscription: true, plan_code: "college_enterprise" }]);

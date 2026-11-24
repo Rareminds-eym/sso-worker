@@ -20,6 +20,31 @@ import { endpointRateLimit } from "./lib/rate-limit";
 import { resolveEffectiveRoles } from "./lib/roles";
 import { mintAccessToken, rotateRefreshToken } from "./lib/session-rotation";
 import { getLteSubscriptionSnapshot } from "./lib/subscription-snapshot";
+import {
+  currentSubscriptionExecution,
+  executeSubscriptionCommerce,
+  executeSubscriptionLifecycle,
+  listPublishedSubscriptionPlans,
+  listSubscriptionExecutions,
+  preparePlanPublication,
+  prepareSubscriptionCreditExecution,
+  prepareSubscriptionRetakeSettlement,
+  publishPlanRevision,
+  readCanonicalPlanInventory,
+  readCreditAuthoringContext,
+  readPlanAuthoringContext,
+  readSubscriptionAudit,
+  stageOrdinaryPlanRevision,
+  subscriptionActionContext,
+  SubscriptionExecutionDenied
+} from "./lib/subscriptions";
+import { AuthoringForbidden, registerSubscriptionCommerceEntryContract } from './lib/subscriptions/authoring';
+import { adoptHybridCatalogOffer, installSubscriptionCatalog, makeSubscriptionCatalogAvailable, retireLegacySubscriptionCatalog } from './lib/subscriptions/catalog-administration';
+import { parseCommerceRequest } from './lib/subscriptions/commerce';
+import { CommerceRejection } from './lib/subscriptions/commerce-persistence';
+import { listPublishedCatalogForAdministration } from './lib/subscriptions/consumers';
+import { publishCommittedSubscription, readPlanSyncInventory } from "./lib/subscriptions/projection-sync";
+import { CatalogValidationError } from './lib/subscriptions/validation';
 import { publishSyncEvent } from "./lib/sync-queue";
 import { handleQueueBatch } from "./queue/queue-router";
 import { performQueueBulkFacultyUpload, performQueueBulkLearnerUpload } from "./routes/bulk-upload";
@@ -54,6 +79,7 @@ import type {
   GenerateAuthorizationCodeResponse,
 } from "./types/sso-code";
 export { AuthorizationCodeStore } from "./durable-objects/AuthorizationCodeStore";
+export { ZohoApproverAuthority } from "./rpc/zoho-approver-authority";
 
 import { createSsoAuthority } from "./rpc/authority";
 import type {
@@ -75,6 +101,10 @@ import type {
 
 // ─── WorkerEntrypoint ─────────────────────────────────────────
 export class SsoWorker extends WorkerEntrypoint<Env> {
+  // WorkerEntrypoint supplies these at runtime; keep the private binding
+  // contract explicit when local tooling cannot resolve cloudflare:workers.
+  declare protected env: Env;
+  declare protected ctx: ExecutionContext<{}>;
   // ── Scheduled (cron) ──────────────────────────────────────────
   async scheduled(_event: ScheduledEvent): Promise<void> {
     const database = db(this.env);
@@ -711,6 +741,19 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 
   // ── Transactions ──────────────────────────────────────────────
 
+  async getSubscriptionPaymentFulfillment(data: import('./lib/subscription-payment').SubscriptionPaymentReference): Promise<import('./lib/subscription-payment').SubscriptionPaymentResult | null> {
+    const { readSubscriptionPayment } = await import('./lib/subscription-payment');
+    return readSubscriptionPayment(db(this.env), data);
+  }
+
+  async fulfillSubscriptionPayment(data: import('./lib/subscription-payment').SubscriptionPaymentInput): Promise<import('./lib/subscription-payment').SubscriptionPaymentResult> {
+    const { fulfillSubscriptionPayment } = await import('./lib/subscription-payment');
+    const result = await fulfillSubscriptionPayment(db(this.env), data);
+    if (!result.already_fulfilled) publishSyncEvent(this.env.SYNC_QUEUE, this.ctx,
+      result.is_upgrade ? 'subscription.updated' : 'subscription.created', result.subscription);
+    return result;
+  }
+
   async recordTransaction(data: {
     subscription_id?: string;
     user_id: string;
@@ -888,11 +931,59 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   }
 
   async syncPlans(): Promise<{ plans: Record<string, unknown>[] }> {
-    const database = db(this.env);
-    const plans = await database.query(
-      "plans?is_active=eq.true&order=display_order.asc",
-    );
-    return { plans: (plans || []) as Record<string, unknown>[] };
+    return { plans: await readPlanSyncInventory(db(this.env)) };
+  }
+
+  /** Private binding inventory for administration; no publication or entitlement decision. */
+  async getSubscriptionCatalogInventory() {
+    return { schemaVersion: 1 as const, plans: await readCanonicalPlanInventory(db(this.env)) };
+  }
+
+  /** Private service transport; the dashboard must authorize the administrator before calling. */
+  async getSubscriptionPlanAuthoringContext(planId: string) {
+    return readPlanAuthoringContext(db(this.env), planId);
+  }
+
+  async getSubscriptionCreditAuthoringContext(planId: string) {
+    return readCreditAuthoringContext(db(this.env), planId);
+  }
+
+  /** Private dashboard transport. A signed/live administrator is required independently of binding access. */
+  async stageSubscriptionPlanRevisionBundle(accessToken: string, bundle: unknown, productId: string, featureDefinitions: unknown) {
+    return stageOrdinaryPlanRevision(this.env, accessToken, bundle, productId, featureDefinitions);
+  }
+
+  async prepareSubscriptionPlanPublication(accessToken: string, planId: string, revisionId: string,
+    productId: string, featureDefinitions: unknown) {
+    return preparePlanPublication(this.env, accessToken, planId, revisionId, productId, featureDefinitions);
+  }
+
+  /** Private dashboard transport; each operation independently requires a signed live platform super_admin. */
+  async installSubscriptionCatalog(accessToken: string, productId: string, request: unknown, featureDefinitions: unknown) {
+    return installSubscriptionCatalog(this.env, accessToken, productId, request, featureDefinitions);
+  }
+  async makeSubscriptionCatalogAvailable(accessToken: string, productId: string, request: unknown, featureDefinitions: unknown) {
+    const result = await makeSubscriptionCatalogAvailable(this.env, accessToken, productId, request, featureDefinitions);
+    if (result.kind === 'available') for (const id of result.receipt.activatedPlanIds) {
+      publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'plan.updated', { id });
+    }
+    return result;
+  }
+  async adoptHybridCatalogOffer(accessToken: string, productId: string, request: unknown, featureDefinitions: unknown) {
+    return adoptHybridCatalogOffer(this.env, accessToken, productId, request, featureDefinitions);
+  }
+  async retireLegacySubscriptionCatalog(accessToken: string, productId: string, request: unknown) {
+    const result = await retireLegacySubscriptionCatalog(this.env, accessToken, productId, request);
+    if (result.kind === 'retired') for (const id of result.receipt.retiredPlanIds) {
+      publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'plan.updated', { id });
+    }
+    return result;
+  }
+  async publishSubscriptionPlanRevision(accessToken: string, planId: string, revisionId: string,
+    expectedPreviousRevisionId: string | null, productId: string, featureDefinitions: unknown) {
+    const result = await publishPlanRevision(this.env, accessToken, planId, revisionId, expectedPreviousRevisionId, productId, featureDefinitions);
+    if (result.kind === 'published') publishSyncEvent(this.env.SYNC_QUEUE, this.ctx, 'plan.updated', { id: result.receipt.planId });
+    return result;
   }
 
   /**
@@ -958,6 +1049,85 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     );
 
     return { subscriptions: (subscriptions || []) as Record<string, unknown>[] };
+  }
+
+  async executeSubscriptionLifecycle(accessToken: string, productId: string, operationId: string, request: unknown) {
+    try {
+      const receipt = await executeSubscriptionLifecycle(this.env, accessToken, productId, operationId, request);
+      this.ctx.waitUntil(publishCommittedSubscription(db(this.env), this.env.SYNC_QUEUE, this.ctx, receipt.decision.next.id, 'subscription.updated')
+        .catch(() => console.error('[SUBSCRIPTION_SYNC] Committed lifecycle projection unavailable')));
+      return receipt;
+    }
+    catch (error) { if (error instanceof SubscriptionExecutionDenied) return { kind: 'forbidden' as const }; throw error; }
+  }
+
+  async listSubscriptionExecutions(accessToken: string, productId: string, cursor: string | null) {
+    try { return await listSubscriptionExecutions(this.env, accessToken, productId, cursor); }
+    catch (error) { if (error instanceof SubscriptionExecutionDenied) return { kind: 'forbidden' as const }; throw error; }
+  }
+
+  /** Private dashboard transport: the same published terms customers see, across audiences, for a live super_admin. */
+  async listPublishedCatalogForAdministration(accessToken: string, productId: string, features: unknown, cursor: string | null) {
+    try { return await listPublishedCatalogForAdministration(this.env, accessToken, productId, features, cursor); }
+    catch (error) {
+      if (error instanceof AuthoringForbidden) return { kind: 'forbidden' as const };
+      if (error instanceof CatalogValidationError) return { kind: 'invalid' as const };
+      throw error;
+    }
+  }
+
+  async listPublishedSubscriptionPlans(accessToken: string, productId: string, features: unknown, cursor: string | null) {
+    try { return await listPublishedSubscriptionPlans(this.env, accessToken, productId, features, cursor); }
+    catch (error) { if (error instanceof SubscriptionExecutionDenied) return { kind: 'forbidden' as const }; throw error; }
+  }
+
+  async getCurrentSubscriptionExecution(accessToken: string, subscriptionId: string, productId: string) {
+    try { return await currentSubscriptionExecution(this.env, accessToken, subscriptionId, productId); }
+    catch (error) { if (error instanceof SubscriptionExecutionDenied) return { kind: 'forbidden' as const }; throw error; }
+  }
+
+  async getSubscriptionActionContext(accessToken: string, subscriptionId: string, productId: string) {
+    try { return await subscriptionActionContext(this.env, accessToken, subscriptionId, productId); }
+    catch (error) { if (error instanceof SubscriptionExecutionDenied) return { kind: 'forbidden' as const }; throw error; }
+  }
+
+  async getSubscriptionAudit(accessToken: string, subscriptionId: string, productId: string, cursor: string | null) {
+    try { return await readSubscriptionAudit(this.env, accessToken, subscriptionId, productId, cursor); }
+    catch (error) { if (error instanceof SubscriptionExecutionDenied) return { kind: 'forbidden' as const }; throw error; }
+  }
+
+  async prepareSubscriptionRetakeSettlement(accessToken: string, productId: string, request: unknown) {
+    try { return await prepareSubscriptionRetakeSettlement(this.env, accessToken, productId, request); }
+    catch (error) { if (error instanceof SubscriptionExecutionDenied) return { kind: 'forbidden' as const }; throw error; }
+  }
+
+  async executeSubscriptionCommerce(accessToken: string, productId: string, operationId: string, request: unknown) {
+    try {
+      const receipt = await executeSubscriptionCommerce(this.env, accessToken, productId, operationId, request);
+      const command = parseCommerceRequest(request);
+      if (['activate', 'settle', 'refund'].includes(command.kind)) {
+        this.ctx.waitUntil(publishCommittedSubscription(db(this.env), this.env.SYNC_QUEUE, this.ctx, command.subscriptionId,
+          command.kind === 'activate' ? 'subscription.created' : 'subscription.updated')
+          .catch(() => console.error('[SUBSCRIPTION_SYNC] Committed commerce projection unavailable')));
+      }
+      return receipt;
+    }
+    catch (error) {
+      if (error instanceof SubscriptionExecutionDenied) return { kind: 'forbidden' as const };
+      // Deterministic rejections cross the RPC boundary as data; error classes do not survive it.
+      if (error instanceof CommerceRejection) return { kind: 'rejected' as const, reason: error.code };
+      throw error;
+    }
+  }
+
+  /** Private application transport; signed/live commercial administration is checked by the owner. */
+  async registerSubscriptionCommerceEntryContract(accessToken: string, productId: string, contract: unknown) {
+    return registerSubscriptionCommerceEntryContract(this.env, accessToken, productId, contract);
+  }
+
+  async prepareSubscriptionCreditExecution(accessToken: string, productId: string, request: unknown, features: unknown) {
+    try { return await prepareSubscriptionCreditExecution(this.env, accessToken, productId, request, features); }
+    catch (error) { if (error instanceof SubscriptionExecutionDenied) return { kind: 'forbidden' as const }; throw error; }
   }
 
   /**
@@ -1444,41 +1614,9 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
   }
 
   async revokeAllSessionsForUser(input: Parameters<SsoServiceBinding["revokeAllSessionsForUser"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["revokeAllSessionsForUser"]>>> {
-    const { correlationId, targetUserId } = input;
-    const database = db(this.env);
-
-    try {
-      const activeSessions = await database.query<{ id: string }>(
-        `sessions?user_id=eq.${encodeURIComponent(targetUserId)}&revoked=eq.false&select=id`
-      );
-      const count = activeSessions?.length || 0;
-
-      if (count > 0) {
-        await database.update(
-          "sessions",
-          { user_id: `eq.${encodeURIComponent(targetUserId)}`, revoked: `eq.false` },
-          { revoked: true, last_used_at: new Date().toISOString() }
-        );
-      }
-
-      console.log(`[SSO] Revoked ${count} active sessions for user ${targetUserId}`);
-
-      return {
-        correlationId,
-        outcome: "succeeded",
-        kind: "succeeded",
-        data: { sessionsRevoked: count }
-      };
-    } catch (error) {
-      console.error(`[SSO] Failed to revoke sessions for user ${targetUserId}:`, error);
-      return {
-        correlationId,
-        outcome: "rejected",
-        kind: "rejected",
-        code: "invalid_request"
-      };
-    }
+    return createSsoAuthority(this.env, this.ctx).revokeAllSessionsForUser(input);
   }
+
 
   async getIdentity(input: Parameters<SsoServiceBinding["getIdentity"]>[0]): Promise<Awaited<ReturnType<SsoServiceBinding["getIdentity"]>>> {
     return createSsoAuthority(this.env, this.ctx).getIdentity(input);
@@ -2342,6 +2480,5 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
 }
 
 export default SsoWorker;
-export { ZohoApproverAuthority } from "./rpc/zoho-approver-authority";
 
 export { ZohoCandidateProvisioner } from "./rpc/zoho-candidate-provisioner";

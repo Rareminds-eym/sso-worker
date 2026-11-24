@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "source": "Owner decision 2026-11-21 (Task 5 decision 4: filter). Each signed-in buyer sees only its own audience's published plans. Individual learners belong to the platform organization; institutions and companies are identified by organizations.metadata.organization_type. An organization without a mapped type sees no plans.",
+  "platformOrganizationAudience": "individual",
+  "organizationTypes": {
+    "school": "school",
+    "college": "college",
+    "university": "university",
+    "company": "recruitment"
+  }
+}
