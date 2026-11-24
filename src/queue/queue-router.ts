@@ -7,6 +7,7 @@
 import { markBatchFailed, recordRowError, updateBatchProgress } from "../lib/batch-kv";
 import { db } from "../lib/db";
 import { getErrorMessage } from "../lib/error-utils";
+import { recordSubscriptionCommerceCapture } from "../lib/subscriptions/commerce-persistence";
 import type { Env, MessageBatch, QueueMessage } from "../types";
 import {
 	BULK_CREATE_MESSAGE_TYPES,
@@ -212,6 +213,41 @@ async function handlePaymentEvent(
 
 	const eventId = body.event_id as string;
 	const eventType = body.event_type as string;
+
+	// Canonical subscription orders use the retained quote/capture owner. Keep
+	// its signed envelope intact and never send it to legacy plan fulfillment.
+	if (eventType === "payment.captured" || eventType === "order.paid") {
+		const payload = body.payload as { payment?: { entity?: { order_id?: unknown } }; order?: { entity?: { id?: unknown } } };
+		const orderId = eventType === "payment.captured"
+			? payload?.payment?.entity?.order_id : payload?.order?.entity?.id;
+		if (typeof orderId !== "string" || !/^order_[A-Za-z0-9]+$/.test(orderId)) {
+			throw new Error("Payment capture order identity unavailable");
+		}
+		const quotes = await database.query<{ provider_order_id: string }>(
+			`subscription_commerce_quotes?select=provider_order_id&provider_order_id=eq.${encodeURIComponent(orderId)}&limit=2`,
+			undefined, "json-array",
+		);
+		if (!Array.isArray(quotes) || quotes.length > 1
+			|| quotes.some(quote => quote.provider_order_id !== orderId)) {
+			throw new Error("Payment capture quote identity differs");
+		}
+		if (quotes.length === 1) {
+			// order.paid is informational. Only a signed payment.captured event
+			// can establish capture time or admit subscription settlement.
+			if (eventType === "payment.captured") await recordSubscriptionCommerceCapture(database, body);
+			message.ack();
+			return;
+		}
+		// An order can be captured before its create-order acknowledgement is
+		// retained locally. Absence alone cannot classify it as a legacy order.
+		if (!env.PAYMENT_WORKER) throw new Error("Payment order owner unavailable");
+		const order = await env.PAYMENT_WORKER.getOrder(orderId);
+		if (!order || order.id !== orderId || !order.notes || typeof order.notes !== "object"
+			|| Array.isArray(order.notes)) throw new Error("Payment order classification unavailable");
+		if (Object.hasOwn(order.notes, "subscription_quote_id")) {
+			throw new Error("Canonical payment order is awaiting retained quote acknowledgement");
+		}
+	}
 
 	// Idempotency check
 	const existing = await database.queryOne(

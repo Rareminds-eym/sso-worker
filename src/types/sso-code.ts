@@ -38,6 +38,10 @@ export interface LteUserClaims {
 }
 
 export interface LteSubscriptionSnapshot {
+  plan_revision_id?: string;
+  lifecycle_state?: Record<string, unknown>;
+  lifecycle_policy?: Record<string, unknown>;
+  lifecycle_activated_at?: string;
   id: string;
   user_id: string;
   organization_id: string | null;

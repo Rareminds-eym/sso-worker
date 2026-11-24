@@ -2,11 +2,12 @@ import type { Env } from "../types";
 import { DB_TIMEOUT_MS } from "./constants";
 
 export interface DbClient {
-  query<T = unknown>(path: string, options?: RequestInit): Promise<T[]>;
+  query<T = unknown>(path: string, options?: RequestInit, responseShape?: 'json-array'): Promise<T[]>;
   queryOne<T = unknown>(path: string, options?: RequestInit): Promise<T | null>;
   mutate<T = unknown>(table: string, body: Record<string, unknown>, method?: string): Promise<T>;
   update(table: string, filter: Record<string, string>, body: Record<string, unknown>): Promise<void>;
   rpc<T = unknown>(fn: string, args?: Record<string, unknown>): Promise<T>;
+  rpc(fn: string, args: Record<string, unknown>, responseShape: 'void'): Promise<void>;
   bulkInsert<T = unknown>(table: string, data: unknown[]): Promise<T[]>;
 }
 
@@ -31,7 +32,7 @@ export function db(env: Env): DbClient {
     return { signal: controller.signal, clear: () => clearTimeout(timer) };
   }
 
-  async function query<T = unknown>(path: string, options: RequestInit = {}): Promise<T[]> {
+  async function query<T = unknown>(path: string, options: RequestInit = {}, responseShape?: 'json-array'): Promise<T[]> {
     const { signal, clear } = withTimeout();
     try {
       const res = await fetch(`${base}/${path}`, {
@@ -45,6 +46,13 @@ export function db(env: Env): DbClient {
       }
       // Handle empty responses (e.g. DELETE with Prefer: return=minimal)
       const text = await res.text();
+      if (responseShape === 'json-array') {
+        let parsed: unknown;
+        try { parsed = JSON.parse(text); }
+        catch { throw new Error('DB query expected a JSON array'); }
+        if (!Array.isArray(parsed)) throw new Error('DB query expected a JSON array');
+        return parsed as T[];
+      }
       if (!text) return [] as unknown as T[];
       return JSON.parse(text) as T[];
     } finally {
@@ -126,7 +134,9 @@ export function db(env: Env): DbClient {
   }
 
   /** Call a Supabase RPC (database function) */
-  async function rpc<T = unknown>(fn: string, args: Record<string, unknown> = {}): Promise<T> {
+  async function rpc<T = unknown>(fn: string, args?: Record<string, unknown>): Promise<T>;
+  async function rpc(fn: string, args: Record<string, unknown>, responseShape: 'void'): Promise<void>;
+  async function rpc<T = unknown>(fn: string, args: Record<string, unknown> = {}, responseShape?: 'void'): Promise<T | void> {
     const { signal, clear } = withTimeout();
     try {
       const res = await fetch(`${rpcBase}/${fn}`, {
@@ -139,7 +149,13 @@ export function db(env: Env): DbClient {
         const text = await res.text();
         throw new Error(`DB rpc failed [${res.status}]: ${text}`);
       }
-      return res.json() as Promise<T>;
+      if (responseShape === 'void') {
+        // PostgREST returns 204 for SQL functions declared RETURNS void.
+        // JSON-returning functions still require their normal response body.
+        if (res.status !== 204) throw new Error('DB rpc expected a void response');
+        return;
+      }
+      return await res.json() as T;
     } finally {
       clear();
     }

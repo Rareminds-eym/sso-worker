@@ -1,3 +1,4 @@
+import { signupWithFreeEntry } from '../lib/subscriptions/free-entry';
 import { audit } from "../lib/audit";
 import { SESSION_TTL_MS, PLATFORM_ORG_ID } from "../lib/constants";
 import { db } from "../lib/db";
@@ -76,11 +77,11 @@ async function signupMemberImpl(
   // Step 1: Create user in database
   let result: { user_id: string; org_id: string | null; membership_id: string | null };
   try {
-    result = await database.rpc<{
+    result = await signupWithFreeEntry<{
       user_id: string;
       org_id: string | null;
       membership_id: string | null;
-    }>("signup_member", {
+    }>(database, 'member', {
       p_email: email,
       p_password_hash: password_hash,
       p_role: params.role,

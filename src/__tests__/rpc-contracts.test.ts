@@ -178,6 +178,7 @@ describe("private SSO RPC contract", () => {
             "verifyEmail",
             "forgotPassword",
             "resetPassword",
+            "revokeAllSessionsForUser",
             "getIdentity",
         ]);
         expect(SSO_RPC_METHODS).not.toContain("fetch");

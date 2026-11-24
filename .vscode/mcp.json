@@ -1,12 +1,21 @@
 {
   "servers": {
-    "sso-dev-local-supabase": {
+    "sso-local-supabase": {
       "type": "http",
       "url": "http://127.0.0.1:54331/mcp"
     },
-    "sso-dev-remote-supabase": {
-      "type": "http",
-      "url": "https://mcp.supabase.com/mcp?project_ref=iwnmssuhlifpufttyjbj&features=docs%2Caccount%2Cdatabase%2Cdebugging%2Cdevelopment%2Cfunctions%2Cbranching"
+    "sso-qa-supabase": {
+      "type": "stdio",
+      "command": "/home/gokul/.local/share/skill-echosystem/mcp/node/bin/node",
+      "args": [
+        "/home/gokul/.local/share/skill-echosystem/mcp/bridge/node_modules/mcp-remote/dist/proxy.js",
+        "https://mcp.supabase.com/mcp?project_ref=iwnmssuhlifpufttyjbj&features=docs%2Caccount%2Cdatabase%2Cdebugging%2Cdevelopment%2Cfunctions%2Cbranching",
+        "--transport",
+        "http-only"
+      ],
+      "env": {
+        "MCP_REMOTE_CONFIG_DIR": "/home/gokul/.local/state/skill-echosystem/mcp-auth/sso-qa-dev"
+      }
     }
   }
 }

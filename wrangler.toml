@@ -32,7 +32,12 @@ ALLOWED_APP_URLS = "http://localhost:3000,http://localhost:3000/,http://localhos
 # SUPABASE_SERVICE_ROLE_KEY
 # JWT_PRIVATE_KEY  (PEM-encoded RS256 private key)
 # JWT_PUBLIC_KEY   (PEM-encoded RS256 public key)
-# JWT_KID          (Key ID for JWKS, e.g. "key-1")
+# JWT_KID is a nonsecret signing-key identifier; configure it alongside the keys.
+# Configure secrets separately for QA (they are not inherited):
+#   wrangler secret put SUPABASE_SERVICE_ROLE_KEY --env qa
+#   wrangler secret put JWT_PRIVATE_KEY --env qa
+#   wrangler secret put JWT_PUBLIC_KEY --env qa
+# Zoho uses the narrow RPC bindings below; OAuth secrets belong to sp-dash.
 
 [[kv_namespaces]]
 binding = "RATE_LIMIT_KV"
@@ -150,6 +155,8 @@ account_id = "d10c2b1a3d702c710a036bc5a6d0902e"
 
 [env.qa.vars]
 ENVIRONMENT = "qa"
+# Preserve the signing key ID from the existing QA deployment.
+JWT_KID = "key-1"
 JWKS_FRESHNESS_SECONDS = "300"
 # QA intentionally shares the existing dev SSO database.
 SUPABASE_URL = "https://iwnmssuhlifpufttyjbj.supabase.co"
@@ -233,3 +240,17 @@ entrypoint = "ZohoExecutionAuthority"
 binding = "ZOHO_CONTROL_PLANE"
 service = "sp-dash-2-qa"
 entrypoint = "ZohoExecutionAuthority"
+# Subscription commerce provider (owner quotes, orders, settlement and refunds call PaymentService over RPC).
+# Same Payments Worker entrypoint SkillPassport binds; without it every non-free purchase step is unavailable.
+[[services]]
+binding = "PAYMENT_WORKER"
+service = "razorpay-api"
+entrypoint = "PaymentService"
+[[env.dev.services]]
+binding = "PAYMENT_WORKER"
+service = "razorpay-api-dev"
+entrypoint = "PaymentService"
+[[env.qa.services]]
+binding = "PAYMENT_WORKER"
+service = "razorpay-api-qa"
+entrypoint = "PaymentService"
