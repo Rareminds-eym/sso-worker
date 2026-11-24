@@ -14,8 +14,8 @@ export async function readAdoptedHybridPlan(database: DbClient) {
 		"subscription_hybrid_offer_adoptions?select=receipt&limit=2", undefined, "json-array");
 	const planId = adoptions.length === 1 ? adoptions[0].receipt?.plan?.id : undefined;
 	if (typeof planId !== "string" || !/^[0-9a-f-]{36}$/i.test(planId)) return null;
-	return database.queryOne<{ id: string; plan_code: string; name: string }>(
-		`plans?select=id,plan_code,name&id=eq.${encodeURIComponent(planId)}&is_active=eq.true`);
+	return database.queryOne<{ id: string; plan_code: string; name: string; product_id: string }>(
+		`plans?select=id,plan_code,name,product_id&id=eq.${encodeURIComponent(planId)}&is_active=eq.true`);
 }
 const VALID_HYBRID_ORG_TYPES = ["school", "college", "university"] as const;
 type HybridOrgType = (typeof VALID_HYBRID_ORG_TYPES)[number];
@@ -167,6 +167,7 @@ async function activateHybridForOrganization(
 		seat_count: terms.seat_count,
 		is_organization_subscription: true,
 		is_bulk_purchase: true,
+		product_id: hybridPlan.product_id ?? null,
 		purchased_by: adminUserId,
 		metadata: {
 			activation_source: "admin_grant",
@@ -192,7 +193,7 @@ async function activateHybridForOrganization(
 		is_organization_subscription: true,
 		seat_count: terms.seat_count,
 		assigned_seats: 0,
-		product_id: null,
+		product_id: hybridPlan.product_id ?? null,
 		updated_at: now.toISOString(),
 	});
 

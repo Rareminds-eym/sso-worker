@@ -1,14 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ query: vi.fn(), queryOne: vi.fn(), update: vi.fn(), publish: vi.fn(),
-  hybrid: 'a0000000-0000-4000-8000-000000000040', adopted: true }));
-// The adopted Hybrid plan is identified by id; its canonical code is opaque.
-vi.mock('../lib/db', () => ({ db: () => ({ ...mocks,
-  query: (path: string, ...rest: unknown[]) => path.startsWith('subscription_hybrid_offer_adoptions?')
-    ? Promise.resolve(mocks.adopted ? [{ receipt: { plan: { id: mocks.hybrid } } }] : []) : mocks.query(path, ...rest),
-  queryOne: (path: string, ...rest: unknown[]) => path.startsWith('plans?select=id,plan_code,name&id=eq.')
-    ? Promise.resolve({ id: mocks.hybrid, plan_code: `pln_${'d'.repeat(32)}`, name: 'Hybrid' }) : mocks.queryOne(path, ...rest) }) }));
-vi.mock('../lib/sync-queue', () => ({ publishSyncEvent: mocks.publish }));
 import { performListOrganizationsWithSubscriptions, performUpdateHybridSubscription } from '../routes/hybrid-subscription';
+const mocks = vi.hoisted(() => ({
+  query: vi.fn(), queryOne: vi.fn(), update: vi.fn(), publish: vi.fn(),
+  hybrid: 'a0000000-0000-4000-8000-000000000040', adopted: true
+}));
+// The adopted Hybrid plan is identified by id; its canonical code is opaque.
+vi.mock('../lib/db', () => ({
+  db: () => ({
+    ...mocks,
+    query: (path: string, ...rest: unknown[]) => path.startsWith('subscription_hybrid_offer_adoptions?')
+      ? Promise.resolve(mocks.adopted ? [{ receipt: { plan: { id: mocks.hybrid } } }] : []) : mocks.query(path, ...rest),
+    queryOne: (path: string, ...rest: unknown[]) => path.startsWith('plans?select=id,plan_code,name')
+      ? Promise.resolve({ id: mocks.hybrid, plan_code: `pln_${'d'.repeat(32)}`, name: 'Hybrid', product_id: '912d5049-e195-46e9-a319-49e3502bf7e7' }) : mocks.queryOne(path, ...rest)
+  })
+}));
+vi.mock('../lib/sync-queue', () => ({ publishSyncEvent: mocks.publish }));
 
 beforeEach(() => vi.resetAllMocks());
 describe('Hybrid contract read and update', () => {
@@ -49,7 +55,7 @@ describe('Hybrid contract read and update', () => {
 
 it('summary covers the complete filtered result, is invariant across pages, and counts only active Hybrid plans', async () => {
   mocks.query.mockImplementation(async (path: string) => {
-    if (path.startsWith('organizations?')) return [1,2,3].map(n => ({ id: 'org'+n, name: 'Organization '+n }));
+    if (path.startsWith('organizations?')) return [1, 2, 3].map(n => ({ id: 'org' + n, name: 'Organization ' + n }));
     if (path.startsWith('users?')) return [];
     return [
       { id: 's1', organization_id: 'org1', plan_id: mocks.hybrid, plan_code: 'hybrid', status: 'active', seat_count: 30, plan_amount: 100 },
@@ -57,26 +63,26 @@ it('summary covers the complete filtered result, is invariant across pages, and 
       { id: 's3', organization_id: 'org3', plan_id: 'b0000000-0000-4000-8000-000000000001', plan_code: 'hybrid', status: 'active', seat_count: 10, plan_amount: 300 },
     ];
   });
-  const one=await performListOrganizationsWithSubscriptions({} as never,{ page: 1, limit: 1 });
-  const two=await performListOrganizationsWithSubscriptions({} as never,{ page: 2, limit: 1 });
+  const one = await performListOrganizationsWithSubscriptions({} as never, { page: 1, limit: 1 });
+  const two = await performListOrganizationsWithSubscriptions({} as never, { page: 2, limit: 1 });
   expect(one.data).toHaveLength(1); expect(two.data).toHaveLength(1);
   expect(one.summary).toEqual({ total: 3, hybridCount: 1, totalSeats: 60, totalDealValue: 600 });
   expect(two.summary).toEqual(one.summary);
-  expect((await performListOrganizationsWithSubscriptions({} as never,{ status: 'active' })).summary).toEqual({ total: 2, hybridCount: 1, totalSeats: 40, totalDealValue: 400 });
+  expect((await performListOrganizationsWithSubscriptions({} as never, { status: 'active' })).summary).toEqual({ total: 2, hybridCount: 1, totalSeats: 40, totalDealValue: 400 });
 });
 it('exhausts organization REST pages rather than treating the row cap as the global total', async () => {
   mocks.query.mockImplementation(async (path: string) => {
     if (!path.startsWith('organizations?')) return [];
-    return path.includes('offset=0') ? Array.from({ length: 500 },(_,n)=>({id:'org'+n,name:'Organization '+n})) : [{id:'last',name:'Last'}];
+    return path.includes('offset=0') ? Array.from({ length: 500 }, (_, n) => ({ id: 'org' + n, name: 'Organization ' + n })) : [{ id: 'last', name: 'Last' }];
   });
-  const result=await performListOrganizationsWithSubscriptions({} as never,{});
+  const result = await performListOrganizationsWithSubscriptions({} as never, {});
   expect(result.pagination.total).toBe(501); expect(result.summary.total).toBe(501);
 });
 
 it('rejects a seat reduction before changing source terms or publishing', async () => {
- mocks.queryOne.mockImplementation(async (path: string) => path.startsWith('organizations?') ? { id: 'org', name: 'College' } : { id: 'sub', seat_count: 30 });
- await expect(performUpdateHybridSubscription({} as never,{} as never,{organization_id:'org',admin_user_id:'admin',seat_count:1,plan_amount:100})).rejects.toThrow('Seat reductions require a coordinated contract change');
- expect(mocks.update).not.toHaveBeenCalled();expect(mocks.publish).not.toHaveBeenCalled();
+  mocks.queryOne.mockImplementation(async (path: string) => path.startsWith('organizations?') ? { id: 'org', name: 'College' } : { id: 'sub', seat_count: 30 });
+  await expect(performUpdateHybridSubscription({} as never, {} as never, { organization_id: 'org', admin_user_id: 'admin', seat_count: 1, plan_amount: 100 })).rejects.toThrow('Seat reductions require a coordinated contract change');
+  expect(mocks.update).not.toHaveBeenCalled(); expect(mocks.publish).not.toHaveBeenCalled();
 });
 it('identifies Hybrid only by the adopted plan id and is unavailable without an adoption', async () => {
   mocks.query.mockImplementation(async (path: string) => {
