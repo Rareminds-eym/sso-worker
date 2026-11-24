@@ -1076,8 +1076,8 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     }
   }
 
-  async listPublishedSubscriptionPlans(accessToken: string, productId: string, features: unknown, cursor: string | null) {
-    try { return await listPublishedSubscriptionPlans(this.env, accessToken, productId, features, cursor); }
+  async listPublishedSubscriptionPlans(accessToken: string, productId: string, features: unknown, cursor: string | null, promoPlanId?: string, priceAdjustmentMinor?: number) {
+    try { return await listPublishedSubscriptionPlans(this.env, accessToken, productId, features, cursor, promoPlanId, priceAdjustmentMinor); }
     catch (error) { if (error instanceof SubscriptionExecutionDenied) return { kind: 'forbidden' as const }; throw error; }
   }
 
