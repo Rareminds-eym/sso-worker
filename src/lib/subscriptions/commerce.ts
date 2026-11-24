@@ -207,7 +207,7 @@ export function parseCommerceRequest(value: unknown): CommerceRequest {
     // Additive-only, matching the existing DIDAC promo_codes.price_adjustment convention
     // (CHECK price_adjustment >= 0) — never a caller-chosen negative value. The fixed cap
     // itself is enforced where the adjustment is applied, not here.
-    if (Object.hasOwn(r, 'priceAdjustmentMinor')) integer(r.priceAdjustmentMinor, 'commerce.priceAdjustmentMinor');
+    if (Object.hasOwn(r, 'priceAdjustmentMinor')) integer(r.priceAdjustmentMinor, 'commerce.priceAdjustmentMinor', -Number.MAX_SAFE_INTEGER);
   }
   return { ...common, ...Object.fromEntries(allowed.filter(k => Object.hasOwn(r, k)).map(k => [k, r[k]])) };
 }
