@@ -74,7 +74,7 @@ beforeEach(() => {
     if (path.startsWith('organizations?')) return organizationRows;
     if (path.startsWith('subscription_plan_publications?')) return pointers;
     if (path.startsWith('subscription_plan_publication_events?')) return [{ plan_id: plan, revision_id: revision, canonical_plan: event }];
-    if (path.startsWith('subscription_plan_drafts?')) return [{ snapshot: staged.draft, included_credits: staged.includedCredits, staged_by: actor, staged_at: new Date(now - 1000).toISOString() }];
+    if (path.startsWith('subscription_plan_drafts?')) return [{ ...(path.includes('select=id,snapshot') ? { id: revision } : {}), snapshot: staged.draft, included_credits: staged.includedCredits, staged_by: actor, staged_at: new Date(now - 1000).toISOString() }];
     // No processed refund or pending refund freeze exists for this synthetic subscription.
     if (path.startsWith('subscription_commerce_refunds?') || path.startsWith('subscription_commerce_refund_freezes?')) return [];
     throw new Error('Unexpected isolated owner path: ' + path);
@@ -185,5 +185,93 @@ describe('subscription consumer discovery using production owner readers and iso
     expect(await listPublishedSubscriptionPlans(env, 'verified-token', product, definitions)).toMatchObject({ plans: [], nextCursor: null });
     // users, actor organization and publication pointers only.
     expect(io.query).toHaveBeenCalledTimes(3);
+  });
+});
+
+function catalogPage(count: number) {
+  const entries = Array.from({ length: count }, (_, index) => {
+    const suffix = String(index + 1).padStart(12, '0');
+    const planId = `c0000000-0000-4000-8000-${suffix}`, revisionId = `d0000000-0000-4000-8000-${suffix}`;
+    const published = canonical(), value = bundle();
+    published.id = planId; published.code = `pln_${(index + 1).toString(16).padStart(32, '0')}`;
+    value.draft.id = revisionId; value.draft.plan = { id: planId, code: published.code, productId: product };
+    value.includedCredits.revisionId = revisionId;
+    return {
+      pointer: { plan_id: planId, revision_id: revisionId, plans: { id: planId, product_id: product, is_active: true } },
+      event: { plan_id: planId, revision_id: revisionId, canonical_plan: published },
+      draft: { id: revisionId, snapshot: value.draft, included_credits: value.includedCredits, staged_by: actor, staged_at: new Date(now).toISOString() },
+    };
+  });
+  const events = entries.map(item => item.event), drafts = entries.map(item => item.draft);
+  pointers = entries.map(item => item.pointer);
+  const original = io.query.getMockImplementation()!;
+  io.query.mockImplementation(async (path: string) => {
+    if (path.startsWith('subscription_plan_publication_events?')) return events;
+    if (path.startsWith('subscription_plan_drafts?')) return drafts;
+    return original(path);
+  });
+  return { entries, events, drafts };
+}
+
+describe('bounded published catalog reads', () => {
+  it.each([1, 22, 50])('reads %i plans in three catalog round trips and preserves pointer order', async count => {
+    const { entries, events, drafts } = catalogPage(count);
+    events.reverse(); drafts.reverse();
+    const page = await listPublishedSubscriptionPlans(env, 'verified-token', product, definitions);
+    expect(page.plans.map(item => item.plan.id)).toEqual(entries.map(item => item.pointer.plan_id));
+    expect(page.nextCursor).toBe(entries.at(-1)!.pointer.plan_id);
+    const paths = io.query.mock.calls.map(([path]) => String(path)).filter(path => path.startsWith('subscription_plan_'));
+    expect(paths).toHaveLength(3);
+    const eventQuery = new URL('https://isolated.invalid/' + paths[1]);
+    expect(eventQuery.searchParams.get('or')).toBe('(' + entries.map(item =>
+      `and(plan_id.eq.${item.pointer.plan_id},revision_id.eq.${item.pointer.revision_id})`).join(',') + ')');
+    expect(eventQuery.searchParams.get('limit')).toBe(String(count + 1));
+    const draftQuery = new URL('https://isolated.invalid/' + paths[2]);
+    expect(draftQuery.searchParams.get('id')).toBe(`in.(${entries.map(item => item.pointer.revision_id).join(',')})`);
+    expect(draftQuery.searchParams.get('limit')).toBe(String(count + 1));
+    expect(io.query).toHaveBeenCalledTimes(5); // Identity, organization, and three catalog reads.
+  });
+  it.each(['missing-event', 'duplicate-event', 'foreign-event', 'extra-event', 'missing-draft', 'duplicate-draft', 'foreign-draft', 'mixed-revision'])('rejects %s rather than partial success', async defect => {
+    const page = catalogPage(2);
+    if (defect === 'missing-event') page.events.pop();
+    if (defect === 'duplicate-event') page.events[1] = page.events[0];
+    if (defect === 'foreign-event') page.events[1].plan_id = actor;
+    if (defect === 'extra-event') page.events.push(page.events[0]);
+    if (defect === 'missing-draft') page.drafts.pop();
+    if (defect === 'duplicate-draft') page.drafts[1] = page.drafts[0];
+    if (defect === 'foreign-draft') page.drafts[1].id = actor;
+    if (defect === 'mixed-revision') page.drafts[1].snapshot.id = actor;
+    await expect(listPublishedSubscriptionPlans(env, 'verified-token', product, definitions)).rejects.toThrow();
+  });
+  it('keeps the captured immutable revision when publication advances between reads', async () => {
+    const { entries } = catalogPage(2);
+    const original = io.query.getMockImplementation()!;
+    io.query.mockImplementation(async (path: string) => {
+      const result = await original(path);
+      if (path.startsWith('subscription_plan_publications?')) {
+        // A concurrent publish replaces the pointer row after this statement's snapshot.
+        pointers = [{ ...entries[0].pointer, revision_id: actor }];
+      }
+      return result;
+    });
+    const page = await listPublishedSubscriptionPlans(env, 'verified-token', product, definitions);
+    expect(page.plans.map(item => item.revisionId)).toEqual(entries.map(item => item.pointer.revision_id));
+  });
+  it('continues filtered pages and terminates only at an empty pointer page', async () => {
+    const { entries } = catalogPage(2);
+    organizationRows = [{ id: organization, metadata: { organization_type: 'company' } }];
+    const page = await listPublishedSubscriptionPlans(env, 'verified-token', product, definitions);
+    expect(page.plans).toEqual([]); expect(page.nextCursor).toBe(entries[1].pointer.plan_id);
+    pointers = [];
+    const calls = io.query.mock.calls.length;
+    expect(await listPublishedSubscriptionPlans(env, 'verified-token', product, definitions, page.nextCursor)).toMatchObject({ plans: [], nextCursor: null });
+    expect(io.query.mock.calls.length - calls).toBe(3);
+  });
+  it('retains the response budget and rejects duplicate/backwards pointers before loading revisions', async () => {
+    catalogPage(51);
+    await expect(listPublishedSubscriptionPlans(env, 'verified-token', product, definitions)).rejects.toThrow('budget');
+    expect(io.query.mock.calls.some(([path]) => path.startsWith('subscription_plan_drafts?'))).toBe(false);
+    pointers = [pointers[0], pointers[0]];
+    await expect(listPublishedSubscriptionPlans(env, 'verified-token', product, definitions)).rejects.toThrow('pointer differs');
   });
 });

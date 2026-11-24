@@ -5,7 +5,7 @@ import { validatePlanAuthoringSnapshot } from './authoring-context';
 import { validateCreditAuthoringContext } from './credit-authoring-context';
 import { readSubscriptionActor, readSubscriptionExecution, SubscriptionExecutionDenied } from './credit-execution';
 import { validatePlanPublicationCompleteness } from './publication-readiness';
-import { readPlanRevisionBundle } from './revision-bundle';
+import { readPlanRevisionBundles } from './revision-bundle';
 import { loadCatalogAudiences, resolveCatalogAudience } from './catalog-audience';
 import { loadCatalogOwnerInputs } from './catalog-owner-inputs';
 import { validatePresentationCopy } from './hybrid-offer';
@@ -110,8 +110,8 @@ async function readPublishedPage(database: DbClient, product: string, features: 
     + `&plans.product_id=eq.${product}&plans.is_active=eq.true&order=plan_id.asc&limit=${PAGE_SIZE}`
     + (after ? `&plan_id=gt.${after}` : ''), undefined, 'json-array');
   if (!Array.isArray(rows) || rows.length > PAGE_SIZE) throw new Error('Published catalog exceeded response budget');
-  const plans = []; let last = after;
-  for (const raw of rows) {
+  let last = after;
+  const pointers = rows.map(raw => {
     const pointer = record(raw, 'publication.pointer', ['plan_id', 'revision_id', 'plans']);
     const planId = uuid(pointer.plan_id, 'publication.planId'), revisionId = uuid(pointer.revision_id, 'publication.revisionId');
     const plan = record(pointer.plans, 'publication.plan', ['id', 'product_id', 'is_active']);
@@ -119,10 +119,25 @@ async function readPublishedPage(database: DbClient, product: string, features: 
       throw new Error('Published catalog pointer differs');
     }
     last = planId;
-    const events = await database.query<Record<string, unknown>>(
-      `subscription_plan_publication_events?select=plan_id,revision_id,canonical_plan&plan_id=eq.${planId}&revision_id=eq.${revisionId}&limit=2`, undefined, 'json-array');
-    if (events.length !== 1 || events[0].plan_id !== planId || events[0].revision_id !== revisionId) throw new Error('Published catalog event unavailable');
-    const canonical = record(events[0].canonical_plan, 'publication.canonical', ['id', 'code', 'productId', 'audiences', 'configuration']);
+    return { planId, revisionId };
+  });
+  // Capture pointers once. Events and drafts are immutable, so a later publication cannot mix revisions.
+  const events = pointers.length ? await database.query<Record<string, unknown>>(
+    'subscription_plan_publication_events?select=plan_id,revision_id,canonical_plan'
+    + `&or=(${pointers.map(item => `and(plan_id.eq.${item.planId},revision_id.eq.${item.revisionId})`).join(',')})&limit=${pointers.length + 1}`,
+    undefined, 'json-array') : [];
+  if (!Array.isArray(events) || events.length !== pointers.length) throw new Error('Published catalog event unavailable');
+  const expected = new Map(pointers.map(item => [item.revisionId, item.planId]));
+  if (expected.size !== pointers.length) throw new Error('Published catalog revision differs');
+  const byRevision = new Map<string, Record<string, unknown>>();
+  for (const raw of events) {
+    const event = record(raw, 'publication.event', ['plan_id', 'revision_id', 'canonical_plan']);
+    const revisionId = uuid(event.revision_id, 'publication.event.revisionId');
+    if (expected.get(revisionId) !== event.plan_id || byRevision.has(revisionId)) throw new Error('Published catalog event unavailable');
+    byRevision.set(revisionId, event);
+  }
+  const contexts = pointers.map(({ planId, revisionId }) => {
+    const canonical = record(byRevision.get(revisionId)!.canonical_plan, 'publication.canonical', ['id', 'code', 'productId', 'audiences', 'configuration']);
     const snapshot = validatePlanAuthoringSnapshot({
       id: canonical.id, plan_code: canonical.code, product_id: canonical.productId,
       applicable_entities: canonical.audiences, entity_config: canonical.configuration
@@ -130,7 +145,12 @@ async function readPublishedPage(database: DbClient, product: string, features: 
     if (snapshot.context.plan.productId !== product) throw new Error('Published catalog product differs');
     const credit = validateCreditAuthoringContext(snapshot.context, snapshot.configuration);
     const registry = createPlanAuthoringRegistry(credit, product, features);
-    const staged = await readPlanRevisionBundle(database, revisionId, registry);
+    return { planId, revisionId, snapshot, credit, registry };
+  });
+  const revisions = await readPlanRevisionBundles(database, contexts);
+  const plans = [];
+  for (const { planId, revisionId, snapshot, credit, registry } of contexts) {
+    const staged = revisions.get(revisionId)!;
     const bundle = validatePlanPublicationCompleteness(staged.bundle, credit, snapshot.configuration, registry);
     if (bundle.draft.id !== revisionId || bundle.draft.plan.id !== planId || bundle.draft.plan.productId !== product) throw new Error('Published catalog revision differs');
     const { id: _, schemaVersion: _schema, ...terms } = bundle.draft;

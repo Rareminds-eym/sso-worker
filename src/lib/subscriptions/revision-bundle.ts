@@ -59,8 +59,34 @@ export async function readPlanRevisionBundle(
   const id = uuid(revisionId, 'revisionId');
   const rows = await client.query(`subscription_plan_drafts?select=snapshot,included_credits,staged_by,staged_at&id=eq.${id}&limit=2`);
   if (!Array.isArray(rows) || rows.length !== 1) throw new CatalogPersistenceError('Bundled revision must resolve exactly once');
-  const row = record(rows[0], 'storedBundle', ['snapshot', 'included_credits', 'staged_by', 'staged_at']);
+  return storedBundle(rows[0], id, registry);
+}
+
+function storedBundle(value: unknown, id: string, registry: CreditPolicyRegistry): StagedPlanRevisionBundle {
+  const row = record(value, 'storedBundle', ['snapshot', 'included_credits', 'staged_by', 'staged_at']);
   const result = receipt({ draft: row.snapshot, includedCredits: row.included_credits, stagedBy: row.staged_by, stagedAt: row.staged_at }, registry);
   if (result.bundle.draft.id !== id) throw new CatalogPersistenceError('Stored bundle identity does not match the request');
+  return result;
+}
+
+/** One bounded read of exact immutable revisions captured by the publication page. */
+export async function readPlanRevisionBundles(
+  client: { query: (...args: Parameters<DbClient['query']>) => Promise<unknown[]> },
+  requests: readonly { revisionId: string; registry: CreditPolicyRegistry }[],
+): Promise<ReadonlyMap<string, StagedPlanRevisionBundle>> {
+  const expected = new Map(requests.map(item => [uuid(item.revisionId, 'revisionId'), item.registry]));
+  if (expected.size !== requests.length) throw new CatalogPersistenceError('Duplicate bundled revision request');
+  const result = new Map<string, StagedPlanRevisionBundle>();
+  if (!expected.size) return result;
+  const rows = await client.query(
+    `subscription_plan_drafts?select=id,snapshot,included_credits,staged_by,staged_at&id=in.(${[...expected.keys()].join(',')})&limit=${expected.size + 1}`);
+  if (!Array.isArray(rows) || rows.length !== expected.size) throw new CatalogPersistenceError('Bundled revisions must resolve exactly once');
+  for (const raw of rows) {
+    const row = record(raw, 'storedBundle', ['id', 'snapshot', 'included_credits', 'staged_by', 'staged_at']);
+    const id = uuid(row.id, 'storedBundle.id'), registry = expected.get(id);
+    if (!registry || result.has(id)) throw new CatalogPersistenceError('Stored bundle identity does not match the request');
+    const { id: _, ...value } = row;
+    result.set(id, storedBundle(value, id, registry));
+  }
   return result;
 }
