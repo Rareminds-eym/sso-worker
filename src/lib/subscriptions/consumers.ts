@@ -8,6 +8,7 @@ import { validatePlanPublicationCompleteness } from './publication-readiness';
 import { readPlanRevisionBundles } from './revision-bundle';
 import { loadCatalogAudiences, resolveCatalogAudience } from './catalog-audience';
 import { loadCatalogOwnerInputs } from './catalog-owner-inputs';
+import { MAX_PROMO_ADJUSTMENT_MINOR } from './commerce';
 import { validatePresentationCopy } from './hybrid-offer';
 import { loadTaxPolicy, type TaxPolicy } from './tax-policy';
 import { array, choice, integer, invalid, record, text, uuid } from './validation';
@@ -103,7 +104,8 @@ export function publishedPresentation(configuration: Record<string, unknown>, ta
  * immutable published terms. `audience` null with `allAudiences` false lists nothing (fail closed).
  */
 async function readPublishedPage(database: DbClient, product: string, features: unknown, after: string | null,
-  include: (audiences: readonly string[]) => boolean) {
+  include: (audiences: readonly string[]) => boolean,
+  promo?: { planId: string; audience: string; priceAdjustmentMinor: number }) {
   const tax = loadTaxPolicy();
   const rows = await database.query<Record<string, unknown>>(
     'subscription_plan_publications?select=plan_id,revision_id,plans!inner(id,product_id,is_active)'
@@ -155,12 +157,25 @@ async function readPublishedPage(database: DbClient, product: string, features: 
     if (bundle.draft.id !== revisionId || bundle.draft.plan.id !== planId || bundle.draft.plan.productId !== product) throw new Error('Published catalog revision differs');
     const { id: _, schemaVersion: _schema, ...terms } = bundle.draft;
     if (!include(terms.audiences)) continue;
-    plans.push({ ...terms, revisionId, presentation: publishedPresentation(snapshot.configuration, tax) });
+    // SkillPassport decides whether/how much to adjust (sole authority on promo validity,
+    // eligibility and quota); this worker only ever narrows down to a bounded amount, applied
+    // only to the one plan and audience-matching price(s) SkillPassport named, and never accepts
+    // an adjustment leaving a non-positive price. Every other plan/price is untouched.
+    let prices = terms.prices;
+    if (promo && promo.planId === planId && promo.priceAdjustmentMinor <= MAX_PROMO_ADJUSTMENT_MINOR) {
+      prices = terms.prices.map(price => {
+        if (!price.audiences.includes(promo.audience)) return price;
+        const adjustedAmountMinor = price.amountMinor + promo.priceAdjustmentMinor;
+        return adjustedAmountMinor < 1 ? price : { ...price, amountMinor: adjustedAmountMinor };
+      });
+    }
+    plans.push({ ...terms, prices, revisionId, presentation: publishedPresentation(snapshot.configuration, tax) });
   }
   return { tax: { kind: tax.kind, rateBasisPoints: tax.rateBasisPoints, priceDisplay: tax.priceDisplay }, plans, nextCursor: rows.length ? last : null };
 }
 
-export async function listPublishedSubscriptionPlans(env: Env, token: unknown, productId: unknown, features: unknown, cursor?: unknown) {
+export async function listPublishedSubscriptionPlans(env: Env, token: unknown, productId: unknown, features: unknown, cursor?: unknown,
+  promoPlanId?: unknown, priceAdjustmentMinor?: unknown) {
   const owner = await readSubscriptionActor(env, token), product = uuid(productId, 'product'), after = cursorValue(cursor);
   const inputs = loadCatalogOwnerInputs();
   // Each buyer browses only its own audience (owner decision); no organization type means no plans.
@@ -168,7 +183,12 @@ export async function listPublishedSubscriptionPlans(env: Env, token: unknown, p
     `organizations?select=id,metadata&id=eq.${owner.orgId}&deleted_at=is.null&limit=2`, undefined, 'json-array');
   if (organizations.length > 1 || (organizations.length === 1 && organizations[0].id !== owner.orgId)) throw new Error('Actor organization differs');
   const audience = resolveCatalogAudience(organizations[0] ?? null, owner.roles, inputs, loadCatalogAudiences(inputs));
-  const page = await readPublishedPage(owner.database, product, features, after, audiences => audience !== null && audiences.includes(audience));
+  // SkillPassport decides and names both the one plan and the bounded amount; both are optional
+  // and ignored unless both are present and the buyer's own resolved audience is known.
+  const promo = audience !== null && promoPlanId !== undefined && priceAdjustmentMinor !== undefined
+    ? { planId: uuid(promoPlanId, 'commerce.promoPlanId'), audience, priceAdjustmentMinor: integer(priceAdjustmentMinor, 'commerce.priceAdjustmentMinor') }
+    : undefined;
+  const page = await readPublishedPage(owner.database, product, features, after, audiences => audience !== null && audiences.includes(audience), promo);
   return {
     // The buyer subject for this audience (owner input): individuals buy for themselves, institutions for the organization.
     schemaVersion: 1 as const, actorId: owner.actorId, productId: product, audience,
