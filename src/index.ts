@@ -55,6 +55,7 @@ import {
   performUpdateHybridSubscription,
 } from "./routes/hybrid-subscription";
 import { performCreateLearnerUser } from "./routes/learner-admission";
+import { checkLearnerSeatAvailability, type SeatAvailability } from "./lib/seat-limit";
 import { performAssignMembershipRole, performCreateMember, performCreateMembership, performUpdateMembershipStatus } from "./routes/membership";
 import { performCreateOrganization, performUpdateOrganization, performUpdateOrganizationDetails } from "./routes/organization";
 import {
@@ -1472,7 +1473,7 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     enrollment_number?: string;
     program_id?: string;
     metadata?: Record<string, unknown>;
-  }): Promise<{ success: boolean; user_id?: string; temp_password?: string; error?: string; sync_warning?: string }> {
+  }): Promise<{ success: boolean; user_id?: string; temp_password?: string; error?: string; errorCode?: string; sync_warning?: string }> {
     return performCreateLearnerUser(this.env, data);
   }
 
@@ -1480,8 +1481,15 @@ export class SsoWorker extends WorkerEntrypoint<Env> {
     csv_data: string;
     organization_id: string;
     admin_id: string;
-  }): Promise<{ success: boolean; batch_id?: string; error?: string }> {
+  }): Promise<{ success: boolean; batch_id?: string; error?: string; errorCode?: string }> {
     return performQueueBulkLearnerUpload(this.env, data);
+  }
+
+  async getLearnerSeatAvailability(organizationId: string): Promise<SeatAvailability> {
+    if (!organizationId) {
+      throw new Error("organizationId is required");
+    }
+    return checkLearnerSeatAvailability(db(this.env), organizationId, 0);
   }
 
   async queueBulkFacultyUpload(data: {

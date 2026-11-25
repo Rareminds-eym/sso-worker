@@ -16,11 +16,13 @@
 import { getBatch, markBatchFailed, recordRowError, saveBatch, updateBatchProgress } from "../lib/batch-kv";
 import { createUsersAndMemberships, type CreatedUser, type UserToCreate } from "../lib/bulk-import";
 import { parseCSV, type CSVRow } from "../lib/csv-parser";
+import { db } from "../lib/db";
 import { getErrorMessage } from "../lib/error-utils";
 import { hashPassword } from "../lib/hash";
 import { generateTempPassword } from "../lib/learner-helpers";
 import { ensureOrganizationExists } from "../lib/organization-sync";
 import { sendBatchToQueue } from "../lib/queue-utils";
+import { checkLearnerSeatAvailability } from "../lib/seat-limit";
 import type { Env, QueueMessage } from "../types";
 
 export interface CsvParseMessage {
@@ -85,6 +87,8 @@ export interface BulkImportAdapter<TData> {
 	mapRow(row: CSVRow): TData;
 	/** Membership role name to assign ("learner" | "college_educator"). */
 	roleName: string;
+	/** Enforce organization learner seat limits during CSV parse and batch creation. */
+	enforceLearnerSeatLimit?: boolean;
 	/** Item → SSO user payload for the bulk insert. */
 	buildUser(item: BulkItem): UserToCreate;
 	/** user_metadata subset published in the user.created sync event. */
@@ -184,6 +188,15 @@ export function createCsvParseHandler<TData>(adapter: BulkImportAdapter<TData>) 
 				itemBatches.push(currentBatch);
 			}
 
+			if (adapter.enforceLearnerSeatLimit && validCount > 0) {
+				const seatCheck = await checkLearnerSeatAvailability(db(env), organization_id, validCount);
+				if (!seatCheck.allowed) {
+					await markBatchFailed(env, batch_id, seatCheck.message!);
+					message.ack();
+					return;
+				}
+			}
+
 			for (const record of errorRecords) {
 				await recordRowError(env, batch_id, record.rowNumber, record.email, record.error);
 			}
@@ -232,29 +245,44 @@ export function createBatchHandler<TData>(adapter: BulkImportAdapter<TData>) {
 				throw new Error(`Organization ${organization_id} not found in SSO DB and could not be synced`);
 			}
 
-			const { createdUsers, rowErrors } = await createUsersAndMemberships(
-				env,
-				{ batch_id, batch_index, organization_id },
-				items,
-				adapter.buildUser,
-				adapter.roleName,
-			);
+			let itemsToProcess = items;
+			let seatRowErrors: Array<{ rowNumber: number; email: string; error: string }> = [];
+			if (adapter.enforceLearnerSeatLimit && items.length > 0) {
+				const seatCheck = await checkLearnerSeatAvailability(db(env), organization_id, items.length);
+				if (!seatCheck.allowed && seatCheck.remaining !== null) {
+					const allowedCount = Math.max(0, seatCheck.remaining);
+					itemsToProcess = items.slice(0, allowedCount);
+					seatRowErrors = items.slice(allowedCount).map(item => ({ rowNumber: item.row_number, email: item.email, error: seatCheck.message! }));
+				}
+			}
 
-			const itemsByEmail = new Map(items.map((item) => [item.email, item]));
+			const { createdUsers, rowErrors } =
+				itemsToProcess.length > 0
+					? await createUsersAndMemberships(
+							env,
+							{ batch_id, batch_index, organization_id },
+							itemsToProcess,
+							adapter.buildUser,
+							adapter.roleName,
+						)
+					: { createdUsers: [], rowErrors: [] };
+
+			const allRowErrors = [...rowErrors, ...seatRowErrors];
+			const itemsByEmail = new Map(itemsToProcess.map((item) => [item.email, item]));
 			await publishBatchSyncEvents(env, createdUsers, itemsByEmail, organization_id, batch_id, adapter);
 
 			await updateBatchProgress(env, batch_id, {
-				processed_rows_increment: createdUsers.length + rowErrors.length,
+				processed_rows_increment: createdUsers.length + allRowErrors.length,
 				success_count_increment: createdUsers.length,
-				failed_count_increment: rowErrors.length,
+				failed_count_increment: allRowErrors.length,
 			});
 
-			for (const failed of rowErrors) {
+			for (const failed of allRowErrors) {
 				await recordRowError(env, batch_id, failed.rowNumber, failed.email, failed.error);
 			}
 
 			console.log(
-				`[SSO] Batch ${batch_index}: Created ${createdUsers.length} users, ${rowErrors.length} failed`,
+				`[SSO] Batch ${batch_index}: Created ${createdUsers.length} users, ${allRowErrors.length} failed`,
 			);
 			message.ack();
 		} catch (error) {
