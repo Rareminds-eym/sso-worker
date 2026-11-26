@@ -169,6 +169,7 @@ export const learnerBulkImport: BulkImportAdapter<LearnerData> = {
 	parseMessageType: "parse-csv",
 	createMessageType: "create-learner-batch",
 	jobIdPrefix: "batch-",
+	enforceLearnerSeatLimit: true,
 	normalizeRow: normalizeCsvHeaders,
 	validateRow: validateLearnerRow,
 	mapRow: mapLearnerRow,

@@ -11,6 +11,7 @@ import {
 	getLearnerRole,
 } from "../lib/learner-helpers";
 import { ensureOrganizationExists } from "../lib/organization-sync";
+import { checkLearnerSeatAvailability } from "../lib/seat-limit";
 import { isValidUUID } from "../lib/validate";
 import type { Env } from "../types";
 
@@ -38,6 +39,7 @@ export async function performCreateLearnerUser(
 	user_id?: string;
 	temp_password?: string;
 	error?: string;
+	errorCode?: string;
 	sync_warning?: string;
 }> {
 	// Validate input
@@ -66,6 +68,11 @@ export async function performCreateLearnerUser(
 	const email = data.email.toLowerCase().trim();
 
 	try {
+		const seatCheck = await checkLearnerSeatAvailability(database, organization_id, 1);
+		if (!seatCheck.allowed) {
+			return { success: false, errorCode: "SEAT_LIMIT_EXCEEDED", error: seatCheck.message };
+		}
+
 		// Check if user already exists
 		const exists = await checkUserExists(database, email);
 		if (exists) {

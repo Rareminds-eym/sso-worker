@@ -4,8 +4,11 @@
  */
 
 import { createBatch } from "../lib/batch-kv";
+import { parseCSV } from "../lib/csv-parser";
+import { db } from "../lib/db";
 import { getErrorMessage } from "../lib/error-utils";
 import { assertQueueBound } from "../lib/queue-utils";
+import { checkLearnerSeatAvailability } from "../lib/seat-limit";
 import type { Env } from "../types";
 
 export interface QueueBulkUploadData {
@@ -25,7 +28,7 @@ export async function performQueueBulkUpload(
 	env: Env,
 	data: QueueBulkUploadData,
 	parseMessageType: BulkParseMessageType,
-): Promise<{ success: boolean; batch_id?: string; error?: string }> {
+): Promise<{ success: boolean; batch_id?: string; error?: string; errorCode?: string }> {
 	if (!data.csv_data || !data.csv_data.trim() || !data.organization_id) {
 		return {
 			success: false,
@@ -34,6 +37,16 @@ export async function performQueueBulkUpload(
 	}
 
 	try {
+		if (parseMessageType === "parse-csv") {
+			const parsed = parseCSV(data.csv_data);
+			if (parsed.errors.length === 0 && parsed.rows.length > 0) {
+				const seatCheck = await checkLearnerSeatAvailability(db(env), data.organization_id, parsed.rows.length);
+				if (!seatCheck.allowed) {
+					return { success: false, errorCode: "SEAT_LIMIT_EXCEEDED", error: seatCheck.message };
+				}
+			}
+		}
+
 		const batchId = `BATCH-${new Date().toISOString().split("T")[0]}-${Date.now()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
 
 		console.log(`[SSO] Queueing bulk upload batch ${batchId} for org ${data.organization_id}`);
@@ -76,7 +89,7 @@ export async function performQueueBulkUpload(
 export function performQueueBulkLearnerUpload(
 	env: Env,
 	data: QueueBulkUploadData,
-): Promise<{ success: boolean; batch_id?: string; error?: string }> {
+): Promise<{ success: boolean; batch_id?: string; error?: string; errorCode?: string }> {
 	return performQueueBulkUpload(env, data, "parse-csv");
 }
 
